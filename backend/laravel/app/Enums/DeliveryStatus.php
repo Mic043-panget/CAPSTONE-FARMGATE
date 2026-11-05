@@ -1,0 +1,18 @@
+<?php
+
+namespace App\Enums;
+
+enum DeliveryStatus: string
+{
+    case PENDING_ASSIGNMENT = 'PENDING_ASSIGNMENT';
+    case SEARCHING_FOR_RIDER = 'SEARCHING_FOR_RIDER';
+    case RIDER_OFFERED = 'RIDER_OFFERED';
+    case RIDER_ACCEPTED = 'RIDER_ACCEPTED';
+    case PICKUP_PENDING = 'PICKUP_PENDING';
+    case PICKED_UP = 'PICKED_UP';
+    case IN_TRANSIT = 'IN_TRANSIT';
+    case DELIVERED = 'DELIVERED';
+    case FAILED = 'FAILED';
+    case CANCELLED = 'CANCELLED';
+    case WAITING_FOR_RIDER = 'WAITING_FOR_RIDER';
+}
