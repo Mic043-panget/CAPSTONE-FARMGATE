@@ -53,6 +53,24 @@ return [
             'report' => true,
         ],
 
+        'case_media' => [
+            'driver' => 'local',
+            'root' => storage_path('app/private/case-media'),
+            'visibility' => 'private',
+            'serve' => false,
+            'throw' => true,
+            'report' => true,
+        ],
+
+        'rider_private' => [
+            'driver' => 'local',
+            'root' => storage_path('app/private/rider-documents'),
+            'visibility' => 'private',
+            'serve' => false,
+            'throw' => true,
+            'report' => true,
+        ],
+
         'public' => [
             'driver' => 'local',
             'root' => storage_path('app/public'),

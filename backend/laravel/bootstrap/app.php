@@ -19,6 +19,8 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withSchedule(function (Schedule $schedule): void {
         $schedule->command('riders:process-deliveries')->everyMinute()->withoutOverlapping();
         $schedule->command('promotions:expire')->everyMinute()->withoutOverlapping();
+        $schedule->command('cases:escalate')->everyMinute()->withoutOverlapping();
+        $schedule->command('refunds:sync')->everyTenMinutes()->withoutOverlapping();
     })
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([

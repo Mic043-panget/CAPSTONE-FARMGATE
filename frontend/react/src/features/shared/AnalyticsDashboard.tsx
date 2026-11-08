@@ -387,6 +387,7 @@ export function AnalyticsDashboard({ role }: AnalyticsDashboardProps) {
                     <article><span>Active sellers / buyers</span><strong>{integer.format(summary?.active_sellers ?? 0)} / {integer.format(summary?.buyers ?? 0)}</strong><small>Current marketplace accounts</small></article>
                     <article><span>Active products</span><strong>{integer.format(summary?.products ?? 0)}</strong><small>Currently active listings</small></article>
                     <article><span>Payment success / failure</span><strong>{summary?.payment_success_rate == null ? 'Unavailable' : `${summary.payment_success_rate}% / ${summary.payment_failure_rate}%`}</strong><small>Among paid or failed payment attempts</small></article>
+                    <article><span>Refunds issued</span><strong>{integer.format(summary?.refunds_issued_count ?? 0)} · {currency.format(summary?.refunds_issued_amount ?? 0)}</strong><small>{integer.format(summary?.refunds_action_required ?? 0)} awaiting return, manual action, or admin reconciliation</small></article>
                 </>}
             </div></details>
             <section className="analytics-visualizations" aria-labelledby="analytics-visualizations-title">

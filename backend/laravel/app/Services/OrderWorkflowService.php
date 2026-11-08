@@ -5,14 +5,18 @@ namespace App\Services;
 use App\Enums\DeliveryStatus;
 use App\Enums\OrderStatus;
 use App\Enums\Role;
+use App\Jobs\SendOrderStatusEmail;
 use App\Models\Delivery;
 use App\Models\LivestockListing;
 use App\Models\Order;
+use App\Models\OrderStatusEmailDelivery;
 use App\Models\RiderOffer;
 use App\Models\User;
 use App\Notifications\OrderStatusChangedNotification;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
+use Throwable;
 
 class OrderWorkflowService
 {
@@ -71,6 +75,13 @@ class OrderWorkflowService
 
         $allowed = self::TRANSITIONS[$order->status->value][$role->value] ?? [];
         if (! in_array($nextStatus, $allowed, true)) {
+            if (in_array($nextStatus, [OrderStatus::CANCELLED, OrderStatus::REJECTED], true)
+                && Delivery::query()
+                    ->where('order_id', $order->id)
+                    ->whereIn('status', [DeliveryStatus::PICKED_UP->value, DeliveryStatus::IN_TRANSIT->value])
+                    ->exists()) {
+                abort(409, 'This order has been picked up. Use the delivery exception or return workflow instead of cancelling it.');
+            }
             throw ValidationException::withMessages([
                 'status' => ['This order status transition is not allowed.'],
             ]);
@@ -91,6 +102,26 @@ class OrderWorkflowService
                     'Standard delivery must be QR-verified before the order can be completed.',
                 );
             }
+            $delivery = null;
+            $affectedRiderIds = collect();
+            if (in_array($nextStatus, [OrderStatus::CANCELLED, OrderStatus::REJECTED], true)) {
+                $delivery = Delivery::query()->where('order_id', $lockedOrder->id)->lockForUpdate()->first();
+                abort_if(
+                    $delivery && in_array($delivery->status, [DeliveryStatus::PICKED_UP, DeliveryStatus::IN_TRANSIT], true),
+                    409,
+                    'This order has been picked up. Use the delivery exception or return workflow instead of cancelling it.',
+                );
+                if ($delivery) {
+                    $affectedRiderIds = RiderOffer::query()
+                        ->where('delivery_id', $delivery->id)
+                        ->where('status', 'OPEN')
+                        ->pluck('rider_id');
+                    if ($delivery->rider_id !== null) {
+                        $affectedRiderIds->push($delivery->rider_id);
+                    }
+                    $affectedRiderIds = $affectedRiderIds->unique()->values();
+                }
+            }
             abort_if(
                 $actor->role === Role::SELLER
                     && $lockedOrder->payment_method !== 'COD'
@@ -103,10 +134,8 @@ class OrderWorkflowService
             $lockedOrder->status = $nextStatus;
             $lockedOrder->save();
             if (in_array($nextStatus, [OrderStatus::CANCELLED, OrderStatus::REJECTED], true)) {
-                $delivery = Delivery::query()->where('order_id', $lockedOrder->id)->lockForUpdate()->first();
                 if ($delivery) {
-                    $delivery->forceFill(['status' => DeliveryStatus::CANCELLED, 'rider_id' => null])->save();
-                    RiderOffer::query()->where('delivery_id', $delivery->id)->where('status', 'OPEN')->update(['status' => 'REVOKED']);
+                    $this->cancelDelivery($delivery, $actor, $reason ?? 'Order '.$nextStatus->value.'.');
                 }
             }
             if ($nextStatus === OrderStatus::COMPLETED) {
@@ -118,7 +147,31 @@ class OrderWorkflowService
                     DeliveryStatus::FAILED,
                 ], true)) {
                     RiderOffer::query()->where('delivery_id', $delivery->id)->where('status', 'OPEN')->update(['status' => 'REVOKED']);
-                    $delivery->forceFill(['status' => DeliveryStatus::CANCELLED, 'rider_id' => null])->save();
+                    $previousStatus = $delivery->status;
+                    $delivery->forceFill([
+                        'status' => DeliveryStatus::CANCELLED,
+                        'rider_id' => null,
+                        'assigned_at' => null,
+                        'rider_location_latitude' => null,
+                        'rider_location_longitude' => null,
+                        'rider_location_updated_at' => null,
+                        'rider_location_captured_at' => null,
+                        'pickup_qr_token_hash' => null,
+                        'pickup_qr_expires_at' => null,
+                        'delivery_qr_token_hash' => null,
+                        'delivery_qr_expires_at' => null,
+                        'qr_token' => null,
+                        'order_qr_token_encrypted' => null,
+                        'order_qr_token_hash' => null,
+                        'order_qr_rider_id' => null,
+                    ])->save();
+                    $delivery->statusHistory()->create([
+                        'changed_by' => $actor->id,
+                        'from_status' => $previousStatus->value,
+                        'to_status' => DeliveryStatus::CANCELLED->value,
+                        'reason' => 'Order completed before rider assignment.',
+                        'created_at' => now(),
+                    ]);
                 }
             }
             if ($lockedOrder->stock_reserved_at && in_array($nextStatus, [OrderStatus::CANCELLED, OrderStatus::REJECTED], true)) {
@@ -126,6 +179,7 @@ class OrderWorkflowService
                     $listing = LivestockListing::withTrashed()->lockForUpdate()->find($item->listing_id);
                     $listing?->increment('quantity', $item->quantity);
                 }
+                $lockedOrder->forceFill(['stock_reserved_at' => null])->save();
             }
             $lockedOrder->statusHistory()->create([
                 'from_status' => $fromStatus,
@@ -134,19 +188,90 @@ class OrderWorkflowService
                 'reason' => $reason,
             ]);
 
-            if ($this->settings->getBoolean('in_app_notifications_enabled') && $this->settings->getBoolean('order_notifications_enabled')) {
-                $recipient = $lockedOrder->buyer;
-                if ($recipient?->accountPreferenceEnabled('order_notifications')) {
-                    $recipient?->notify(new OrderStatusChangedNotification($lockedOrder->id, $nextStatus, $lockedOrder->order_reference, $reason));
+            $criticalStatus = in_array($nextStatus, [OrderStatus::CANCELLED, OrderStatus::REJECTED], true);
+            if ($this->settings->getBoolean('in_app_notifications_enabled')
+                && ($criticalStatus || $this->settings->getBoolean('order_notifications_enabled'))) {
+                $recipients = collect([$lockedOrder->buyer, $lockedOrder->seller]);
+                if ($criticalStatus) {
+                    $recipients = $recipients->merge(User::query()->whereIn('id', $affectedRiderIds)->get());
                 }
-                $seller = $lockedOrder->seller;
-                if ($seller?->accountPreferenceEnabled('order_notifications')) {
-                    $seller->notify(new OrderStatusChangedNotification($lockedOrder->id, $nextStatus, $lockedOrder->order_reference, $reason));
+                foreach ($recipients->filter()->unique('id') as $recipient) {
+                    if ($criticalStatus || $recipient->accountPreferenceEnabled('order_notifications')) {
+                        $recipient->notify(new OrderStatusChangedNotification($lockedOrder->id, $nextStatus, $lockedOrder->order_reference, $reason));
+                    }
+                }
+            }
+
+            if ($criticalStatus && $this->settings->getBoolean('email_notifications_enabled')) {
+                $recipients = collect([$lockedOrder->buyer, $lockedOrder->seller])
+                    ->merge(User::query()->whereIn('id', $affectedRiderIds)->get())
+                    ->filter()
+                    ->unique('id');
+                foreach ($recipients as $recipient) {
+                    if (! filled($recipient->email)) {
+                        continue;
+                    }
+                    $email = OrderStatusEmailDelivery::query()->create([
+                        'order_id' => $lockedOrder->id,
+                        'recipient_id' => $recipient->id,
+                        'order_status' => $nextStatus->value,
+                        'reason' => $reason,
+                    ]);
+                    DB::afterCommit(function () use ($email): void {
+                        try {
+                            SendOrderStatusEmail::dispatch($email->id);
+                        } catch (Throwable $exception) {
+                            $email->forceFill([
+                                'delivery_status' => 'FAILED',
+                                'error_code' => $exception::class,
+                            ])->save();
+                            Log::error('An order status email could not be queued.', [
+                                'email_delivery_id' => $email->id,
+                                'exception' => $exception::class,
+                            ]);
+                        }
+                    });
                 }
             }
 
             return $lockedOrder->load('items', 'statusHistory');
         });
+    }
+
+    private function cancelDelivery(Delivery $delivery, User $actor, string $reason): void
+    {
+        if ($delivery->status !== DeliveryStatus::CANCELLED) {
+            $previousStatus = $delivery->status;
+            $delivery->forceFill([
+                'status' => DeliveryStatus::CANCELLED,
+                'rider_id' => null,
+                'assigned_at' => null,
+                'rider_location_latitude' => null,
+                'rider_location_longitude' => null,
+                'rider_location_updated_at' => null,
+                'rider_location_captured_at' => null,
+                'pickup_qr_token_hash' => null,
+                'pickup_qr_expires_at' => null,
+                'delivery_qr_token_hash' => null,
+                'delivery_qr_expires_at' => null,
+                'qr_token' => null,
+                'order_qr_token_encrypted' => null,
+                'order_qr_token_hash' => null,
+                'order_qr_rider_id' => null,
+            ])->save();
+            $delivery->statusHistory()->create([
+                'changed_by' => $actor->id,
+                'from_status' => $previousStatus->value,
+                'to_status' => DeliveryStatus::CANCELLED->value,
+                'reason' => $reason,
+                'created_at' => now(),
+            ]);
+        }
+
+        RiderOffer::query()
+            ->where('delivery_id', $delivery->id)
+            ->where('status', 'OPEN')
+            ->update(['status' => 'REVOKED']);
     }
 
     public static function buyerCanCancel(OrderStatus $status): bool

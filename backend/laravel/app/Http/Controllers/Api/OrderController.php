@@ -73,9 +73,11 @@ class OrderController extends Controller
         $relations = [
             'items.listing.category',
             'seller:id,name',
-            'seller.sellerProfile:user_id,latitude,longitude,address',
+            'seller.sellerProfile:user_id,business_name,phone,latitude,longitude,address',
             'statusHistory.actor:id,name',
+            'activities',
             'delivery.rider:id,name',
+            'delivery.statusHistory.actor:id,name',
         ];
         if ($request->user()->role === Role::SELLER) {
             $relations[] = 'buyer:id,name';

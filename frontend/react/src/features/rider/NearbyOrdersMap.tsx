@@ -6,6 +6,8 @@ export type NearbyOrder = {
     id: number;
     distance_km: string | number;
     checkout_distance_km: string | number | null;
+    checkout_distance_method: 'OSRM_ROAD_ROUTE' | 'OSRM_BARANGAY_ESTIMATE' | null;
+    checkout_delivery_fee: string | number | null;
     expires_at: string | null;
     delivery: {
         id: number;

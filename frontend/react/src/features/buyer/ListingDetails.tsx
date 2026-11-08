@@ -1,6 +1,7 @@
 import React from 'react';
-import api from '../../lib/api';
+import api, { initializeCsrf } from '../../lib/api';
 import type { Listing } from '../../shared/types';
+import { showSuccess } from '../../lib/alerts';
 
 type DetailedListing = Listing & {
     description?: string | null;
@@ -12,10 +13,12 @@ type DetailedListing = Listing & {
 };
 
 type ListingReview = {
+    id: number;
     rating: number;
     comment: string | null;
     buyer_name: string;
     created_at: string;
+    media?: { id: number; mime_type: string; url: string }[];
 };
 
 type ListingDetailsResponse = {
@@ -29,6 +32,7 @@ type ListingDetailsResponse = {
 type ListingDetailsProps = {
     listingId: number;
     canPurchase: boolean;
+    canReport?: boolean;
     onBack: () => void;
     onOpenListing: (listingId: number) => void;
     onAddToCart: (listingId: number, quantity: number) => Promise<boolean | void>;
@@ -42,11 +46,13 @@ function listingPrice(listing: Listing): number {
 
 const pesoPrice = new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-export function ListingDetails({ listingId, canPurchase, onBack, onOpenListing, onAddToCart, onBuyNow, onError }: ListingDetailsProps) {
+export function ListingDetails({ listingId, canPurchase, canReport = false, onBack, onOpenListing, onAddToCart, onBuyNow, onError }: ListingDetailsProps) {
     const [details, setDetails] = React.useState<ListingDetailsResponse | null>(null);
     const [activeImage, setActiveImage] = React.useState(0);
     const [quantity, setQuantity] = React.useState(1);
     const [loading, setLoading] = React.useState(true);
+    const [reportingReviewId, setReportingReviewId] = React.useState<number | null>(null);
+    const [reportReason, setReportReason] = React.useState('');
     const [busy, setBusy] = React.useState<'cart' | 'buy' | null>(null);
     const [notice, setNotice] = React.useState('');
 
@@ -93,6 +99,19 @@ export function ListingDetails({ listingId, canPurchase, onBack, onOpenListing, 
             onError(requestError.userMessage ?? requestError.response?.data?.message ?? 'The order could not be placed.');
         } finally {
             setBusy(null);
+        }
+    }
+
+    async function reportReview(reviewId: number) {
+        if (reportReason.trim().length < 5) { onError('Explain why this review should be checked (at least 5 characters).'); return; }
+        try {
+            await initializeCsrf();
+            await api.post(`/api/buyer/reviews/${reviewId}/reports`, { reason: reportReason });
+            setReportingReviewId(null);
+            setReportReason('');
+            showSuccess('Review report sent to admin moderation.');
+        } catch (requestError: any) {
+            onError(requestError.userMessage ?? requestError.response?.data?.message ?? 'The review could not be reported.');
         }
     }
 
@@ -147,7 +166,7 @@ export function ListingDetails({ listingId, canPurchase, onBack, onOpenListing, 
             <section className="product-reviews" id="product-reviews" aria-labelledby="product-reviews-title">
                 <div className="product-section-heading"><div><p className="eyebrow">Completed orders</p><h2 id="product-reviews-title">Ratings &amp; buyer feedback</h2></div><span>{reviewCount ? `${ratingAverage.toFixed(1)} average · ${reviewCount} reviews` : 'No reviews yet'}</span></div>
                 <p className="product-review-context">Reviews are from completed orders that included this listing.</p>
-                {reviews.length ? <div className="product-review-list">{reviews.map((review, index) => <article className="product-review" key={`${review.buyer_name}-${review.created_at}-${index}`}><div><strong>{review.buyer_name}</strong><span className="product-review-stars" aria-label={`${review.rating} out of 5 stars`}>{'★'.repeat(review.rating)}{'☆'.repeat(5 - review.rating)}</span></div><time dateTime={review.created_at}>{new Date(review.created_at).toLocaleDateString()}</time>{review.comment && <p>{review.comment}</p>}</article>)}</div> : <p className="product-empty-reviews">There is no buyer feedback for this listing yet.</p>}
+                {reviews.length ? <div className="product-review-list">{reviews.map((review) => <article className="product-review" key={review.id}><div><strong>{review.buyer_name}</strong><span className="product-review-stars" aria-label={`${review.rating} out of 5 stars`}>{'★'.repeat(review.rating)}{'☆'.repeat(5 - review.rating)}</span></div><time dateTime={review.created_at}>{new Date(review.created_at).toLocaleDateString()}</time>{review.comment && <p>{review.comment}</p>}{review.media?.length ? <div className="case-saved-media">{review.media.map((media) => media.mime_type.startsWith('video/') ? <video key={media.id} src={media.url} controls aria-label="Review video" /> : <a key={media.id} href={media.url} target="_blank" rel="noreferrer"><img src={media.url} alt="Review photo" /></a>)}</div> : null}{canReport && <div className="review-report-control">{reportingReviewId === review.id ? <><label>Why should this be reviewed?<textarea value={reportReason} onChange={(event) => setReportReason(event.target.value)} minLength={5} maxLength={1200} /></label><button type="button" onClick={() => void reportReview(review.id)}>Send report</button><button type="button" onClick={() => { setReportingReviewId(null); setReportReason(''); }}>Cancel</button></> : <button type="button" onClick={() => setReportingReviewId(review.id)}>Report review</button>}</div>}</article>)}</div> : <p className="product-empty-reviews">There is no buyer feedback for this listing yet.</p>}
             </section>
             <section className="product-related" aria-labelledby="product-related-title">
                 <div className="product-section-heading"><div><p className="eyebrow">From the same category</p><h2 id="product-related-title">Similar livestock</h2></div></div>

@@ -10,6 +10,7 @@ use App\Models\Delivery;
 use App\Models\Order;
 use App\Models\RiderOffer;
 use App\Models\RiderProfile;
+use App\Models\RiderVehicleChange;
 use App\Services\RiderAssignmentService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -38,7 +39,7 @@ class RiderController extends Controller
                 DeliveryStatus::SEARCHING_FOR_RIDER->value,
             ])
             ->with([
-                'order:id,order_reference,status,total_amount,shipping_address,delivery_method,buyer_id,seller_id',
+                'order:id,order_reference,status,total_amount,delivery_fee,delivery_distance_km,delivery_distance_method,shipping_address,delivery_method,buyer_id,seller_id',
                 'order.buyer:id,name,phone_number',
                 'order.seller:id,name',
             ]);
@@ -88,10 +89,25 @@ class RiderController extends Controller
     {
         abort_unless($request->user()?->role === Role::RIDER, 403);
         $profile = $request->user()->riderProfile()->firstOrCreate(['user_id' => $request->user()->id]);
+        $latestVehicleChange = RiderVehicleChange::query()
+            ->where('user_id', $request->user()->id)
+            ->latest()
+            ->first();
 
         return response()->json(['settings' => [
             'availability' => $profile->availability,
             'vehicle_type' => $profile->vehicle_type,
+            'plate_number' => $profile->plate_number,
+            'vehicle_make_model' => $profile->vehicle_make_model,
+            'vehicle_color' => $profile->vehicle_color,
+            'license_expires_on' => $profile->license_expires_on?->toDateString(),
+            'vehicle_registration_expires_on' => $profile->vehicle_registration_expires_on?->toDateString(),
+            'pending_vehicle_change' => $latestVehicleChange ? [
+                'id' => $latestVehicleChange->id,
+                'status' => $latestVehicleChange->status,
+                'created_at' => $latestVehicleChange->created_at?->toISOString(),
+                'decision_reason' => $latestVehicleChange->decision_reason,
+            ] : null,
             'is_verified' => $profile->is_verified,
             'last_location_at' => $profile->last_location_at?->toISOString(),
         ]]);
@@ -102,7 +118,12 @@ class RiderController extends Controller
         abort_unless($request->user()?->role === Role::RIDER, 403);
         $data = $request->validate([
             'availability' => ['sometimes', 'required', Rule::in(['AVAILABLE', 'OFFLINE'])],
-            'vehicle_type' => ['sometimes', 'nullable', 'string', 'max:100'],
+            'vehicle_type' => ['prohibited'],
+            'plate_number' => ['prohibited'],
+            'vehicle_make_model' => ['prohibited'],
+            'vehicle_color' => ['prohibited'],
+            'license_expires_on' => ['prohibited'],
+            'vehicle_registration_expires_on' => ['prohibited'],
         ]);
         abort_if($data === [], 422, 'Choose at least one delivery setting to update.');
 
@@ -132,6 +153,11 @@ class RiderController extends Controller
             return [
                 'availability' => $profile->availability,
                 'vehicle_type' => $profile->vehicle_type,
+                'plate_number' => $profile->plate_number,
+                'vehicle_make_model' => $profile->vehicle_make_model,
+                'vehicle_color' => $profile->vehicle_color,
+                'license_expires_on' => $profile->license_expires_on?->toDateString(),
+                'vehicle_registration_expires_on' => $profile->vehicle_registration_expires_on?->toDateString(),
                 'is_verified' => $profile->is_verified,
                 'last_location_at' => $profile->last_location_at?->toISOString(),
             ];
@@ -148,7 +174,7 @@ class RiderController extends Controller
 
         $profile = $request->user()->riderProfile()->first();
         $offers = RiderOffer::query()
-            ->with(['delivery.order:id,order_reference,shipping_address,delivery_distance_km'])
+            ->with(['delivery.order:id,order_reference,shipping_address,delivery_fee,delivery_distance_km,delivery_distance_method'])
             ->where('rider_id', $request->user()->id)
             ->where('status', 'OPEN')
             ->where(fn ($query) => $query->whereNull('expires_at')->orWhere('expires_at', '>', now()))
@@ -181,6 +207,8 @@ class RiderController extends Controller
                     'checkout_distance_km' => $order->delivery_distance_km === null
                         ? null
                         : round((float) $order->delivery_distance_km, 1),
+                    'checkout_distance_method' => $order->delivery_distance_method,
+                    'checkout_delivery_fee' => $order->delivery_fee,
                     'expires_at' => $offer->expires_at?->toISOString(),
                     'delivery' => [
                         'id' => $delivery->id,

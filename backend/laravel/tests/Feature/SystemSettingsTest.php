@@ -6,6 +6,7 @@ use App\Enums\Role;
 use App\Models\SystemSetting;
 use App\Models\SystemSettingHistory;
 use App\Models\User;
+use App\Services\SystemSettingsService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -53,6 +54,34 @@ class SystemSettingsTest extends TestCase
                 'rider_offer_expiry_minutes' => 10,
             ],
         ])->assertStatus(422);
+    }
+
+    public function test_delivery_minimum_is_a_floor_and_configured_rate_applies_beyond_included_distance(): void
+    {
+        $admin = User::factory()->create(['role' => Role::ADMIN]);
+        $settings = app(SystemSettingsService::class);
+        $settings->update([
+            'delivery_base_fee' => 50,
+            'delivery_included_km' => 1,
+            'delivery_rate_per_km' => 10,
+            'delivery_min_fee' => 50,
+            'delivery_max_fee' => 0,
+            'delivery_tiers_enabled' => false,
+        ], $admin->id, 'Verify distance-based delivery fee');
+
+        $this->assertSame(50.0, $settings->deliveryFee(1));
+        $this->assertSame(90.0, $settings->deliveryFee(5));
+    }
+
+    public function test_partial_delivery_setting_update_keeps_existing_fee_bounds(): void
+    {
+        $admin = User::factory()->create(['role' => Role::ADMIN]);
+        $settings = app(SystemSettingsService::class);
+
+        $settings->update(['delivery_included_km' => 1], $admin->id, 'Correct delivery fee distance threshold');
+
+        $this->assertSame(1.0, $settings->getDecimal('delivery_included_km'));
+        $this->assertSame(90.0, $settings->deliveryFee(5));
     }
 
     public function test_settings_require_authentication_and_tiers_cannot_overlap(): void

@@ -35,6 +35,11 @@ class User extends Authenticatable implements CanResetPassword, MustVerifyEmail
         return $this->hasOne(RiderProfile::class);
     }
 
+    public function riderApplication(): HasOne
+    {
+        return $this->hasOne(RiderApplication::class);
+    }
+
     public function loginHistory(): HasMany
     {
         return $this->hasMany(LoginHistory::class);

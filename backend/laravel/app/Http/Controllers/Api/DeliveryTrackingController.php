@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Enums\DeliveryStatus;
+use App\Enums\OrderStatus;
 use App\Enums\Role;
 use App\Http\Controllers\Controller;
 use App\Models\Delivery;
@@ -145,36 +146,65 @@ class DeliveryTrackingController extends Controller
         abort_if($delivery->rider_id !== $request->user()->id, 403);
         $data = $request->validate([
             'qr_token' => ['required', 'string', 'regex:/^[A-Za-z0-9]{64}$/'],
+            'latitude' => ['required', 'numeric', 'between:-90,90'],
+            'longitude' => ['required', 'numeric', 'between:-180,180'],
+        ]);
+        $updated = $verification->verify($delivery, $request->user(), 'delivery', $data);
+
+        $this->notifyDeliveryProgress($updated, 'The rider verified drop-off after recording recipient confirmation and delivery photo proof.', $settings, false);
+
+        return response()->json([
+            'message' => 'Delivery QR verified. The order was marked delivered.',
+            'delivery' => $updated,
+        ]);
+    }
+
+    public function recordProof(Request $request, Delivery $delivery, SystemSettingsService $settings): JsonResponse
+    {
+        abort_unless($request->user()?->role === Role::RIDER, 403);
+        abort_if($delivery->rider_id !== $request->user()->id, 403, 'This delivery is not assigned to your rider account.');
+        $data = $request->validate([
             'photo' => ['required', 'file', 'image', 'mimes:jpeg,jpg,png,webp', 'max:10240'],
             'recipient_confirmed' => ['required', 'accepted'],
             'recipient_name' => ['required', 'string', 'min:1', 'max:120'],
             'captured_at' => ['required', 'date', 'before_or_equal:now'],
-            'latitude' => ['nullable', 'required_with:longitude', 'numeric', 'between:-90,90'],
-            'longitude' => ['nullable', 'required_with:latitude', 'numeric', 'between:-180,180'],
         ]);
-        $file = $request->file('photo');
-        $storedProof = $this->storeProof($file);
+        $storedProof = $this->storeProof($request->file('photo'));
         $path = $storedProof['path'];
 
         try {
-            $updated = $verification->verify($delivery, $request->user(), 'delivery', $data, [
-                'path' => $path,
-                'sha256' => $storedProof['sha256'],
-                'mime_type' => $storedProof['mime_type'],
-                'recipient_confirmed' => true,
-                'recipient_name' => trim($data['recipient_name']),
-                'captured_at' => Carbon::parse($data['captured_at']),
-                'recorded_at' => now(),
-            ]);
+            $updated = DB::transaction(function () use ($data, $delivery, $path, $request, $storedProof): Delivery {
+                $order = Order::query()->lockForUpdate()->findOrFail($delivery->order_id);
+                $locked = Delivery::query()->lockForUpdate()->findOrFail($delivery->id);
+                abort_if($locked->rider_id !== $request->user()->id, 403, 'This delivery is no longer assigned to your rider account.');
+                abort_unless($order->status === OrderStatus::FULFILLING
+                    && in_array($locked->status, [DeliveryStatus::PICKED_UP, DeliveryStatus::IN_TRANSIT], true),
+                    409,
+                    'Proof can only be recorded after pickup and before the delivery is completed.',
+                );
+                abort_if($locked->has_delivery_proof, 409, 'Proof of delivery has already been saved for this order.');
+
+                $locked->forceFill([
+                    'delivery_proof_path' => $path,
+                    'delivery_proof_sha256' => $storedProof['sha256'],
+                    'delivery_proof_mime_type' => $storedProof['mime_type'],
+                    'recipient_confirmed' => true,
+                    'delivery_recipient_name' => trim($data['recipient_name']),
+                    'proof_captured_at' => Carbon::parse($data['captured_at']),
+                    'proof_recorded_at' => now(),
+                ])->save();
+
+                return $locked->load('order.buyer', 'order.seller');
+            });
         } catch (Throwable $exception) {
             $this->removeProofFile($path);
             throw $exception;
         }
 
-        $this->notifyDeliveryProgress($updated, 'The rider recorded recipient confirmation and delivery photo proof.', $settings, true);
+        $this->notifyDeliveryProgress($updated, 'The rider saved delivery photo proof and recipient confirmation.', $settings, true);
 
         return response()->json([
-            'message' => 'Delivery proof recorded and delivery verified.',
+            'message' => 'Delivery proof saved. Scan the same order QR at the buyer location to complete delivery.',
             'delivery' => $updated,
         ]);
     }
@@ -190,8 +220,23 @@ class DeliveryTrackingController extends Controller
             || $user->role === Role::BUYER && $order->buyer_id === $user->id
         ), 403);
         abort_unless($delivery->has_delivery_proof, 404);
+        $disk = Storage::disk('delivery_proofs');
+        abort_unless($disk->exists($delivery->delivery_proof_path), 404, 'The saved delivery proof could not be found.');
 
-        return Storage::disk('delivery_proofs')->response($delivery->delivery_proof_path, 'delivery-proof', [
+        $path = $delivery->delivery_proof_path;
+
+        return response()->stream(function () use ($disk, $path): void {
+            $stream = $disk->readStream($path);
+            if (! is_resource($stream)) {
+                throw new \RuntimeException('The saved delivery proof could not be opened.');
+            }
+
+            try {
+                fpassthru($stream);
+            } finally {
+                fclose($stream);
+            }
+        }, 200, [
             'Content-Type' => $delivery->delivery_proof_mime_type,
             'Content-Disposition' => 'inline; filename="delivery-proof"',
             'Cache-Control' => 'private, no-store',
@@ -276,8 +321,8 @@ class DeliveryTrackingController extends Controller
         abort_if($delivery->rider_id !== $request->user()->id, 403);
         $data = $request->validate([
             'qr_token' => ['required', 'string', 'regex:/^[A-Za-z0-9]{64}$/'],
-            'latitude' => [$purpose === 'pickup' ? 'required' : 'nullable', ...($purpose === 'delivery' ? ['required_with:longitude'] : []), 'numeric', 'between:-90,90'],
-            'longitude' => [$purpose === 'pickup' ? 'required' : 'nullable', ...($purpose === 'delivery' ? ['required_with:latitude'] : []), 'numeric', 'between:-180,180'],
+            'latitude' => ['required', 'numeric', 'between:-90,90'],
+            'longitude' => ['required', 'numeric', 'between:-180,180'],
         ]);
 
         $updated = $verification->verify($delivery, $request->user(), $purpose, $data);

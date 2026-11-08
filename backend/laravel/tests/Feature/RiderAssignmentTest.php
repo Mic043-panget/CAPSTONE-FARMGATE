@@ -16,6 +16,7 @@ use App\Models\User;
 use App\Services\RiderAssignmentService;
 use App\Services\SystemSettingsService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Config;
 use Tests\TestCase;
 
 class RiderAssignmentTest extends TestCase
@@ -181,6 +182,223 @@ class RiderAssignmentTest extends TestCase
             ->assertJsonMissingPath('orders.0.delivery.rider.email');
         $this->actingAs($otherSeller)->postJson('/api/deliveries/assign', ['order_id' => $order->id])->assertForbidden();
         $this->assertSame(DeliveryStatus::RIDER_OFFERED, $delivery->fresh()->status);
+    }
+
+    public function test_cancelling_order_cancels_offered_and_accepted_delivery_and_notifies_affected_riders(): void
+    {
+        foreach ([DeliveryStatus::RIDER_OFFERED, DeliveryStatus::RIDER_ACCEPTED] as $deliveryStatus) {
+            $buyer = User::factory()->create(['role' => Role::BUYER]);
+            $seller = User::factory()->create(['role' => Role::SELLER]);
+            $rider = User::factory()->create(['role' => Role::RIDER]);
+            $rider->forceFill(['account_preferences' => ['order_notifications' => false]])->save();
+            RiderProfile::create([
+                'user_id' => $rider->id,
+                'phone' => '09170000123',
+                'vehicle_type' => 'motorbike',
+                'availability' => 'AVAILABLE',
+                'is_verified' => true,
+                'latitude' => 12.77,
+                'longitude' => 121.36,
+                'last_location_at' => now(),
+            ]);
+            $order = Order::create([
+                'buyer_id' => $buyer->id,
+                'seller_id' => $seller->id,
+                'status' => OrderStatus::READY_FOR_PICKUP,
+                'delivery_method' => 'STANDARD_DELIVERY',
+                'payment_method' => 'COD',
+                'total_amount' => 100,
+            ]);
+            $delivery = Delivery::create([
+                'order_id' => $order->id,
+                'rider_id' => $deliveryStatus === DeliveryStatus::RIDER_ACCEPTED ? $rider->id : null,
+                'status' => $deliveryStatus,
+                'pickup_address' => 'Bongabong',
+                'rider_location_latitude' => 12.77,
+                'rider_location_longitude' => 121.36,
+                'rider_location_updated_at' => now(),
+                'rider_location_captured_at' => now(),
+                'order_qr_token_encrypted' => 'encrypted-token',
+                'order_qr_token_hash' => hash('sha256', 'token'),
+                'order_qr_rider_id' => $rider->id,
+                'qr_token' => 'legacy-token',
+                'pickup_qr_token_hash' => hash('sha256', 'pickup'),
+                'pickup_qr_expires_at' => now()->addHour(),
+                'delivery_qr_token_hash' => hash('sha256', 'delivery'),
+                'delivery_qr_expires_at' => now()->addHour(),
+            ]);
+            if ($deliveryStatus === DeliveryStatus::RIDER_OFFERED) {
+                RiderOffer::create([
+                    'delivery_id' => $delivery->id,
+                    'rider_id' => $rider->id,
+                    'status' => 'OPEN',
+                    'distance_km' => 1,
+                    'expires_at' => now()->addMinutes(10),
+                ]);
+            }
+
+            $this->actingAs($buyer)->patchJson('/api/orders/'.$order->id.'/status', [
+                'status' => OrderStatus::CANCELLED->value,
+                'reason' => 'Buyer cancelled the order.',
+            ])->assertOk()->assertJsonPath('order.status', OrderStatus::CANCELLED->value);
+
+            $cancelledDelivery = $delivery->fresh();
+            $this->assertSame(DeliveryStatus::CANCELLED, $cancelledDelivery->status);
+            $this->assertNull($cancelledDelivery->rider_id);
+            $this->assertTrue(app(RiderAssignmentService::class)->findEligibleRiders(12.77, 121.36)->contains('user_id', $rider->id));
+            $this->assertNull($cancelledDelivery->rider_location_latitude);
+            $this->assertNull($cancelledDelivery->rider_location_updated_at);
+            $this->assertNull($cancelledDelivery->order_qr_token_hash);
+            $this->assertNull($cancelledDelivery->qr_token);
+            $this->assertNull($cancelledDelivery->pickup_qr_token_hash);
+            $this->assertNull($cancelledDelivery->delivery_qr_token_hash);
+            $this->assertDatabaseHas('delivery_status_histories', [
+                'delivery_id' => $delivery->id,
+                'from_status' => $deliveryStatus->value,
+                'to_status' => DeliveryStatus::CANCELLED->value,
+                'changed_by' => $buyer->id,
+            ]);
+            $this->assertDatabaseHas('notifications', [
+                'notifiable_id' => $rider->id,
+                'data->type' => 'order_status_changed',
+                'data->order_id' => $order->id,
+                'data->status' => OrderStatus::CANCELLED->value,
+            ]);
+            $this->actingAs($buyer)->getJson('/api/orders/'.$order->id)
+                ->assertOk()
+                ->assertJsonPath('order.status_history.0.to_status', OrderStatus::CANCELLED->value)
+                ->assertJsonPath('order.delivery.status_history.0.to_status', DeliveryStatus::CANCELLED->value);
+            $this->assertDatabaseHas('order_status_email_deliveries', [
+                'order_id' => $order->id,
+                'recipient_id' => $rider->id,
+                'order_status' => OrderStatus::CANCELLED->value,
+                'delivery_status' => 'SENT',
+            ]);
+            $this->assertDatabaseMissing('rider_offers', [
+                'delivery_id' => $delivery->id,
+                'status' => 'OPEN',
+            ]);
+            $this->actingAs($buyer)->patchJson('/api/orders/'.$order->id.'/status', [
+                'status' => OrderStatus::CANCELLED->value,
+                'reason' => 'Buyer cancelled the order.',
+            ])->assertUnprocessable();
+            $this->assertSame(
+                1,
+                $buyer->notifications()->where('data->order_id', $order->id)->where('data->status', OrderStatus::CANCELLED->value)->count(),
+            );
+            $this->assertSame(3, $order->emailDeliveries()->count());
+            $this->actingAs($rider)->postJson('/api/deliveries/'.$delivery->id.'/location', [
+                'latitude' => 12.77,
+                'longitude' => 121.36,
+                'observed_at' => now()->toISOString(),
+            ])->assertForbidden();
+        }
+    }
+
+    public function test_order_cannot_be_cancelled_after_pickup_or_while_in_transit(): void
+    {
+        foreach ([DeliveryStatus::PICKED_UP, DeliveryStatus::IN_TRANSIT] as $deliveryStatus) {
+            $buyer = User::factory()->create(['role' => Role::BUYER]);
+            $seller = User::factory()->create(['role' => Role::SELLER]);
+            $rider = User::factory()->create(['role' => Role::RIDER]);
+            $order = Order::create([
+                'buyer_id' => $buyer->id,
+                'seller_id' => $seller->id,
+                'status' => OrderStatus::FULFILLING,
+                'delivery_method' => 'STANDARD_DELIVERY',
+                'payment_method' => 'COD',
+                'total_amount' => 100,
+            ]);
+            $delivery = Delivery::create([
+                'order_id' => $order->id,
+                'rider_id' => $rider->id,
+                'status' => $deliveryStatus,
+                'pickup_address' => 'Bongabong',
+                'order_qr_token_hash' => hash('sha256', 'token'),
+            ]);
+
+            $this->actingAs($buyer)->patchJson('/api/orders/'.$order->id.'/status', [
+                'status' => OrderStatus::CANCELLED->value,
+            ])->assertStatus(409)
+                ->assertJsonFragment(['message' => 'This order has been picked up. Use the delivery exception or return workflow instead of cancelling it.']);
+
+            $this->assertSame(OrderStatus::FULFILLING, $order->fresh()->status);
+            $this->assertSame($deliveryStatus, $delivery->fresh()->status);
+            $this->assertNotNull($delivery->fresh()->rider_id);
+            $this->assertSame(hash('sha256', 'token'), $delivery->fresh()->order_qr_token_hash);
+            $this->assertDatabaseMissing('notifications', [
+                'notifiable_id' => $rider->id,
+                'data->order_id' => $order->id,
+                'data->status' => OrderStatus::CANCELLED->value,
+            ]);
+        }
+    }
+
+    public function test_failed_paymongo_checkout_uses_the_same_idempotent_order_delivery_cancellation_workflow(): void
+    {
+        Config::set('services.paymongo.webhook_secret', 'test-webhook-secret');
+        Config::set('services.paymongo.secret_key', 'sk_test_example');
+        $buyer = User::factory()->create(['role' => Role::BUYER]);
+        $seller = User::factory()->create(['role' => Role::SELLER]);
+        $rider = User::factory()->create(['role' => Role::RIDER]);
+        $order = Order::create([
+            'buyer_id' => $buyer->id,
+            'seller_id' => $seller->id,
+            'status' => OrderStatus::PENDING_CONFIRMATION,
+            'delivery_method' => 'STANDARD_DELIVERY',
+            'payment_method' => 'GCASH',
+            'payment_status' => 'PENDING',
+            'paymongo_checkout_session_id' => 'cs_failed_order',
+            'total_amount' => 100,
+        ]);
+        $delivery = Delivery::create([
+            'order_id' => $order->id,
+            'status' => DeliveryStatus::RIDER_OFFERED,
+            'pickup_address' => 'Bongabong',
+        ]);
+        $offer = RiderOffer::create([
+            'delivery_id' => $delivery->id,
+            'rider_id' => $rider->id,
+            'status' => 'OPEN',
+            'distance_km' => 1,
+            'expires_at' => now()->addMinutes(10),
+        ]);
+        $payload = json_encode([
+            'data' => [
+                'type' => 'checkout_session.payment.failed',
+                'data' => ['id' => 'cs_failed_order'],
+            ],
+        ], JSON_THROW_ON_ERROR);
+        $timestamp = (string) time();
+        $signature = hash_hmac('sha256', $timestamp.'.'.$payload, 'test-webhook-secret');
+        $sendWebhook = fn () => $this->call(
+            'POST',
+            '/api/payments/paymongo/webhook',
+            [],
+            [],
+            [],
+            [
+                'HTTP_PAYMONGO_SIGNATURE' => 't='.$timestamp.',te='.$signature,
+                'CONTENT_TYPE' => 'application/json',
+            ],
+            $payload,
+        );
+
+        $sendWebhook()->assertOk();
+        $this->assertSame(OrderStatus::CANCELLED, $order->fresh()->status);
+        $this->assertSame('FAILED', $order->fresh()->payment_status);
+        $this->assertSame(DeliveryStatus::CANCELLED, $delivery->fresh()->status);
+        $this->assertSame('REVOKED', $offer->fresh()->status);
+        $this->assertSame(1, $order->statusHistory()->count());
+        $this->assertDatabaseHas('notifications', [
+            'notifiable_id' => $rider->id,
+            'data->status' => OrderStatus::CANCELLED->value,
+        ]);
+
+        $sendWebhook()->assertOk();
+        $this->assertSame(1, $order->statusHistory()->count());
+        $this->assertSame(3, $order->emailDeliveries()->count());
+        $this->assertSame(1, $buyer->notifications()->where('data->order_id', $order->id)->count());
     }
 
     public function test_no_eligible_rider_leaves_ready_order_waiting_and_assignment_retry_is_idempotent(): void
@@ -404,9 +622,17 @@ class RiderAssignmentTest extends TestCase
         ]);
 
         $this->actingAs($seller)->postJson('/api/deliveries/assign', ['order_id' => $order->id])
-            ->assertOk()->assertJsonPath('delivery.status', DeliveryStatus::RIDER_OFFERED->value);
+            ->assertOk()->assertJsonPath('delivery.status', DeliveryStatus::SEARCHING_FOR_RIDER->value);
+        $this->assertDatabaseCount('rider_offers', 2);
         $initialOffer = RiderOffer::query()->where('delivery_id', $delivery->id)->firstOrFail();
         $this->assertSame($riders[0]->id, $initialOffer->rider_id);
+        $nextOffer = RiderOffer::query()
+            ->where('delivery_id', $delivery->id)
+            ->where('rider_id', $riders[1]->id)
+            ->firstOrFail();
+        $this->assertSame('OPEN', $nextOffer->status);
+        $this->assertNotNull($nextOffer->expires_at);
+        $this->assertNull($delivery->fresh()->rider_id);
 
         $this->actingAs($outsider)->postJson('/api/riders/offers/'.$initialOffer->id.'/decline')
             ->assertForbidden();
@@ -417,12 +643,7 @@ class RiderAssignmentTest extends TestCase
             ->assertJsonPath('message', 'Delivery offer declined.')
             ->assertJsonPath('delivery.status', DeliveryStatus::SEARCHING_FOR_RIDER->value);
         $this->assertDatabaseHas('rider_offers', ['id' => $initialOffer->id, 'status' => 'DECLINED']);
-        $nextOffer = RiderOffer::query()
-            ->where('delivery_id', $delivery->id)
-            ->where('rider_id', $riders[1]->id)
-            ->firstOrFail();
         $this->assertSame('OPEN', $nextOffer->status);
-        $this->assertNull($nextOffer->expires_at);
 
         $this->actingAs($riders[0])->postJson('/api/riders/offers/'.$initialOffer->id.'/decline')
             ->assertOk()
@@ -499,6 +720,8 @@ class RiderAssignmentTest extends TestCase
             'delivery_method' => 'STANDARD_DELIVERY',
             'payment_method' => 'COD',
             'delivery_distance_km' => 6.46,
+            'delivery_distance_method' => 'OSRM_ROAD_ROUTE',
+            'delivery_fee' => 125,
             'total_amount' => 250,
             'shipping_address' => [
                 'recipient_name' => 'Private Buyer Name',
@@ -535,6 +758,8 @@ class RiderAssignmentTest extends TestCase
             ->assertJsonPath('offers.0.delivery.order.dropoff_latitude_approximate', 12.38)
             ->assertJsonPath('offers.0.delivery.order.dropoff_area', 'Cawayan, Bongabong, Oriental Mindoro')
             ->assertJsonPath('offers.0.checkout_distance_km', 6.5)
+            ->assertJsonPath('offers.0.checkout_distance_method', 'OSRM_ROAD_ROUTE')
+            ->assertJsonPath('offers.0.checkout_delivery_fee', '125.00')
             ->assertJsonMissing(['recipient_name' => 'Private Buyer Name'])
             ->assertJsonMissing(['phone_number' => '09123456789'])
             ->assertJsonMissing(['street_address' => 'Private Exact Street 123'])
@@ -548,7 +773,7 @@ class RiderAssignmentTest extends TestCase
             ->assertJsonCount(0, 'deliveries.data');
     }
 
-    public function test_standard_delivery_starts_with_one_eight_hour_offer_then_broadcasts_to_other_available_riders(): void
+    public function test_standard_delivery_broadcasts_to_all_eligible_riders_within_radius_and_notifies_them(): void
     {
         $buyer = User::factory()->create(['role' => Role::BUYER]);
         $seller = User::factory()->create(['role' => Role::SELLER]);
@@ -567,6 +792,17 @@ class RiderAssignmentTest extends TestCase
 
             return $rider;
         });
+        $outsideRider = User::factory()->create(['role' => Role::RIDER]);
+        RiderProfile::create([
+            'user_id' => $outsideRider->id,
+            'phone' => '09170000099',
+            'vehicle_type' => 'motorbike',
+            'availability' => 'AVAILABLE',
+            'is_verified' => true,
+            'latitude' => 14.600,
+            'longitude' => 120.400,
+            'last_location_at' => now(),
+        ]);
         $order = Order::create([
             'buyer_id' => $buyer->id,
             'seller_id' => $seller->id,
@@ -584,22 +820,77 @@ class RiderAssignmentTest extends TestCase
         ]);
 
         app(RiderAssignmentService::class)->dispatchForOrder($order->id);
-        $initialOffer = RiderOffer::query()->where('delivery_id', $delivery->id)->firstOrFail();
+        $offers = RiderOffer::query()->where('delivery_id', $delivery->id)->orderBy('rider_id')->get();
 
-        $this->assertSame($riders[0]->id, $initialOffer->rider_id);
-        $this->assertSame(now()->addHours(8)->timestamp, $initialOffer->expires_at->timestamp);
-        $this->assertSame(DeliveryStatus::RIDER_OFFERED, $delivery->refresh()->status);
-
-        $this->travel(8)->hours();
-        RiderProfile::query()->whereIn('user_id', $riders->pluck('id'))->update(['last_location_at' => now()]);
-        app(RiderAssignmentService::class)->processPendingDeliveries();
-
+        $this->assertCount(3, $offers);
+        $this->assertEqualsCanonicalizing($riders->pluck('id')->all(), $offers->pluck('rider_id')->all());
+        $offers->each(fn (RiderOffer $offer) => $this->assertSame(now()->addMinutes(10)->timestamp, $offer->expires_at->timestamp));
         $this->assertSame(DeliveryStatus::SEARCHING_FOR_RIDER, $delivery->refresh()->status);
-        $this->assertDatabaseHas('rider_offers', ['id' => $initialOffer->id, 'status' => 'EXPIRED']);
-        $broadcastOffers = RiderOffer::query()->where('delivery_id', $delivery->id)->where('status', 'OPEN')->get();
-        $this->assertCount(2, $broadcastOffers);
-        $this->assertEqualsCanonicalizing($riders->slice(1)->pluck('id')->all(), $broadcastOffers->pluck('rider_id')->all());
-        $this->assertNull($broadcastOffers->first()->expires_at);
+        $this->assertNull($delivery->rider_id);
+        $this->assertDatabaseMissing('rider_offers', [
+            'delivery_id' => $delivery->id,
+            'rider_id' => $outsideRider->id,
+        ]);
+        foreach ($riders as $rider) {
+            $this->assertDatabaseHas('notifications', [
+                'notifiable_id' => $rider->id,
+                'data->type' => 'rider_offer_available',
+                'data->order_id' => $order->id,
+            ]);
+        }
+    }
+
+    public function test_expired_broadcast_offers_are_closed_without_assigning_a_rider(): void
+    {
+        $buyer = User::factory()->create(['role' => Role::BUYER]);
+        $seller = User::factory()->create(['role' => Role::SELLER]);
+        $rider = User::factory()->create(['role' => Role::RIDER]);
+        RiderProfile::create([
+            'user_id' => $rider->id,
+            'phone' => '09170000098',
+            'vehicle_type' => 'motorbike',
+            'availability' => 'AVAILABLE',
+            'is_verified' => true,
+            'latitude' => 14.100,
+            'longitude' => 120.400,
+            'last_location_at' => now(),
+        ]);
+        $order = Order::create([
+            'buyer_id' => $buyer->id,
+            'seller_id' => $seller->id,
+            'status' => OrderStatus::READY_FOR_PICKUP,
+            'delivery_method' => 'STANDARD_DELIVERY',
+            'payment_method' => 'COD',
+            'total_amount' => 200,
+        ]);
+        $delivery = Delivery::create([
+            'order_id' => $order->id,
+            'status' => DeliveryStatus::WAITING_FOR_RIDER,
+            'pickup_latitude' => 14.100,
+            'pickup_longitude' => 120.400,
+            'pickup_address' => 'Bongabong',
+        ]);
+        app(RiderAssignmentService::class)->dispatchForOrder($order->id);
+        $offer = RiderOffer::query()->where('delivery_id', $delivery->id)->firstOrFail();
+        $this->travel(10)->minutes();
+        app(RiderAssignmentService::class)->processPendingDeliveries();
+        $this->assertSame(DeliveryStatus::WAITING_FOR_RIDER, $delivery->refresh()->status);
+        $this->assertDatabaseHas('rider_offers', ['id' => $offer->id, 'status' => 'EXPIRED']);
+        $this->assertNull($delivery->rider_id);
+
+        $this->actingAs($rider)->postJson('/api/riders/location', [
+            'latitude' => 14.101,
+            'longitude' => 120.401,
+        ])->assertOk();
+        $this->actingAs($rider)->getJson('/api/riders/offers')
+            ->assertOk()
+            ->assertJsonCount(1, 'offers');
+        $this->assertDatabaseHas('rider_offers', [
+            'delivery_id' => $delivery->id,
+            'rider_id' => $rider->id,
+            'status' => 'OPEN',
+        ]);
+        $this->assertSame(DeliveryStatus::RIDER_OFFERED, $delivery->fresh()->status);
     }
 
     public function test_simultaneous_claims_cannot_duplicate_delivery_or_assign_rider_to_two_active_deliveries(): void
@@ -638,9 +929,6 @@ class RiderAssignmentTest extends TestCase
         ]);
         $assignment = app(RiderAssignmentService::class);
         $assignment->dispatchForOrder($order->id);
-        $this->travel(8)->hours();
-        RiderProfile::query()->whereIn('user_id', $riders->pluck('id'))->update(['last_location_at' => now()]);
-        $assignment->processPendingDeliveries();
         $offers = RiderOffer::query()->where('delivery_id', $delivery->id)->where('status', 'OPEN')->orderBy('rider_id')->get();
         $winnerOffer = $offers->firstWhere('rider_id', $riders[1]->id);
         $otherOffer = $offers->firstWhere('rider_id', $riders[2]->id);

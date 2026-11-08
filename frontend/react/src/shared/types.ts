@@ -11,6 +11,14 @@ export type User = {
     email_verified_at?: string | null;
     created_at?: string | null;
     profile_photo_url?: string | null;
+    rider_profile?: {
+        is_verified: boolean;
+        availability?: 'AVAILABLE' | 'OFFLINE';
+        vehicle_type?: string | null;
+        plate_number?: string | null;
+        vehicle_make_model?: string | null;
+        vehicle_color?: string | null;
+    } | null;
 };
 
 export type Category = { id: number; name: string; slug: string };

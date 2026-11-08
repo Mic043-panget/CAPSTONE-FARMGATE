@@ -61,6 +61,9 @@ type RiderDelivery = {
         order_reference: string;
         status: string;
         total_amount: string | number;
+        delivery_fee: string | number;
+        delivery_distance_km: string | number | null;
+        delivery_distance_method: 'OSRM_ROAD_ROUTE' | 'OSRM_BARANGAY_ESTIMATE' | null;
         delivery_method?: string;
         shipping_address?: {
             recipient_name?: string;
@@ -108,10 +111,92 @@ function locationFor(order: RiderDelivery['order']): string {
     ].filter(Boolean).join(', ') || 'Drop-off address is not available';
 }
 
-function qrCode(rawValue: string): { purpose: 'pickup' | 'delivery'; token: string } | null {
-    const match = /^FARMGATE:(PICKUP|DELIVERY):([A-Za-z0-9]{64})$/i.exec(rawValue.trim());
+function qrCode(rawValue: string): { purpose: 'pickup' | 'delivery' | 'order'; token: string } | null {
+    const match = /^FARMGATE:(PICKUP|DELIVERY|ORDER):([A-Za-z0-9]{64})$/i.exec(rawValue.trim());
     if (!match) return null;
-    return { purpose: match[1].toLowerCase() as 'pickup' | 'delivery', token: match[2] };
+    return { purpose: match[1].toLowerCase() as 'pickup' | 'delivery' | 'order', token: match[2] };
+}
+
+function DeliveryProofCapture({ delivery, onSaved }: { delivery: RiderDelivery; onSaved: () => void }) {
+    const [photo, setPhoto] = React.useState<File | null>(null);
+    const [previewUrl, setPreviewUrl] = React.useState('');
+    const [recipientName, setRecipientName] = React.useState('');
+    const [recipientConfirmed, setRecipientConfirmed] = React.useState(false);
+    const [capturedAt, setCapturedAt] = React.useState('');
+    const [saving, setSaving] = React.useState(false);
+    const [message, setMessage] = React.useState('');
+    const [error, setError] = React.useState('');
+    const inputRef = React.useRef<HTMLInputElement>(null);
+
+    React.useEffect(() => {
+        if (!photo) {
+            setPreviewUrl('');
+            return undefined;
+        }
+        const url = URL.createObjectURL(photo);
+        setPreviewUrl(url);
+        return () => URL.revokeObjectURL(url);
+    }, [photo]);
+
+    function selectPhoto(file: File | null) {
+        setError('');
+        setMessage('');
+        setPhoto(file);
+        setCapturedAt(file ? new Date().toISOString() : '');
+    }
+
+    async function saveProof(event: React.FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+        if (!photo || !recipientName.trim() || !recipientConfirmed || saving) {
+            setError('Capture a delivery photo, enter the recipient name, and confirm receipt before saving.');
+            return;
+        }
+        setSaving(true);
+        setError('');
+        setMessage('');
+        const formData = new FormData();
+        formData.append('photo', photo);
+        formData.append('recipient_name', recipientName.trim());
+        formData.append('recipient_confirmed', '1');
+        formData.append('captured_at', capturedAt);
+        try {
+            const response = await api.post<{ message: string }>(`/api/deliveries/${delivery.id}/proof`, formData);
+            setMessage(response.data.message);
+            setPhoto(null);
+            setRecipientName('');
+            setRecipientConfirmed(false);
+            setCapturedAt('');
+            if (inputRef.current) inputRef.current.value = '';
+            onSaved();
+        } catch (requestError: any) {
+            setError(requestError.userMessage ?? requestError.response?.data?.message ?? 'Delivery proof could not be saved. Check your connection and try again.');
+        } finally {
+            setSaving(false);
+        }
+    }
+
+    if (!activeStatuses.has(delivery.status) || !['PICKED_UP', 'IN_TRANSIT'].includes(delivery.status)) return null;
+    if (delivery.has_delivery_proof) return <p className="rider-proof-saved" role="status">Delivery photo and recipient confirmation are saved. Scan the same order QR at the buyer location to complete delivery.</p>;
+
+    return <form className="rider-proof-capture" onSubmit={(event) => void saveProof(event)}>
+        <h4>Delivery proof</h4>
+        <p>Capture and save a delivery photo with recipient confirmation before scanning the order QR at drop-off.</p>
+        {previewUrl ? <div className="rider-proof-preview">
+            <img src={previewUrl} alt="Preview of delivery proof photo" />
+            <div><button type="button" className="seller-inline-action" disabled={saving} onClick={() => {
+                selectPhoto(null);
+                if (inputRef.current) inputRef.current.value = '';
+            }}>Retake photo</button><span>Review the photo before saving.</span></div>
+        </div> : <label className="rider-proof-photo-control">Capture delivery photo
+            <input ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" required onChange={(event) => selectPhoto(event.target.files?.[0] ?? null)} />
+        </label>}
+        <p className="rider-qr-help">If camera access is denied, allow camera permission in your browser settings or choose a saved photo with the same control.</p>
+        <label>Recipient name<input value={recipientName} onChange={(event) => setRecipientName(event.target.value)} required maxLength={120} autoComplete="name" /></label>
+        <label className="rider-proof-confirmation"><input type="checkbox" checked={recipientConfirmed} onChange={(event) => setRecipientConfirmed(event.target.checked)} required />Recipient confirmed they received this order.</label>
+        {error && <p className="rider-delivery-error" role="alert">{error}</p>}
+        {message && <p className="rider-location-notice" role="status">{message}</p>}
+        <button type="submit" className="seller-inline-action" disabled={saving || !photo || !recipientName.trim() || !recipientConfirmed}>{saving ? 'Saving proof…' : 'Confirm and save proof'}</button>
+    </form>;
 }
 
 function DeliveryVerification({ delivery, onVerified, onError, autoExpand = false }: {
@@ -125,14 +210,8 @@ function DeliveryVerification({ delivery, onVerified, onError, autoExpand = fals
     const [scanning, setScanning] = React.useState(false);
     const [scanningMessage, setScanningMessage] = React.useState('');
     const [submitting, setSubmitting] = React.useState(false);
-    const [photo, setPhoto] = React.useState<File | null>(null);
-    const [recipientName, setRecipientName] = React.useState('');
-    const [recipientConfirmed, setRecipientConfirmed] = React.useState(false);
-    const [photoCapturedAt, setPhotoCapturedAt] = React.useState('');
-    const [locationNotice, setLocationNotice] = React.useState('');
     const [videoReady, setVideoReady] = React.useState(false);
     const videoRef = React.useRef<HTMLVideoElement>(null);
-    const photoInputRef = React.useRef<HTMLInputElement>(null);
     const streamRef = React.useRef<MediaStream | null>(null);
     const submittedRef = React.useRef(false);
 
@@ -193,65 +272,42 @@ function DeliveryVerification({ delivery, onVerified, onError, autoExpand = fals
         if (submitting) return;
         const parsed = qrCode(scanValue);
         if (!parsed) {
-            onError('Enter the complete FARMGATE pickup or delivery QR code.');
+            onError('Enter the complete FARMGATE order QR code.');
             return;
         }
         const expectedPurpose = ['RIDER_ACCEPTED', 'PICKUP_PENDING'].includes(delivery.status) ? 'pickup' : 'delivery';
-        if (parsed.purpose !== expectedPurpose) {
+        if (parsed.purpose !== 'order' && parsed.purpose !== expectedPurpose) {
             onError(`This delivery currently requires a ${expectedPurpose} QR code.`);
+            return;
+        }
+        if (expectedPurpose === 'delivery' && !delivery.has_delivery_proof) {
+            onError('Save delivery photo proof and recipient confirmation from My Deliveries before scanning the order QR at drop-off.');
             return;
         }
         setSubmitting(true);
         submittedRef.current = true;
         try {
-            const endpoint = parsed.purpose === 'pickup'
+            const endpoint = expectedPurpose === 'pickup'
                 ? `/api/deliveries/${delivery.id}/pickup-verify`
                 : `/api/deliveries/${delivery.id}/delivery-verify`;
             let position: GeolocationPosition | null = null;
-            if (parsed.purpose === 'pickup' || navigator.geolocation) {
+            if (navigator.geolocation) {
                 try {
-                    if (!navigator.geolocation) throw new Error('Location services are unavailable in this browser.');
                     position = await new Promise<GeolocationPosition>((resolve, reject) => {
                         navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 15_000, maximumAge: 0 });
                     });
-                    setLocationNotice('');
                 } catch (locationError) {
-                    if (parsed.purpose === 'pickup') {
-                        throw new Error('Pickup verification needs location. Allow location access and retry, or ask the seller to refresh the QR.');
-                    }
-                    setLocationNotice('Location was not shared. This is optional; the delivery will continue with the required photo and recipient confirmation.');
+                    throw new Error('QR verification needs your current location. Allow location access and retry at the seller pickup or buyer delivery location.');
                 }
             } else {
-                setLocationNotice('Location services are unavailable. Location is optional for delivery proof.');
+                throw new Error('Location services are unavailable in this browser. Enable location access to verify the pickup or delivery.');
             }
-            if (parsed.purpose === 'pickup') {
-                await api.post(endpoint, {
-                    qr_token: parsed.token,
-                    latitude: position!.coords.latitude,
-                    longitude: position!.coords.longitude,
-                });
-            } else {
-                if (!photo || !recipientName.trim() || !recipientConfirmed) {
-                    throw new Error('Add a delivery photo, recipient name, and recipient confirmation before submitting.');
-                }
-                const formData = new FormData();
-                formData.append('qr_token', parsed.token);
-                formData.append('photo', photo);
-                formData.append('recipient_name', recipientName.trim());
-                formData.append('recipient_confirmed', '1');
-                formData.append('captured_at', photoCapturedAt || new Date().toISOString());
-                if (position) {
-                    formData.append('latitude', String(position.coords.latitude));
-                    formData.append('longitude', String(position.coords.longitude));
-                }
-                await api.post(endpoint, formData);
-            }
+            await api.post(endpoint, {
+                qr_token: parsed.token,
+                latitude: position!.coords.latitude,
+                longitude: position!.coords.longitude,
+            });
             setScanValue('');
-            setPhoto(null);
-            if (photoInputRef.current) photoInputRef.current.value = '';
-            setRecipientName('');
-            setRecipientConfirmed(false);
-            setPhotoCapturedAt('');
             setScanning(false);
             setExpanded(false);
             onVerified();
@@ -270,28 +326,13 @@ function DeliveryVerification({ delivery, onVerified, onError, autoExpand = fals
         <button type="button" className="rider-inline-action" onClick={() => { setScanning(false); setExpanded((open) => !open); }}>{expanded ? 'Close scanner' : action}</button>
         {expanded && <form className="rider-qr-form" onSubmit={(event) => void submitCode(event)}>
             <p>{action === 'Verify pickup'
-                ? 'Scan the pickup QR and allow location access. Pickup must be within 250 metres of the saved map pin.'
-                : 'Scan the delivery QR and record a recipient confirmation with a delivery photo. Location is optional; if supplied it must be near the saved map pin.'}</p>
+                ? 'Scan the order QR and allow location access. Pickup must be within the configured distance of the seller pin.'
+                : 'After saving proof in My Deliveries, scan the same order QR at the buyer location. Location access is required and must be within the configured distance of the saved pin.'}</p>
             <video ref={videoRef} className="rider-qr-video" playsInline muted aria-label="Camera QR scanner" />
             {videoReady && scanningMessage === '' && <p role="status">Point the rear camera at the FARMGATE QR code.</p>}
             {scanningMessage && <p className="rider-qr-help" role="status">{scanningMessage}</p>}
-            <label>QR value<input value={scanValue} onChange={(event) => setScanValue(event.target.value)} autoComplete="off" placeholder="FARMGATE:PICKUP:…" /></label>
-            {action === 'Verify delivery' && <>
-                <label>Delivery photo (required)
-                    <input ref={photoInputRef} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" required onChange={(event) => {
-                        const selected = event.target.files?.[0] ?? null;
-                        setPhoto(selected);
-                        setPhotoCapturedAt(selected ? new Date().toISOString() : '');
-                    }} />
-                </label>
-                <p className="rider-qr-help">If camera access is denied or unavailable, use the same control to choose a photo from your device. A failed upload can be retried; delivery will not complete until the server saves the proof.</p>
-                <label>Recipient name<input value={recipientName} onChange={(event) => setRecipientName(event.target.value)} required maxLength={120} autoComplete="name" /></label>
-                <label className="rider-proof-confirmation">
-                    <input type="checkbox" checked={recipientConfirmed} onChange={(event) => setRecipientConfirmed(event.target.checked)} required />
-                    Recipient confirmed they received this order.
-                </label>
-                {locationNotice && <p className="rider-qr-help" role="status">{locationNotice}</p>}
-            </>}
+            <label>QR value<input value={scanValue} onChange={(event) => setScanValue(event.target.value)} autoComplete="off" placeholder="FARMGATE:ORDER:…" /></label>
+            {action === 'Verify delivery' && <p className="rider-qr-help">Proof {delivery.has_delivery_proof ? 'is saved' : 'is not saved yet'}; use My Deliveries to capture and save the photo first.</p>}
             <div className="rider-qr-actions">
                 <button type="button" onClick={() => { setScanning((value) => !value); setScanningMessage(''); }}>{scanning ? 'Stop camera' : 'Use camera'}</button>
                 <button type="submit" disabled={submitting || !scanValue.trim()}>{submitting ? 'Verifying…' : action}</button>
@@ -543,9 +584,11 @@ export function RiderDashboard({ user, onUserUpdated, onError, onLogout }: {
         }
     }
 
-    async function updateRiderLocation() {
+    const updateRiderLocation = React.useCallback(async (reportFailure = true) => {
         if (!navigator.geolocation) {
-            onError('This device does not support location access.');
+            const message = 'This device does not support location access. Nearby delivery offers require a recent location.';
+            setLocationNotice(message);
+            if (reportFailure) onError(message);
             return;
         }
 
@@ -561,14 +604,27 @@ export function RiderDashboard({ user, onUserUpdated, onError, onLogout }: {
             const { latitude, longitude } = position.coords;
             await api.post('/api/riders/location', { latitude, longitude });
             setRiderLocation({ latitude, longitude, updated_at: new Date().toISOString() });
-            setLocationNotice('Your nearby-orders map is using your latest reported location.');
+            setLocationNotice('Your location was updated for nearby delivery offers.');
             await refreshSummary(false);
         } catch (requestError: any) {
-            onError(requestError.userMessage ?? requestError.message ?? 'Your location could not be updated.');
+            const message = requestError.userMessage ?? requestError.message ?? 'Your location could not be updated.';
+            setLocationNotice(`${message} Nearby offers require a recent location; use Refresh my location to try again.`);
+            if (reportFailure) onError(message);
         } finally {
             setLocationUpdating(false);
         }
-    }
+    }, [onError, refreshSummary]);
+
+    React.useEffect(() => {
+        if (summary?.availability !== 'AVAILABLE') return undefined;
+
+        void updateRiderLocation(false);
+        const interval = window.setInterval(() => {
+            void updateRiderLocation(false);
+        }, 10 * 60 * 1000);
+
+        return () => window.clearInterval(interval);
+    }, [summary?.availability, updateRiderLocation]);
 
     function refreshDeliveries() {
         setDeliveryRevision((revision) => revision + 1);
@@ -736,8 +792,8 @@ export function RiderDashboard({ user, onUserUpdated, onError, onLogout }: {
                             <React.Suspense fallback={<div className="rider-nearby-map rider-map-loading" role="status">Loading map…</div>}>
                                 <NearbyOrdersMap offers={offers} selectedOfferId={selectedOfferId} riderLocation={riderLocation} onSelectOffer={setSelectedOfferId} />
                             </React.Suspense>
-                            <p className="rider-map-privacy-note">P = pickup, D = approximate drop-off. Pins and direct-distance estimates are approximate; exact buyer details stay hidden until assignment. Road routing is available after assignment.</p>
-                            {offers.length === 0 ? <p className="rider-offers-empty">No delivery offers right now. New requests refresh automatically.</p>
+                            <p className="rider-map-privacy-note">P = pickup, D = approximate drop-off. Offer-map distances are approximate; checkout distance is the saved road route. Exact buyer details stay hidden until assignment.</p>
+                            {offers.length === 0 ? <p className="rider-offers-empty">No delivery offers right now. Only standard-delivery orders marked Ready for Pickup with confirmed payment and a valid seller pickup location are offered to verified, available riders within the configured distance. Refreshing your location retries eligible expired offers. Accept an offer to add it to My Deliveries.</p>
                                 : <div className="rider-offers-list">{offers.map((offer) => {
                                     const selected = selectedOfferId === offer.id;
                                     return <article className={`rider-offer-card ${selected ? 'is-selected' : ''}`} key={offer.id}>
@@ -747,7 +803,10 @@ export function RiderDashboard({ user, onUserUpdated, onError, onLogout }: {
                                         </button>
                                         <p><b>Pickup area:</b> {offer.delivery.pickup_area}</p>
                                         <p><b>Drop-off area:</b> {offer.delivery.order.dropoff_area}</p>
-                                        <p><b>Checkout direct-distance estimate:</b> {offer.checkout_distance_km === null ? 'Not available' : `about ${Number(offer.checkout_distance_km).toFixed(1)} km`}</p>
+                                        <p><b>Checkout distance:</b> {offer.checkout_distance_km === null
+                                            ? 'Not available'
+                                            : `${Number(offer.checkout_distance_km).toFixed(1)} km (${offer.checkout_distance_method === 'OSRM_BARANGAY_ESTIMATE' ? 'barangay-level road distance estimate' : 'OSRM road route'})`}</p>
+                                        <p><b>Buyer checkout delivery fee:</b> {offer.checkout_delivery_fee === null ? 'Not available' : `₱${Number(offer.checkout_delivery_fee).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</p>
                                         {offer.expires_at && <p className="rider-offer-expiry">Offer expires {new Date(offer.expires_at).toLocaleString()}</p>}
                                         <button type="button" disabled={actingOnOfferId !== null} onClick={() => void acceptOffer(offer)}>
                                             {actingOnOfferId === offer.id ? 'Checking availability…' : 'Accept delivery'}
@@ -800,10 +859,15 @@ export function RiderDashboard({ user, onUserUpdated, onError, onLogout }: {
                                 <h3 id={`delivery-status-${status}`}>{statusLabel(status)} <span>{group.length}</span></h3>
                                 <div className="rider-delivery-list">{group.map((delivery) => <article className="rider-delivery-card" key={delivery.id}>
                                     <div className="rider-delivery-card-heading"><div><p className="eyebrow">Order {delivery.order.order_reference}</p><h4>{statusLabel(delivery.status)}</h4></div><strong>₱{Number(delivery.order.total_amount).toLocaleString()}</strong></div>
+                                    {delivery.order.delivery_distance_km !== null && <p>{Number(delivery.order.delivery_distance_km).toFixed(2)} km ({delivery.order.delivery_distance_method === 'OSRM_BARANGAY_ESTIMATE' ? 'barangay-level road distance estimate' : 'OSRM road route'}) · Buyer delivery fee ₱{Number(delivery.order.delivery_fee).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>}
                                     <div className="rider-delivery-addresses"><p><b>Pickup</b><span>{delivery.pickup_address ?? delivery.order.seller?.name ?? 'Seller location'}</span></p><p><b>Drop-off</b><span>{locationFor(delivery.order)}</span></p><p><b>Buyer</b><span>{delivery.order.shipping_address?.recipient_name ?? delivery.order.buyer?.name ?? 'Buyer'}{delivery.order.buyer?.phone_number ? ` · ${delivery.order.buyer.phone_number}` : ''}</span></p></div>
                                     {activeStatuses.has(delivery.status) && <div className="rider-delivery-actions">
                                         <button type="button" className="seller-inline-action" onClick={() => toggleLocationSharing(delivery.id)}>{sharingDeliveryId === delivery.id ? 'Stop sharing location' : 'Share live location'}</button>
                                     </div>}
+                                    <DeliveryProofCapture delivery={delivery} onSaved={() => {
+                                        refreshDeliveries();
+                                        void refreshSummary(false);
+                                    }} />
                                     {sharingDeliveryId === delivery.id && locationNotice && <p className="rider-location-notice" role="status">{locationNotice}</p>}
                                     {delivery.status === 'DELIVERED' && <DeliveryProofSummary
                                         deliveryId={delivery.id}

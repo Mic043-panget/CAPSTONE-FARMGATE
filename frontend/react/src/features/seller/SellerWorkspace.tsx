@@ -3,6 +3,7 @@ import api, { initializeCsrf } from '../../lib/api';
 import type { Category, Listing, User } from '../../shared/types';
 import { Pagination } from '../../shared/components/Pagination';
 import { ComplaintList } from './ComplaintList';
+import { ReviewList } from './ReviewList';
 import { SellerListingForm } from './SellerListingForm';
 import { SellerListingEditor } from './SellerListingEditor';
 import { ReportPanel } from '../shared/ReportPanel';
@@ -16,7 +17,7 @@ import { NavigationBadge, navigationBadgeLabel } from '../../shared/components/N
 
 const LocationMap = React.lazy(() => import('../../shared/components/LocationMap').then((module) => ({ default: module.LocationMap })));
 
-type SellerPage = 'dashboard' | 'orders' | 'notifications' | 'listings' | 'promotions' | 'interests' | 'complaints' | 'reports' | 'chats' | 'location' | 'account';
+type SellerPage = 'dashboard' | 'orders' | 'notifications' | 'listings' | 'promotions' | 'interests' | 'complaints' | 'reviews' | 'reports' | 'chats' | 'location' | 'account';
 type SellerSettingsTab = 'profile' | 'password' | 'phone' | 'preferences' | 'pickup';
 type SellerNavigationBadge = 'orders' | 'notifications' | 'complaints' | 'chats';
 type SellerAccountPreference = 'order_notifications' | 'chat_notifications' | 'allow_direct_messages';
@@ -77,6 +78,7 @@ const navigation: { id: SellerPage; label: string; icon: string; badge?: SellerN
     { id: 'listings', label: 'My listings', icon: '▤' },
     { id: 'promotions', label: 'Promotions', icon: '％' },
     { id: 'complaints', label: 'Complaints', icon: '!', badge: 'complaints' },
+    { id: 'reviews', label: 'Reviews', icon: '★' },
     { id: 'reports', label: 'Reports', icon: '▥' },
     { id: 'chats', label: 'Chats', icon: '✦', badge: 'chats' },
     { id: 'account', label: 'Settings', icon: '◉' },
@@ -116,7 +118,9 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
     const [listingFormOpen, setListingFormOpen] = React.useState(false);
     const [notice, setNotice] = React.useState<string | null>(null);
     const [pickupLocation, setPickupLocation] = React.useState<{ latitude: number; longitude: number } | null>(null);
+    const [pickupLocationConfirmed, setPickupLocationConfirmed] = React.useState(false);
     const [locationLoading, setLocationLoading] = React.useState(false);
+    const [locationLocating, setLocationLocating] = React.useState(false);
     const [locationSaving, setLocationSaving] = React.useState(false);
     const [phoneNumber, setPhoneNumber] = React.useState(user.phone_number ?? '');
     const [phoneCode, setPhoneCode] = React.useState('');
@@ -294,10 +298,11 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
     React.useEffect(() => {
         if (page !== 'location' && page !== 'account') return;
         setLocationLoading(true);
-        api.get<{ profile: { latitude: number | null; longitude: number | null; business_name: string | null; phone: string | null; address: string | null } }>('/api/seller/profile')
+        api.get<{ profile: { latitude: number | null; longitude: number | null; pickup_location_confirmed: boolean; business_name: string | null; phone: string | null; address: string | null } }>('/api/seller/profile')
             .then((response) => {
-                const { latitude, longitude, business_name, phone, address } = response.data.profile;
+                const { latitude, longitude, pickup_location_confirmed, business_name, phone, address } = response.data.profile;
                 setPickupLocation(latitude !== null && longitude !== null ? { latitude, longitude } : null);
+                setPickupLocationConfirmed(pickup_location_confirmed);
                 setBusinessName(business_name ?? '');
                 setBusinessPhone(phone ?? '');
                 setBusinessAddress(address ?? '');
@@ -497,6 +502,38 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
         }
     }
 
+    function locatePickupLocation() {
+        if (!navigator.geolocation) {
+            onError('Location services are unavailable. Use a supported browser over HTTPS or localhost.');
+            return;
+        }
+
+        setLocationLocating(true);
+        navigator.geolocation.getCurrentPosition(
+            (position) => {
+                setPickupLocation({
+                    latitude: position.coords.latitude,
+                    longitude: position.coords.longitude,
+                });
+                setPickupLocationConfirmed(false);
+                setNotice('Current location added to the map. Save the pickup location to apply it to your business.');
+                setLocationLocating(false);
+            },
+            (error) => {
+                const message = error.code === error.PERMISSION_DENIED
+                    ? 'Location access was denied. Allow location access in your browser settings or move the map pin manually.'
+                    : error.code === error.POSITION_UNAVAILABLE
+                        ? 'Your current location is unavailable. Try again or move the map pin manually.'
+                        : error.code === error.TIMEOUT
+                            ? 'Finding your location timed out. Try again or move the map pin manually.'
+                            : 'Your location could not be accessed. Try again or move the map pin manually.';
+                onError(message);
+                setLocationLocating(false);
+            },
+            { enableHighAccuracy: true, timeout: 15_000, maximumAge: 0 },
+        );
+    }
+
     async function savePickupLocation() {
         if (!pickupLocation) return;
         if (!await confirmAction({
@@ -508,6 +545,7 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
         try {
             await initializeCsrf();
             await api.put('/api/seller/profile/location', pickupLocation);
+            setPickupLocationConfirmed(true);
             setNotice('Pickup location saved. Delivery distance will be calculated from this map pin.');
             showSuccess('Pickup location saved.');
         } catch (requestError: any) {
@@ -635,6 +673,7 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
         }
 
         if (page === 'complaints') return <ComplaintList onError={onError} />;
+        if (page === 'reviews') return <ReviewList onError={onError} />;
         if (page === 'chats') return <AIChatPage
             role="SELLER"
             reportContext={reportContext}
@@ -729,12 +768,17 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
                 </section>
                 <section className="seller-settings-section" id="seller-settings-panel-pickup" role="tabpanel" aria-labelledby="seller-settings-tab-pickup" hidden={settingsTab !== 'pickup'} tabIndex={-1}>
                     <div className="seller-work-heading"><div><p className="eyebrow">Delivery setup</p><h3 id="seller-pickup-location-heading">Pickup location</h3></div></div>
-                    <p className="seller-location-help">New seller accounts start at the Bongabong map center as an approximate pickup location. Move the pin to the exact place where buyers or delivery providers should collect livestock; checkout and order route maps use the saved location.</p>
+                    <p className="seller-location-help">Delivery fees require a pickup pin that you have explicitly saved. Move the pin to the exact place where buyers or delivery providers should collect livestock; the map-center pin is only a visual starting point and is never used until you save it.</p>
                     {locationLoading ? <p className="seller-loading">Loading pickup location...</p> : <>
+                        <button className="seller-inline-action" type="button" disabled={locationLocating || locationSaving} onClick={locatePickupLocation}>{locationLocating ? 'Locating...' : 'Use my current location'}</button>
                         <React.Suspense fallback={<p className="seller-loading">Loading location map...</p>}>
-                            <LocationMap latitude={pickupLocation?.latitude ?? 12.7321} longitude={pickupLocation?.longitude ?? 121.3654} onChange={(latitude, longitude) => setPickupLocation({ latitude, longitude })} tooltip="Drag to your livestock pickup location" />
+                            <LocationMap latitude={pickupLocation?.latitude ?? 12.7321} longitude={pickupLocation?.longitude ?? 121.3654} onChange={(latitude, longitude) => {
+                                setPickupLocation({ latitude, longitude });
+                                setPickupLocationConfirmed(false);
+                            }} tooltip="Drag to your livestock pickup location" />
                         </React.Suspense>
                         {pickupLocation && <p className="seller-location-coordinates">{pickupLocation.latitude.toFixed(5)}, {pickupLocation.longitude.toFixed(5)}</p>}
+                        {pickupLocationConfirmed && <p className="seller-notice" role="status">Pickup pin saved and confirmed.</p>}
                         <button className="seller-inline-action" type="button" disabled={!pickupLocation || locationSaving} onClick={savePickupLocation}>{locationSaving ? 'Saving...' : 'Save pickup location'}</button>
                         {!pickupLocation && <p className="seller-location-help">Click the map or drag the pin to your business pickup location before saving.</p>}
                     </>}

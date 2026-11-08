@@ -9,7 +9,11 @@ class RiderProfile extends \Illuminate\Database\Eloquent\Model
 {
     use HasFactory, \Illuminate\Database\Eloquent\SoftDeletes;
 
-    protected $fillable = ['user_id', 'phone', 'vehicle_type', 'is_verified', 'availability', 'latitude', 'longitude', 'last_location_at'];
+    protected $fillable = [
+        'user_id', 'phone', 'vehicle_type', 'plate_number', 'vehicle_make_model', 'vehicle_color',
+        'license_expires_on', 'vehicle_registration_expires_on', 'is_verified', 'availability',
+        'latitude', 'longitude', 'last_location_at',
+    ];
 
     protected function casts(): array
     {
@@ -18,6 +22,8 @@ class RiderProfile extends \Illuminate\Database\Eloquent\Model
             'latitude' => 'float',
             'longitude' => 'float',
             'last_location_at' => 'datetime',
+            'license_expires_on' => 'date',
+            'vehicle_registration_expires_on' => 'date',
         ];
     }
 

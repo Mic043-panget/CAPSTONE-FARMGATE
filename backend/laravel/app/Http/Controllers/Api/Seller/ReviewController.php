@@ -14,6 +14,6 @@ class ReviewController extends Controller
     {
         abort_unless($request->user()?->role === Role::SELLER, 403);
 
-        return response()->json(['reviews' => Review::query()->with('buyer:id,name')->where('seller_id', $request->user()->id)->where('status', 'PUBLISHED')->latest()->paginate(15)]);
+        return response()->json(['reviews' => Review::query()->with(['buyer:id,name', 'listing:id,name', 'media:id,review_id,mime_type,original_name'])->where('seller_id', $request->user()->id)->where('status', 'PUBLISHED')->latest()->paginate(15)]);
     }
 }

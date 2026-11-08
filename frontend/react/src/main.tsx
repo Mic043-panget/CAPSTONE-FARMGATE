@@ -7,6 +7,7 @@ import { ListingDetails } from './features/buyer/ListingDetails';
 import { NotificationsPage } from './features/buyer/NotificationsPage';
 import { AdminWorkspace } from './features/admin/AdminWorkspace';
 import { RiderDashboard } from './features/rider/RiderDashboard';
+import { RiderRegistrationPage } from './features/rider/RiderRegistrationPage';
 import { SellerWorkspace } from './features/seller/SellerWorkspace';
 import { AIChatPage } from './features/shared/AIChatPage';
 import { OrderVerificationPage } from './features/shared/OrderVerificationPage';
@@ -787,6 +788,14 @@ function FarmgateApp() {
     const newListingsPhoto = listingPhotos[1] ?? { url: '/images/farmgate-cattle-pasture.jpg', alt: 'Cattle grazing in a sunny pasture' };
     const localDealsPhoto = listingPhotos[2] ?? listingPhotos[0] ?? { url: '/images/farmgate-cattle-field.jpg', alt: 'Local livestock in a farm field' };
 
+    if (window.location.pathname === '/rider/register') {
+        return <RiderRegistrationPage initialUser={user ?? undefined} onError={reportError} onLogout={logout} />;
+    }
+
+    if (user?.role === 'RIDER' && !user.rider_profile?.is_verified) {
+        return <RiderRegistrationPage initialUser={user} onError={reportError} onLogout={logout} />;
+    }
+
     if (loading && !user) {
         return <main className="app-shell"><div className="loading-state"><span className="loading-mark" />Loading FARMGATE...</div></main>;
     }
@@ -835,7 +844,7 @@ function FarmgateApp() {
             </header>
             {user?.role === 'BUYER' && <BuyerCart open={cartOpen} onClose={() => setCartOpen(false)} onCheckout={() => { setCheckoutBuyNow(null); setCartOpen(false); setCheckoutOpen(true); }} onCartCountChange={setCartCount} onError={reportError} />}
             {checkoutOpen && user?.role === 'BUYER' && <CheckoutPage user={user} buyNow={checkoutBuyNow} onCancel={() => setCheckoutOpen(false)} onComplete={(_orderId, fromCart) => { if (fromCart) setCartCount(0); setCheckoutOpen(false); setCheckoutBuyNow(null); }} onError={reportError} />}
-            {orderDetailsId !== null && user?.role === 'BUYER' ? <React.Suspense fallback={<section className="buyer-profile-main" aria-busy="true"><p className="buyer-orders-loading">Loading order details...</p></section>}><OrderDetailsPage orderId={orderDetailsId} user={user} onBack={navigateOrderList} onChatWithSeller={(sellerId) => void startOrderChat(sellerId, orderDetailsId)} onError={reportError} /></React.Suspense> : productListingId !== null ? <ListingDetails listingId={productListingId} canPurchase={user?.role === 'BUYER'} onBack={() => navigateMarketplace('all')} onOpenListing={navigateListingDetails} onAddToCart={addListingToCart} onBuyNow={buyListingNow} onError={reportError} /> : user?.role === 'BUYER' && buyerTab === 'chats' ? <AIChatPage role="BUYER" initialConversationId={chatDetails.conversationId ?? undefined} orderId={chatDetails.orderId ?? undefined} onUnreadMessagesRead={refreshBuyerNavigationCounts} /> : user?.role === 'BUYER' && buyerTab === 'notifications' ? <NotificationsPage onOpenOrder={navigateOrderDetails} onOpenConversation={navigateBuyerChat} onNotificationsRead={clearBuyerNotificationBadge} /> : buyerTab === 'profile' && user?.role === 'BUYER' ? <React.Suspense fallback={<section className="buyer-profile-main" aria-busy="true"><p className="buyer-orders-loading">Loading your account...</p></section>}><BuyerProfile user={user} onUserUpdated={setUser} onLogout={logout} onNavigateHome={() => navigateBuyerTab('home')} onOpenOrder={navigateOrderDetails} /></React.Suspense> : isEventsPage ? <section className="events-page" aria-labelledby="events-page-title"><a href="#marketplace" onClick={openMarketplace}>Back to the marketplace</a><p className="eyebrow">Community calendar</p><h1 id="events-page-title">FarmGate Events</h1><p>No upcoming events have been announced.</p></section> : <>
+            {orderDetailsId !== null && user?.role === 'BUYER' ? <React.Suspense fallback={<section className="buyer-profile-main" aria-busy="true"><p className="buyer-orders-loading">Loading order details...</p></section>}><OrderDetailsPage orderId={orderDetailsId} user={user} onBack={navigateOrderList} onChatWithSeller={(sellerId) => void startOrderChat(sellerId, orderDetailsId)} onError={reportError} /></React.Suspense> : productListingId !== null ? <ListingDetails listingId={productListingId} canPurchase={user?.role === 'BUYER'} canReport={user?.role === 'BUYER'} onBack={() => navigateMarketplace('all')} onOpenListing={navigateListingDetails} onAddToCart={addListingToCart} onBuyNow={buyListingNow} onError={reportError} /> : user?.role === 'BUYER' && buyerTab === 'chats' ? <AIChatPage role="BUYER" initialConversationId={chatDetails.conversationId ?? undefined} orderId={chatDetails.orderId ?? undefined} onUnreadMessagesRead={refreshBuyerNavigationCounts} /> : user?.role === 'BUYER' && buyerTab === 'notifications' ? <NotificationsPage onOpenOrder={navigateOrderDetails} onOpenConversation={navigateBuyerChat} onNotificationsRead={clearBuyerNotificationBadge} /> : buyerTab === 'profile' && user?.role === 'BUYER' ? <React.Suspense fallback={<section className="buyer-profile-main" aria-busy="true"><p className="buyer-orders-loading">Loading your account...</p></section>}><BuyerProfile user={user} onUserUpdated={setUser} onLogout={logout} onNavigateHome={() => navigateBuyerTab('home')} onOpenOrder={navigateOrderDetails} /></React.Suspense> : isEventsPage ? <section className="events-page" aria-labelledby="events-page-title"><a href="#marketplace" onClick={openMarketplace}>Back to the marketplace</a><p className="eyebrow">Community calendar</p><h1 id="events-page-title">FarmGate Events</h1><p>No upcoming events have been announced.</p></section> : <>
             <div className="marketplace-top">
                 <section className="promo-market-grid" aria-label="FarmGate promotions">
                     <article className="promo-main">
@@ -918,6 +927,7 @@ function FarmgateApp() {
                                 Continue with Google
                             </button>
                         </>}
+                        <p className="rider-registration-link">Applying as a rider? <a href="/rider/register">Start rider registration</a></p>
                     </section>
                 </div>
             )}

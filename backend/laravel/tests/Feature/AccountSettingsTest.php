@@ -10,8 +10,8 @@ use App\Models\Order;
 use App\Models\RiderProfile;
 use App\Models\User;
 use Illuminate\Auth\Notifications\VerifyEmail;
-use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Filesystem\FilesystemAdapter;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Storage;
@@ -163,9 +163,8 @@ class AccountSettingsTest extends TestCase
             ->assertJsonPath('settings.vehicle_type', 'motorcycle');
         $this->actingAs($rider)->putJson('/api/riders/settings', [
             'availability' => 'AVAILABLE',
-            'vehicle_type' => 'pickup truck',
         ])->assertOk()->assertJsonPath('settings.availability', 'AVAILABLE')
-            ->assertJsonPath('settings.vehicle_type', 'pickup truck');
+            ->assertJsonPath('settings.vehicle_type', 'motorcycle');
 
         $buyer = User::factory()->create(['role' => Role::BUYER]);
         $seller = User::factory()->create(['role' => Role::SELLER]);
@@ -186,14 +185,15 @@ class AccountSettingsTest extends TestCase
 
         $this->actingAs($anotherRider)->getJson('/api/riders/settings')
             ->assertOk()->assertJsonPath('settings.vehicle_type', 'van');
-        $this->assertSame('pickup truck', $profile->fresh()->vehicle_type);
+        $this->assertSame('motorcycle', $profile->fresh()->vehicle_type);
     }
 
     public function test_rider_notification_preferences_are_private_and_delivery_availability_is_validated(): void
     {
         $rider = User::factory()->create(['role' => Role::RIDER]);
         $otherRider = User::factory()->create(['role' => Role::RIDER]);
-        RiderProfile::create(['user_id' => $rider->id, 'availability' => 'OFFLINE', 'is_verified' => false]);
+        RiderProfile::create(['user_id' => $rider->id, 'availability' => 'OFFLINE', 'is_verified' => true]);
+        RiderProfile::create(['user_id' => $otherRider->id, 'availability' => 'OFFLINE', 'is_verified' => true]);
 
         $this->actingAs($rider)->putJson('/api/profile/settings', [
             'order_notifications' => false,

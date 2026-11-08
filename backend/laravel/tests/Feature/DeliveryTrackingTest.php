@@ -111,12 +111,12 @@ class DeliveryTrackingTest extends TestCase
             ->assertJsonPath('orders.0.delivery.status', DeliveryStatus::DELIVERED->value);
     }
 
-    public function test_rider_can_verify_pickup_and_complete_delivery_with_qr_token(): void
+    public function test_same_persistent_order_qr_verifies_pickup_and_dropoff_after_proof_is_saved(): void
     {
         Storage::fake('delivery_proofs');
         $buyer = User::factory()->create(['role' => Role::BUYER]);
         $seller = User::factory()->create(['role' => Role::SELLER]);
-        $rider = User::factory()->create(['role' => Role::RIDER]);
+        $rider = $this->createApprovedRider();
 
         $order = Order::create([
             'buyer_id' => $buyer->id,
@@ -131,8 +131,6 @@ class DeliveryTrackingTest extends TestCase
             ],
         ]);
 
-        $pickupToken = str_repeat('P', 64);
-        $deliveryToken = str_repeat('D', 64);
         $delivery = Delivery::create([
             'order_id' => $order->id,
             'rider_id' => $rider->id,
@@ -140,53 +138,82 @@ class DeliveryTrackingTest extends TestCase
             'pickup_latitude' => 14.120,
             'pickup_longitude' => 120.440,
             'pickup_address' => 'Bongabong Public Market',
-            'pickup_qr_token_hash' => hash('sha256', $pickupToken),
-            'pickup_qr_expires_at' => now()->addMinutes(30),
         ]);
+        $codeResponse = $this->actingAs($seller)->postJson('/api/orders/'.$order->id.'/delivery-code')
+            ->assertOk()
+            ->assertJsonPath('purpose', 'order');
+        $this->assertStringStartsWith('FARMGATE:ORDER:', $codeResponse->json('code'));
+        $qrToken = substr($codeResponse->json('code'), strlen('FARMGATE:ORDER:'));
+        $this->assertNull($delivery->fresh()->pickup_qr_expires_at);
+        $this->assertNull($delivery->fresh()->delivery_qr_expires_at);
+        $this->travel(31)->minutes();
 
         $this->actingAs($rider)->postJson('/api/deliveries/'.$delivery->id.'/pickup-verify', [
-            'qr_token' => $pickupToken,
+            'qr_token' => $qrToken,
             'latitude' => 14.120,
             'longitude' => 120.440,
         ])->assertOk()->assertJsonPath('delivery.status', DeliveryStatus::PICKED_UP->value);
+        $this->assertSame(
+            $codeResponse->json('code'),
+            $this->actingAs($buyer)->postJson('/api/orders/'.$order->id.'/delivery-code')->assertOk()->json('code'),
+        );
         $this->actingAs($rider)->postJson('/api/deliveries/'.$delivery->id.'/pickup-verify', [
-            'qr_token' => $pickupToken,
+            'qr_token' => $qrToken,
             'latitude' => 14.120,
             'longitude' => 120.440,
         ])->assertStatus(409);
 
-        $order->forceFill(['status' => OrderStatus::FULFILLING])->save();
         $this->actingAs($seller)->patchJson('/api/orders/'.$order->id.'/status', [
             'status' => OrderStatus::COMPLETED->value,
         ])->assertStatus(409);
-        $delivery->refresh()->forceFill([
-            'delivery_qr_token_hash' => hash('sha256', $deliveryToken),
-            'delivery_qr_expires_at' => now()->addMinutes(30),
-        ])->save();
-        $this->actingAs($rider)->post('/api/deliveries/'.$delivery->id.'/delivery-verify', [
-            'qr_token' => $deliveryToken,
+        $this->actingAs($rider)->postJson('/api/deliveries/'.$delivery->id.'/delivery-verify', [
+            'qr_token' => $qrToken,
+            'latitude' => 14.121,
+            'longitude' => 120.441,
+        ])->assertUnprocessable();
+
+        $this->actingAs($rider)->post('/api/deliveries/'.$delivery->id.'/proof', [
             'photo' => UploadedFile::fake()->image('delivery.jpg'),
             'recipient_confirmed' => '1',
             'recipient_name' => 'Buyer',
             'captured_at' => now()->toISOString(),
+        ])->assertOk()->assertJsonPath('delivery.has_delivery_proof', true);
+
+        $this->actingAs($rider)->postJson('/api/deliveries/'.$delivery->id.'/delivery-verify', [
+            'qr_token' => $qrToken,
+            'latitude' => 14.121,
+            'longitude' => 120.441,
         ])->assertOk()->assertJsonPath('delivery.status', DeliveryStatus::DELIVERED->value);
+        $this->actingAs($rider)->postJson('/api/deliveries/'.$delivery->id.'/delivery-verify', [
+            'qr_token' => $qrToken,
+            'latitude' => 14.121,
+            'longitude' => 120.441,
+        ])->assertStatus(409);
 
         $this->assertNotNull($delivery->refresh()->pickup_verified_at);
         $this->assertNotNull($delivery->delivery_verified_at);
         $this->assertEquals(14.120, $delivery->pickup_verification_latitude);
         $this->assertEquals(120.440, $delivery->pickup_verification_longitude);
-        $this->assertNull($delivery->delivery_verification_latitude);
-        $this->assertNull($delivery->delivery_verification_longitude);
+        $this->assertEquals(14.121, $delivery->delivery_verification_latitude);
+        $this->assertEquals(120.441, $delivery->delivery_verification_longitude);
         $this->assertTrue($delivery->recipient_confirmed);
         $this->assertSame('Buyer', $delivery->delivery_recipient_name);
         $this->assertNotNull($delivery->proof_captured_at);
         $this->assertNotNull($delivery->proof_recorded_at);
         $this->assertNotNull($delivery->delivery_proof_sha256);
-        Storage::disk('delivery_proofs')->assertExists($delivery->delivery_proof_path);
+        $this->assertTrue(
+            Storage::disk('delivery_proofs')->exists($delivery->delivery_proof_path),
+            'The saved delivery proof should exist on the private disk.',
+        );
+        $this->assertNull($delivery->order_qr_token_hash);
+        $this->assertNull($delivery->order_qr_token_encrypted);
         $this->assertNull($delivery->pickup_qr_token_hash);
         $this->assertNull($delivery->delivery_qr_token_hash);
         $this->assertSame(2, $delivery->statusHistory()->count());
         $this->assertSame('PICKUP_QR_VERIFIED', $delivery->statusHistory()->reorder('id')->value('reason'));
+        $this->assertSame('DELIVERY_QR_VERIFIED', $delivery->statusHistory()->reorder()->orderByDesc('id')->value('reason'));
+        $this->assertSame(2, $order->statusHistory()->count());
+        $this->assertStringContainsString('14.1210000,120.4410000', $order->statusHistory()->reorder()->orderByDesc('id')->value('reason'));
         $this->actingAs($seller)->patchJson('/api/orders/'.$order->id.'/status', [
             'status' => OrderStatus::COMPLETED->value,
         ])->assertOk()->assertJsonPath('order.status', OrderStatus::COMPLETED->value);
@@ -197,7 +224,7 @@ class DeliveryTrackingTest extends TestCase
     {
         $buyer = User::factory()->create(['role' => Role::BUYER]);
         $seller = User::factory()->create(['role' => Role::SELLER]);
-        $rider = User::factory()->create(['role' => Role::RIDER]);
+        $rider = $this->createApprovedRider();
         $order = Order::create([
             'buyer_id' => $buyer->id,
             'seller_id' => $seller->id,
@@ -238,7 +265,7 @@ class DeliveryTrackingTest extends TestCase
         Storage::fake('delivery_proofs');
         $buyer = User::factory()->create(['role' => Role::BUYER]);
         $seller = User::factory()->create(['role' => Role::SELLER]);
-        $rider = User::factory()->create(['role' => Role::RIDER]);
+        $rider = $this->createApprovedRider();
         $order = Order::create([
             'buyer_id' => $buyer->id,
             'seller_id' => $seller->id,
@@ -246,43 +273,38 @@ class DeliveryTrackingTest extends TestCase
             'total_amount' => 220,
             'delivery_method' => 'STANDARD_DELIVERY',
         ]);
-        $pickupToken = str_repeat('A', 64);
-        $dropoffToken = str_repeat('B', 64);
         $delivery = Delivery::create([
             'order_id' => $order->id,
             'rider_id' => $rider->id,
             'status' => DeliveryStatus::RIDER_ACCEPTED,
             'pickup_latitude' => 14.120,
             'pickup_longitude' => 120.440,
-            'pickup_qr_token_hash' => hash('sha256', $pickupToken),
-            'pickup_qr_expires_at' => now()->addMinutes(30),
         ]);
+        $code = $this->actingAs($seller)->postJson('/api/orders/'.$order->id.'/delivery-code')->assertOk()->json('code');
+        $token = substr($code, strlen('FARMGATE:ORDER:'));
 
         $this->actingAs($rider)->postJson('/api/deliveries/'.$delivery->id.'/pickup-verify', [
-            'qr_token' => $pickupToken,
+            'qr_token' => $token,
             'latitude' => 14.120,
             'longitude' => 120.440,
         ])->assertOk();
-        $order->forceFill(['status' => OrderStatus::FULFILLING])->save();
-        $delivery->refresh()->forceFill([
-            'delivery_qr_token_hash' => hash('sha256', $dropoffToken),
-            'delivery_qr_expires_at' => now()->addMinutes(30),
-        ])->save();
 
-        $this->actingAs($rider)->post('/api/deliveries/'.$delivery->id.'/delivery-verify', [
-            'qr_token' => $dropoffToken,
-            'latitude' => 14.120,
-            'longitude' => 120.440,
+        $this->actingAs($rider)->post('/api/deliveries/'.$delivery->id.'/proof', [
             'photo' => UploadedFile::fake()->image('delivery.jpg'),
             'recipient_confirmed' => '1',
             'recipient_name' => 'Buyer',
             'captured_at' => now()->toISOString(),
-        ])->assertUnprocessable();
+        ])->assertOk();
+        $this->actingAs($rider)->postJson('/api/deliveries/'.$delivery->id.'/delivery-verify', [
+            'qr_token' => $token,
+            'latitude' => 14.120,
+            'longitude' => 120.440,
+        ])->assertUnprocessable()->assertJsonFragment(['message' => 'The saved buyer delivery pin is unavailable, so distance verification cannot be completed.']);
         $this->assertSame(DeliveryStatus::PICKED_UP, $delivery->refresh()->status);
         $this->assertNull($delivery->delivery_verified_at);
     }
 
-    public function test_only_order_participants_can_issue_purpose_specific_delivery_codes(): void
+    public function test_only_order_participants_can_issue_persistent_delivery_codes(): void
     {
         $buyer = User::factory()->create(['role' => Role::BUYER]);
         $seller = User::factory()->create(['role' => Role::SELLER]);
@@ -295,6 +317,11 @@ class DeliveryTrackingTest extends TestCase
             'total_amount' => 220,
             'delivery_method' => 'STANDARD_DELIVERY',
         ]);
+        $seller->sellerProfile()->create([
+            'business_name' => 'Farmgate Demo Shop',
+            'phone' => '09171234567',
+            'address' => 'Labasan, Bongabong',
+        ]);
         Delivery::create([
             'order_id' => $order->id,
             'rider_id' => $rider->id,
@@ -304,17 +331,19 @@ class DeliveryTrackingTest extends TestCase
         ]);
 
         $response = $this->actingAs($seller)->postJson('/api/orders/'.$order->id.'/delivery-code')
-            ->assertOk()->assertJsonPath('purpose', 'pickup');
-        $this->assertStringStartsWith('FARMGATE:PICKUP:', $response->json('code'));
+            ->assertOk()->assertJsonPath('purpose', 'order');
+        $this->assertStringStartsWith('FARMGATE:ORDER:', $response->json('code'));
         $this->actingAs($seller)->getJson('/api/orders/'.$order->id)
             ->assertOk()
+            ->assertJsonPath('order.seller.seller_profile.business_name', 'Farmgate Demo Shop')
+            ->assertJsonPath('order.seller.seller_profile.phone', '09171234567')
             ->assertJsonMissingPath('order.delivery.pickup_qr_token_hash')
             ->assertJsonMissingPath('order.delivery.qr_token');
         Delivery::query()->where('order_id', $order->id)->update(['status' => DeliveryStatus::PICKED_UP->value]);
         $order->forceFill(['status' => OrderStatus::FULFILLING])->save();
         $buyerCode = $this->actingAs($buyer)->postJson('/api/orders/'.$order->id.'/delivery-code')
-            ->assertOk()->assertJsonPath('purpose', 'delivery');
-        $this->assertStringStartsWith('FARMGATE:DELIVERY:', $buyerCode->json('code'));
+            ->assertOk()->assertJsonPath('purpose', 'order');
+        $this->assertSame($response->json('code'), $buyerCode->json('code'));
         $this->actingAs($otherBuyer)->postJson('/api/orders/'.$order->id.'/delivery-code')->assertForbidden();
     }
 
@@ -324,6 +353,8 @@ class DeliveryTrackingTest extends TestCase
         $seller = User::factory()->create(['role' => Role::SELLER]);
         $rider = User::factory()->create(['role' => Role::RIDER]);
         $otherRider = User::factory()->create(['role' => Role::RIDER]);
+        RiderProfile::create(['user_id' => $rider->id, 'availability' => 'OFFLINE', 'is_verified' => true]);
+        RiderProfile::create(['user_id' => $otherRider->id, 'availability' => 'OFFLINE', 'is_verified' => true]);
         foreach ([
             [$rider, DeliveryStatus::RIDER_ACCEPTED],
             [$rider, DeliveryStatus::PICKED_UP],
@@ -342,5 +373,19 @@ class DeliveryTrackingTest extends TestCase
             ->assertOk()
             ->assertJsonPath('deliveries.total', 1)
             ->assertJsonPath('deliveries.data.0.status', DeliveryStatus::PICKED_UP->value);
+    }
+
+    private function createApprovedRider(): User
+    {
+        $rider = User::factory()->create(['role' => Role::RIDER]);
+        RiderProfile::create([
+            'user_id' => $rider->id,
+            'phone' => '09170000001',
+            'vehicle_type' => 'motorbike',
+            'availability' => 'AVAILABLE',
+            'is_verified' => true,
+        ]);
+
+        return $rider;
     }
 }

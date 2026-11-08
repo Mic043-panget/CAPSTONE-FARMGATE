@@ -65,11 +65,24 @@ type BuyerReview = {
     order_id: number;
     order?: { order_reference: string } | null;
     seller?: { name: string } | null;
+    listing?: { name: string } | null;
+    media?: { id: number; mime_type: string; original_name: string; url: string }[];
     rating: number;
     comment: string | null;
     status: string;
     created_at: string;
 };
+
+function BuyerReviewCard({ review }: { review: BuyerReview }) {
+    return <article className="buyer-profile-record" key={review.id}>
+        <div><strong>{review.listing?.name ?? `Order ${review.order?.order_reference ?? 'reference unavailable'}`}</strong><span className="buyer-review-stars" aria-label={`${review.rating} out of 5 stars`}>{'★'.repeat(review.rating)}{'☆'.repeat(5 - review.rating)}</span></div>
+        <p>{review.comment || 'No written comment.'}</p>
+        {review.media?.length ? <div className="case-saved-media">{review.media.map((media) => media.mime_type.startsWith('video/')
+            ? <video key={media.id} src={media.url} controls aria-label={media.original_name} />
+            : <a key={media.id} href={media.url} target="_blank" rel="noreferrer"><img src={media.url} alt={media.original_name} /></a>)}</div> : null}
+        <footer><span>Seller: {review.seller?.name ?? 'Seller'} · {review.status.replaceAll('_', ' ')}</span><time dateTime={review.created_at}>{memberSince(review.created_at)}</time></footer>
+    </article>;
+}
 
 const profileSections: { id: ProfileSection; label: string; icon: 'profile' | 'address' | 'password' | 'settings' | 'orders' | 'reviews' }[] = [
     { id: 'profile', label: 'Profile', icon: 'profile' },
@@ -108,6 +121,12 @@ function ProfileAvatar({ user, large = false }: { user: User; large?: boolean })
 function memberSince(value?: string | null): string {
     if (!value) return 'Not available';
     return new Date(value).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+}
+
+function displayOrderStatus(order: BuyerOrder): string {
+    if (order.delivery?.status === 'DELIVERED') return 'Delivered';
+    if (order.status === 'FULFILLING') return 'On the Way';
+    return order.status.replaceAll('_', ' ');
 }
 
 export function BuyerProfile({ user, onUserUpdated, onLogout, onNavigateHome, onOpenOrder }: { user: User; onUserUpdated: (user: User) => void; onLogout: () => void; onNavigateHome: () => void; onOpenOrder: (orderId: number) => void }) {
@@ -515,10 +534,10 @@ export function BuyerProfile({ user, onUserUpdated, onLogout, onNavigateHome, on
                     <nav className="buyer-order-filters" aria-label="Filter orders" role="tablist">
                         {orderFilters.map((filter) => <button type="button" role="tab" aria-selected={orderFilter === filter.id} className={orderFilter === filter.id ? 'active' : ''} key={filter.id} onClick={() => setOrderFilter(filter.id)}>{filter.label}</button>)}
                     </nav>
-                    {dataLoading ? <p className="buyer-orders-loading">Loading orders...</p> : orderFilter === 'REVIEWS' ? reviews.length ? <div className="buyer-profile-records">{reviews.map((review) => <article className="buyer-profile-record" key={review.id}><div><strong>Order {review.order?.order_reference ?? 'reference unavailable'}</strong><span className="buyer-review-stars" aria-label={`${review.rating} out of 5 stars`}>{'★'.repeat(review.rating)}{'☆'.repeat(5 - review.rating)}</span></div><p>{review.comment || 'No written comment.'}</p><footer><span>Seller: {review.seller?.name ?? 'Seller'}</span><time dateTime={review.created_at}>{memberSince(review.created_at)}</time></footer></article>)}</div> : <div className="buyer-orders-empty"><span className="buyer-orders-empty-icon" aria-hidden="true">★</span><h2>No reviews found</h2><p>You haven’t reviewed any completed orders yet.</p></div> : filteredOrders.length ? <div className="buyer-order-list">{filteredOrders.map((order) => <article className="buyer-order-card" key={order.id}><header><div><span className="buyer-order-reference">Order {order.order_reference}</span><time dateTime={order.created_at}>{memberSince(order.created_at)}</time></div><span className={`buyer-order-status status-${order.status.toLowerCase()}`}>{order.status.replaceAll('_', ' ')}</span></header><p className="buyer-order-items">{order.items.map((item) => `${item.quantity} × ${item.listing?.name ?? 'Removed listing'}`).join(', ')}</p><footer><span>{order.seller?.name ? `Seller: ${order.seller.name}` : `${order.items.length} ${order.items.length === 1 ? 'item' : 'items'}`}</span><strong>PHP {Number(order.total_amount).toLocaleString()}</strong><button className="buyer-order-details-toggle" type="button" onClick={() => onOpenOrder(order.id)}>View details</button>{order.buyer_can_cancel && <button className="buyer-order-cancel" type="button" onClick={() => void cancelOrder(order)} disabled={cancellingOrderId !== null}>{cancellingOrderId === order.id ? 'Cancelling...' : 'Cancel order'}</button>}</footer>{order.buyer_cancellation_blocked_reason && <p className="buyer-order-cancellation-note">{order.buyer_cancellation_blocked_reason}</p>}</article>)}</div> : <div className="buyer-orders-empty"><svg aria-hidden="true" viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M7 18h34l-3 19H10L7 18Z" /><path d="m7 18 8-10h18l8 10M19 24a5 5 0 0 0 10 0" /></svg><h2>No orders found</h2><p>{orders.length ? 'There are no orders in this status yet.' : 'You haven’t placed any orders yet.'}</p><button type="button" onClick={onNavigateHome}>Start shopping</button></div>}
+                    {dataLoading ? <p className="buyer-orders-loading">Loading orders...</p> : orderFilter === 'REVIEWS' ? reviews.length ? <div className="buyer-profile-records">{reviews.map((review) => <BuyerReviewCard key={review.id} review={review} />)}</div> : <div className="buyer-orders-empty"><span className="buyer-orders-empty-icon" aria-hidden="true">★</span><h2>No reviews found</h2><p>You haven’t reviewed any completed orders yet.</p></div> : filteredOrders.length ? <div className="buyer-order-list">{filteredOrders.map((order) => <article className="buyer-order-card" key={order.id}><header><div><span className="buyer-order-reference">Order {order.order_reference}</span><time dateTime={order.created_at}>{memberSince(order.created_at)}</time></div><span className={`buyer-order-status status-${displayOrderStatus(order).toLowerCase().replaceAll(' ', '_')}`}>{displayOrderStatus(order)}</span></header><p className="buyer-order-items">{order.items.map((item) => `${item.quantity} × ${item.listing?.name ?? 'Removed listing'}`).join(', ')}</p><footer><span>{order.seller?.name ? `Seller: ${order.seller.name}` : `${order.items.length} ${order.items.length === 1 ? 'item' : 'items'}`}</span><strong>PHP {Number(order.total_amount).toLocaleString()}</strong><button className="buyer-order-details-toggle" type="button" onClick={() => onOpenOrder(order.id)}>View details</button>{order.buyer_can_cancel && <button className="buyer-order-cancel" type="button" onClick={() => void cancelOrder(order)} disabled={cancellingOrderId !== null}>{cancellingOrderId === order.id ? 'Cancelling...' : 'Cancel order'}</button>}</footer>{order.buyer_cancellation_blocked_reason && <p className="buyer-order-cancellation-note">{order.buyer_cancellation_blocked_reason}</p>}</article>)}</div> : <div className="buyer-orders-empty"><svg aria-hidden="true" viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M7 18h34l-3 19H10L7 18Z" /><path d="m7 18 8-10h18l8 10M19 24a5 5 0 0 0 10 0" /></svg><h2>No orders found</h2><p>{orders.length ? 'There are no orders in this status yet.' : 'You haven’t placed any orders yet.'}</p><button type="button" onClick={onNavigateHome}>Start shopping</button></div>}
                 </div>}
 
-                {section === 'reviews' && <div className="buyer-profile-records">{dataLoading ? <p>Loading reviews...</p> : reviews.length ? reviews.map((review) => <article className="buyer-profile-record" key={review.id}><div><strong>Order {review.order?.order_reference ?? 'reference unavailable'}</strong><span className="buyer-review-stars" aria-label={`${review.rating} out of 5 stars`}>{'★'.repeat(review.rating)}{'☆'.repeat(5 - review.rating)}</span></div><p>{review.comment || 'No written comment.'}</p><footer><span>Seller: {review.seller?.name ?? 'Seller'}</span><time dateTime={review.created_at}>{memberSince(review.created_at)}</time></footer></article>) : <div className="buyer-profile-empty"><ProfileMenuIcon name="reviews" /><h2>No reviews yet</h2><p>Reviews you write after completing an order will appear here.</p></div>}</div>}
+                {section === 'reviews' && <div className="buyer-profile-records">{dataLoading ? <p>Loading reviews...</p> : reviews.length ? reviews.map((review) => <BuyerReviewCard key={review.id} review={review} />) : <div className="buyer-profile-empty"><ProfileMenuIcon name="reviews" /><h2>No reviews yet</h2><p>Reviews you write after completing an order will appear here.</p></div>}</div>}
             </div>
             {error && <p className="buyer-profile-message error" role="alert">{error}</p>}
             {message && <p className="buyer-profile-message success" role="status">{message}</p>}

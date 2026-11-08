@@ -4,6 +4,7 @@ import api from '../../lib/api';
 import type { User } from '../../shared/types';
 import { OrderRouteMap } from './OrderRouteMap';
 import { DeliveryTrackingPanel } from '../shared/DeliveryTrackingPanel';
+import { OrderCasePanel } from './OrderCasePanel';
 
 type OrderDetails = {
     id: number;
@@ -15,6 +16,8 @@ type OrderDetails = {
     payment_status?: string | null;
     subtotal_amount?: string;
     delivery_fee?: string;
+    delivery_distance_km?: number | string | null;
+    delivery_distance_method?: 'OSRM_ROAD_ROUTE' | 'OSRM_BARANGAY_ESTIMATE' | null;
     platform_fee?: string;
     order_processing_fee?: string;
     transaction_fee?: string;
@@ -23,6 +26,9 @@ type OrderDetails = {
     discount_amount?: string;
     delivery_method?: string;
     created_at: string;
+    updated_at: string;
+    status_history?: { id: number; to_status: string; reason?: string | null; actor?: { name: string } | null; created_at: string }[];
+    activities?: { id: number; actor?: { name: string } | null; activity_key: string; details: string; created_at: string }[];
     shipping_address?: {
         recipient_name?: string;
         street_address?: string;
@@ -32,6 +38,12 @@ type OrderDetails = {
         city_municipality?: string;
         province?: string;
         postal_code?: string;
+        latitude?: number | string | null;
+        longitude?: number | string | null;
+    } | null;
+    seller_location_snapshot?: {
+        business_name?: string | null;
+        address?: string | null;
         latitude?: number | string | null;
         longitude?: number | string | null;
     } | null;
@@ -49,6 +61,7 @@ type OrderDetails = {
         status: string;
         pickup_latitude?: number | null;
         pickup_longitude?: number | null;
+        status_history?: { id: number; from_status: string | null; to_status: string; reason?: string | null; actor?: { name: string } | null; created_at: string }[];
     } | null;
     items: {
         id: number;
@@ -114,7 +127,7 @@ export function OrderDetailsPage({ orderId, user, onBack, onChatWithSeller, onEr
     const [requestingUpdate, setRequestingUpdate] = React.useState(false);
     const [updateRequested, setUpdateRequested] = React.useState(false);
     const [receiptOpen, setReceiptOpen] = React.useState(false);
-    const [deliveryCode, setDeliveryCode] = React.useState<{ code: string; expires_at: string } | null>(null);
+    const [deliveryCode, setDeliveryCode] = React.useState<{ code: string } | null>(null);
     const [deliveryCodeLoading, setDeliveryCodeLoading] = React.useState(false);
 
     React.useEffect(() => {
@@ -161,7 +174,7 @@ export function OrderDetailsPage({ orderId, user, onBack, onChatWithSeller, onEr
         if (!order || deliveryCodeLoading) return;
         setDeliveryCodeLoading(true);
         try {
-            const response = await api.post<{ code: string; expires_at: string }>(`/api/orders/${order.id}/delivery-code`);
+            const response = await api.post<{ code: string }>(`/api/orders/${order.id}/delivery-code`);
             setDeliveryCode(response.data);
         } catch (requestError: any) {
             onError(requestError.userMessage ?? requestError.response?.data?.message ?? 'The delivery QR code could not be issued.');
@@ -175,17 +188,54 @@ export function OrderDetailsPage({ orderId, user, onBack, onChatWithSeller, onEr
         : '';
     const buyerCoordinates = formatCoordinates(order?.shipping_address?.latitude, order?.shipping_address?.longitude);
     const deliveryAddress = deliveryAddressText || (buyerCoordinates ? `Pinned buyer location (${buyerCoordinates})` : 'No buyer location was saved for this order.');
+    const sellerLatitude = order?.seller_location_snapshot?.latitude ?? order?.delivery?.pickup_latitude ?? order?.seller?.seller_profile?.latitude ?? null;
+    const sellerLongitude = order?.seller_location_snapshot?.longitude ?? order?.delivery?.pickup_longitude ?? order?.seller?.seller_profile?.longitude ?? null;
+    const sellerCoordinates = formatCoordinates(sellerLatitude, sellerLongitude);
+    const sellerAddress = order?.seller_location_snapshot?.address ?? order?.seller?.seller_profile?.address;
+    const distanceDescription = order?.delivery_distance_method === 'OSRM_BARANGAY_ESTIMATE'
+        ? 'barangay-level road distance estimate'
+        : order?.delivery_distance_method === 'OSRM_ROAD_ROUTE'
+            ? 'OSRM road route'
+            : 'Distance method not recorded';
+    const displayOrderStatus = order?.delivery?.status === 'DELIVERED'
+        ? 'Delivered'
+        : order?.status === 'FULFILLING'
+            ? 'On the Way'
+            : order?.status.replaceAll('_', ' ');
+    const historyEntries = [
+        ...(order?.status_history ?? []).map((entry) => ({
+            key: `order-${entry.id}`,
+            title: `Order ${entry.to_status.replaceAll('_', ' ').toLowerCase()}`,
+            details: entry.reason ?? '',
+            actor: entry.actor?.name ?? 'FARMGATE',
+            created_at: entry.created_at,
+        })),
+        ...(order?.delivery?.status_history ?? []).map((entry) => ({
+            key: `delivery-${entry.id}`,
+            title: `Delivery ${entry.to_status.replaceAll('_', ' ').toLowerCase()}`,
+            details: entry.reason ?? '',
+            actor: entry.actor?.name ?? 'FARMGATE',
+            created_at: entry.created_at,
+        })),
+        ...(order?.activities ?? []).map((activity) => ({
+            key: `activity-${activity.id}`,
+            title: activity.activity_key.replaceAll('_', ' ').toLowerCase(),
+            details: activity.details,
+            actor: activity.actor?.name ?? 'FARMGATE',
+            created_at: activity.created_at,
+        })),
+    ].sort((first, second) => Date.parse(second.created_at) - Date.parse(first.created_at));
 
     return <main className="buyer-order-details-page" aria-labelledby="buyer-order-details-title">
         <button className="buyer-order-back" type="button" onClick={onBack}>← Back to my orders</button>
         {loading ? <p className="buyer-orders-loading" role="status">Loading order details...</p> : !order ? <section className="buyer-orders-empty"><h1>Order unavailable</h1><p>This order could not be loaded.</p><button type="button" onClick={onBack}>Return to my orders</button></section> : <>
             <header className="buyer-order-details-page-heading">
                 <div><p className="eyebrow">Order details</p><h1 id="buyer-order-details-title">Order {order.order_reference}</h1><time dateTime={order.created_at}>{new Date(order.created_at).toLocaleString()}</time></div>
-                <span className={`buyer-order-status status-${order.status.toLowerCase()}`}>{order.status.replaceAll('_', ' ')}</span>
+                <span className={`buyer-order-status status-${(displayOrderStatus ?? order.status).toLowerCase().replaceAll(' ', '_')}`}>{displayOrderStatus}</span>
             </header>
             <div className="buyer-order-details-grid">
                 <section><h2>Items</h2><ul>{order.items.map((item) => <li key={item.id}><span>{item.quantity} {item.pricing_type === 'PER_KILO' ? 'kg' : 'head'} × {item.listing?.name ?? 'Removed listing'} · PHP {formatAmount(item.unit_price)} each</span><strong>PHP {formatAmount(item.total_amount)}</strong></li>)}</ul></section>
-                <section><h2>Order cost</h2><dl><div><dt>Product value</dt><dd>PHP {formatAmount(order.subtotal_amount ?? order.total_amount)}</dd></div><div><dt>Shipping</dt><dd>PHP {formatAmount(order.delivery_fee)}</dd></div><div className="buyer-order-grand-total"><dt>Total</dt><dd>PHP {formatAmount(order.total_amount)}</dd></div></dl></section>
+                <section><h2>Order cost</h2><dl><div><dt>Product value</dt><dd>PHP {formatAmount(order.subtotal_amount ?? order.total_amount)}</dd></div><div><dt>Shipping</dt><dd>PHP {formatAmount(order.delivery_fee)}</dd></div>{order.delivery_distance_km !== null && order.delivery_distance_km !== undefined && <div><dt>Delivery distance</dt><dd>{Number(order.delivery_distance_km).toFixed(2)} km · {distanceDescription}</dd></div>}<div className="buyer-order-grand-total"><dt>Total</dt><dd>PHP {formatAmount(order.total_amount)}</dd></div></dl></section>
             </div>
             <div className="buyer-order-details-grid">
                 <section><h2>Customer details</h2><p>{order.shipping_address?.recipient_name ?? user.name}</p><p>{user.email}</p><p>{order.shipping_address?.phone_number ?? user.phone_number ?? 'Phone not provided'}</p></section>
@@ -195,8 +245,8 @@ export function OrderDetailsPage({ orderId, user, onBack, onChatWithSeller, onEr
                     <p className="eyebrow">From</p>
                     <h2>Seller shipping address</h2>
                     <p className="buyer-order-address-name">{order.seller?.name ?? 'Seller'}</p>
-                    <p>{order.seller?.seller_profile?.address || 'Street address not provided; use the pinned seller location on the map.'}</p>
-                    {formatCoordinates(order.seller?.seller_profile?.latitude ?? order.delivery?.pickup_latitude, order.seller?.seller_profile?.longitude ?? order.delivery?.pickup_longitude) && <p className="buyer-order-address-coordinates">Pinned location: {formatCoordinates(order.seller?.seller_profile?.latitude ?? order.delivery?.pickup_latitude, order.seller?.seller_profile?.longitude ?? order.delivery?.pickup_longitude)}</p>}
+                    <p>{sellerAddress || 'Street address not provided; use the pinned seller location on the map.'}</p>
+                    {sellerCoordinates && <p className="buyer-order-address-coordinates">Pinned location: {sellerCoordinates}</p>}
                 </article>
                 <article className="buyer-order-address-card">
                     <p className="eyebrow">To</p>
@@ -215,17 +265,22 @@ export function OrderDetailsPage({ orderId, user, onBack, onChatWithSeller, onEr
                 <button type="button" onClick={() => setReceiptOpen(true)}>View order receipt</button>
                 <button type="button" onClick={() => order.seller?.id && onChatWithSeller(order.seller.id)} disabled={!order.seller?.id}>Chat with seller</button>
             </section>
+            <OrderCasePanel order={order} onError={onError} />
+            {!!historyEntries.length && <section className="buyer-order-activity" aria-labelledby="buyer-order-activity-title">
+                <h2 id="buyer-order-activity-title">Order and case history</h2>
+                <ol>{historyEntries.map((entry) => <li key={entry.key}><strong>{entry.title}</strong>{entry.details && <p>{entry.details}</p>}<small>{entry.actor} · {new Date(entry.created_at).toLocaleString()}</small></li>)}</ol>
+            </section>}
             {order.delivery_method === 'STANDARD_DELIVERY' && order.status === 'FULFILLING' && order.delivery && ['PICKED_UP', 'IN_TRANSIT'].includes(order.delivery.status) && <section className="delivery-qr-section" aria-labelledby="buyer-delivery-qr-title">
-                <div><p className="eyebrow">Hand-off verification</p><h2 id="buyer-delivery-qr-title">Show the rider your delivery QR</h2><p>This one-time code is for the assigned rider and expires after 30 minutes. Keep it private until delivery.</p></div>
-                {!deliveryCode ? <button type="button" disabled={deliveryCodeLoading} onClick={() => void issueDeliveryCode()}>{deliveryCodeLoading ? 'Preparing secure QR…' : 'Show delivery QR'}</button> : <div className="delivery-qr-code"><QRCodeSVG value={deliveryCode.code} size={160} level="M" marginSize={2} aria-label="One-time delivery verification QR code" /><p>Expires {new Date(deliveryCode.expires_at).toLocaleTimeString()}</p></div>}
+                <div><p className="eyebrow">Hand-off verification</p><h2 id="buyer-delivery-qr-title">Order QR for the assigned rider</h2><p>This order QR is used at pickup and drop-off. Keep it private; it is valid until delivery is verified or the order is cancelled.</p></div>
+                {!deliveryCode ? <button type="button" disabled={deliveryCodeLoading} onClick={() => void issueDeliveryCode()}>{deliveryCodeLoading ? 'Preparing secure QR…' : 'Show order QR'}</button> : <div className="delivery-qr-code"><QRCodeSVG value={deliveryCode.code} size={160} level="M" marginSize={2} aria-label="Order QR for pickup and delivery verification" /><p>Use at pickup and drop-off; valid until delivery is verified or the order is cancelled.</p></div>}
             </section>}
             {updateRequested && <p className="buyer-order-action-status" role="status">The seller was notified. You can request another update after 15 minutes.</p>}
             {order.delivery?.id ? <DeliveryTrackingPanel
                 deliveryId={order.delivery.id}
                 sellerName={order.seller?.name ?? 'Seller'}
                 buyerName={order.shipping_address?.recipient_name ?? user.name}
-                sellerLatitude={order.seller?.seller_profile?.latitude ?? order.delivery?.pickup_latitude ?? null}
-                sellerLongitude={order.seller?.seller_profile?.longitude ?? order.delivery?.pickup_longitude ?? null}
+                sellerLatitude={sellerLatitude}
+                sellerLongitude={sellerLongitude}
                 buyerLatitude={order.shipping_address?.latitude ?? null}
                 buyerLongitude={order.shipping_address?.longitude ?? null}
                 onStatusChange={(status) => setOrder((current) => {
@@ -235,8 +290,8 @@ export function OrderDetailsPage({ orderId, user, onBack, onChatWithSeller, onEr
             /> : <OrderRouteMap
                 sellerName={order.seller?.name ?? 'Seller'}
                 buyerName={order.shipping_address?.recipient_name ?? user.name}
-                sellerLatitude={order.seller?.seller_profile?.latitude ?? null}
-                sellerLongitude={order.seller?.seller_profile?.longitude ?? null}
+                sellerLatitude={sellerLatitude}
+                sellerLongitude={sellerLongitude}
                 buyerLatitude={order.shipping_address?.latitude ?? null}
                 buyerLongitude={order.shipping_address?.longitude ?? null}
             />}
@@ -245,10 +300,10 @@ export function OrderDetailsPage({ orderId, user, onBack, onChatWithSeller, onEr
                     <button className="buyer-order-receipt-close" type="button" aria-label="Close receipt" onClick={() => setReceiptOpen(false)}>×</button>
                     <p className="eyebrow">FARMGATE · Order receipt</p>
                     <h2 id="buyer-order-receipt-title">Order {order.order_reference}</h2>
-                    <p className="buyer-order-receipt-meta">{new Date(order.created_at).toLocaleString()} · {order.status.replaceAll('_', ' ')}</p>
+                    <p className="buyer-order-receipt-meta">{new Date(order.created_at).toLocaleString()} · {displayOrderStatus}</p>
                     <p className="buyer-order-receipt-meta">Category: {order.order_reference.match(/^FG-([A-Z]{2})-/)?.[1] ?? 'OT'} · Seller ID: {identifierCode('S', order.seller?.id ?? order.seller_id)}</p>
                     <div className="buyer-order-receipt-parties"><div><strong>Seller</strong><span>{order.seller?.name ?? 'Seller'}</span></div><div><strong>Buyer</strong><span>{order.shipping_address?.recipient_name ?? user.name}</span></div></div>
-                    <div className="buyer-order-receipt-address"><strong>Seller shipping address</strong><span>{order.seller?.seller_profile?.address || 'Address not provided'}</span></div>
+                    <div className="buyer-order-receipt-address"><strong>Seller shipping address</strong><span>{sellerAddress || 'Address not provided'}</span></div>
                     <div className="buyer-order-receipt-address"><strong>{order.delivery_method === 'SELF_PICKUP' ? 'Buyer pickup location' : 'Buyer shipping address'}</strong><span>{deliveryAddress}</span></div>
                     <dl className="buyer-order-receipt-payment">
                         <div><dt>Payment method</dt><dd>{paymentMethodLabel(order.payment_method)}</dd></div>
@@ -265,6 +320,7 @@ export function OrderDetailsPage({ orderId, user, onBack, onChatWithSeller, onEr
                     <dl className="buyer-order-receipt-totals">
                         <div><dt>Product value</dt><dd>PHP {formatAmount(order.subtotal_amount ?? order.total_amount)}</dd></div>
                         {positiveAmount(order.delivery_fee) && <div><dt>{order.delivery_method === 'SELF_PICKUP' ? 'Pickup fee' : 'Delivery fee'}</dt><dd>PHP {formatAmount(order.delivery_fee)}</dd></div>}
+                        {order.delivery_distance_km !== null && order.delivery_distance_km !== undefined && <div><dt>Delivery distance</dt><dd>{Number(order.delivery_distance_km).toFixed(2)} km · {distanceDescription}</dd></div>}
                         {positiveAmount(order.platform_fee) && <div><dt>Platform fee</dt><dd>PHP {formatAmount(order.platform_fee)}</dd></div>}
                         {positiveAmount(order.order_processing_fee) && <div><dt>Order processing fee</dt><dd>PHP {formatAmount(order.order_processing_fee)}</dd></div>}
                         {positiveAmount(order.transaction_fee) && <div><dt>Transaction fee</dt><dd>PHP {formatAmount(order.transaction_fee)}</dd></div>}

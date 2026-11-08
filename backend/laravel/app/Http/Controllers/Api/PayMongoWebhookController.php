@@ -4,10 +4,9 @@ namespace App\Http\Controllers\Api;
 
 use App\Enums\OrderStatus;
 use App\Http\Controllers\Controller;
-use App\Models\LivestockListing;
 use App\Models\Order;
-use App\Models\OrderStatusHistory;
 use App\Notifications\OrderStatusChangedNotification;
+use App\Services\OrderWorkflowService;
 use App\Services\RiderAssignmentService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -15,7 +14,7 @@ use Illuminate\Support\Facades\DB;
 
 class PayMongoWebhookController extends Controller
 {
-    public function handle(Request $request): JsonResponse
+    public function handle(Request $request, OrderWorkflowService $workflow): JsonResponse
     {
         $secret = config('services.paymongo.webhook_secret');
         abort_if(! filled($secret), 503, 'PayMongo webhook signing is not configured.');
@@ -65,37 +64,28 @@ class PayMongoWebhookController extends Controller
         } elseif (in_array($type, ['checkout_session.payment.failed', 'checkout_session.expired'], true)) {
             $orders = Order::query()->where('paymongo_checkout_session_id', $sessionId)->get();
             foreach ($orders as $order) {
-                $this->cancelUnpaidOrder($order);
+                $this->cancelUnpaidOrder($order, $workflow);
             }
         }
 
         return response()->json(['message' => 'Webhook received.']);
     }
 
-    private function cancelUnpaidOrder(Order $order): void
+    private function cancelUnpaidOrder(Order $order, OrderWorkflowService $workflow): void
     {
-        DB::transaction(function () use ($order): void {
-            $lockedOrder = Order::query()->with('items')->lockForUpdate()->find($order->id);
+        DB::transaction(function () use ($order, $workflow): void {
+            $lockedOrder = Order::query()->lockForUpdate()->find($order->id);
             if (! $lockedOrder || $lockedOrder->payment_status !== 'PENDING' || $lockedOrder->status !== OrderStatus::PENDING_CONFIRMATION) {
                 return;
             }
 
-            foreach ($lockedOrder->items as $item) {
-                LivestockListing::withTrashed()->whereKey($item->listing_id)->increment('quantity', $item->quantity);
-            }
-
-            $lockedOrder->forceFill([
-                'payment_status' => 'FAILED',
-                'status' => OrderStatus::CANCELLED,
-                'stock_reserved_at' => null,
-            ])->save();
-            OrderStatusHistory::create([
-                'order_id' => $lockedOrder->id,
-                'from_status' => OrderStatus::PENDING_CONFIRMATION,
-                'to_status' => OrderStatus::CANCELLED,
-                'changed_by' => $lockedOrder->buyer_id,
-                'reason' => 'PayMongo payment failed or checkout expired.',
-            ]);
+            $lockedOrder->forceFill(['payment_status' => 'FAILED'])->save();
+            $workflow->transition(
+                $lockedOrder,
+                $lockedOrder->buyer()->firstOrFail(),
+                OrderStatus::CANCELLED,
+                'PayMongo payment failed or checkout expired.',
+            );
         });
     }
 }

@@ -24,6 +24,12 @@ function shiftedDate(date: string, days: number): string {
     return `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, '0')}-${String(shifted.getUTCDate()).padStart(2, '0')}`;
 }
 
+function distanceMethodLabel(method: unknown): string {
+    if (method === 'OSRM_BARANGAY_ESTIMATE') return 'Barangay-level road distance estimate';
+    if (method === 'OSRM_ROAD_ROUTE') return 'OSRM road route';
+    return typeof method === 'string' ? method.toLowerCase().replaceAll('_', ' ') : 'Distance method not recorded';
+}
+
 type ReportPanelProps = {
     role: UserRole;
     onError: (message: string) => void;
@@ -207,6 +213,8 @@ export function ReportPanel({ role, onError, onAnalyze, title, hideTypeSelector 
             { header: 'Order Reference', render: (row) => row.order_reference ?? '—' },
             { header: 'Buyer', render: (row) => row.buyer?.name ?? '—' },
             { header: 'Total Amount (₱)', render: (row) => displayMoney(row.total_amount) },
+            { header: 'Delivery Fee (₱)', render: (row) => displayMoney(row.delivery_fee) },
+            { header: 'Delivery Distance', render: (row) => row.delivery_distance_km === null || row.delivery_distance_km === undefined ? '—' : `${Number(row.delivery_distance_km).toFixed(2)} km · ${distanceMethodLabel(row.delivery_distance_method)}` },
             { header: 'Payment Status', render: (row) => displayStatus(row.payment_status) },
             { header: 'Order Status', render: orderStatus },
             { header: 'Date', render: (row) => displayDate(row.created_at) },
@@ -215,6 +223,8 @@ export function ReportPanel({ role, onError, onAnalyze, title, hideTypeSelector 
             { header: 'Transaction Reference', render: (row) => row.order_reference ?? '—' },
             { header: 'Type', render: (row) => displayStatus(row.payment_method) },
             { header: 'Amount (₱)', render: (row) => displayMoney(row.total_amount) },
+            { header: 'Delivery Fee (₱)', render: (row) => displayMoney(row.delivery_fee) },
+            { header: 'Delivery Distance', render: (row) => row.delivery_distance_km === null || row.delivery_distance_km === undefined ? '—' : `${Number(row.delivery_distance_km).toFixed(2)} km · ${distanceMethodLabel(row.delivery_distance_method)}` },
             { header: 'Payment Status', render: (row) => displayStatus(row.payment_status) },
             { header: 'Order Status', render: orderStatus },
             { header: 'Date', render: (row) => displayDate(row.created_at) },
@@ -228,11 +238,14 @@ export function ReportPanel({ role, onError, onAnalyze, title, hideTypeSelector 
             { header: 'Date Registered', render: (row) => displayDate(row.created_at) },
         ];
         if (reportType === 'complaints') return [
-            { header: 'Complaint Reference', render: (row) => `#${row.id}` },
+            { header: 'Case Reference', render: (row) => `#${row.id}` },
             { header: 'Order Reference', render: (row) => row.order?.order_reference ?? '—' },
+            { header: 'Case Type', render: (row) => row.case_type?.replaceAll('_', ' ') ?? 'COMPLAINT' },
             { header: 'Submitted By', render: (row) => row.opener?.name ?? '—' },
             { header: 'Reason', render: (row) => row.reason ?? '—' },
             { header: 'Complaint Status', render: orderStatus },
+            { header: 'Refund Status', render: (row) => row.refund_status?.replaceAll('_', ' ') ?? '—' },
+            { header: 'Approved Refund (PHP)', render: (row) => row.approved_refund_amount ?? '—' },
             { header: 'Date Submitted', render: (row) => displayDate(row.created_at) },
         ];
         if (reportType === 'deliveries' && role === 'RIDER') return [
@@ -276,6 +289,8 @@ export function ReportPanel({ role, onError, onAnalyze, title, hideTypeSelector 
                 { header: 'Payment Status', value: 'payment_status', format: 'status' },
                 { header: 'Subtotal (PHP)', value: 'subtotal_amount', format: 'number' },
                 { header: 'Delivery Fee (PHP)', value: 'delivery_fee', format: 'number' },
+                { header: 'Delivery Distance (km)', value: 'delivery_distance_km', format: 'number' },
+                { header: 'Distance Method', value: (row) => distanceMethodLabel(row.delivery_distance_method) },
                 { header: 'Seller Fee (PHP)', value: 'seller_fee', format: 'number' },
                 { header: 'Discount (PHP)', value: 'discount_amount', format: 'number' },
                 { header: 'Total (PHP)', value: 'total_amount', format: 'number' },
@@ -290,6 +305,8 @@ export function ReportPanel({ role, onError, onAnalyze, title, hideTypeSelector 
                 { header: 'Payment Status', value: 'payment_status', format: 'status' },
                 { header: 'Subtotal (PHP)', value: 'subtotal_amount', format: 'number' },
                 { header: 'Delivery Fee (PHP)', value: 'delivery_fee', format: 'number' },
+                { header: 'Delivery Distance (km)', value: 'delivery_distance_km', format: 'number' },
+                { header: 'Distance Method', value: (row) => distanceMethodLabel(row.delivery_distance_method) },
                 { header: 'Platform Fee (PHP)', value: 'platform_fee', format: 'number' },
                 { header: 'Order Processing Fee (PHP)', value: 'order_processing_fee', format: 'number' },
                 { header: 'Transaction Fee (PHP)', value: 'transaction_fee', format: 'number' },
@@ -358,11 +375,15 @@ export function ReportPanel({ role, onError, onAnalyze, title, hideTypeSelector 
                 dateColumn('Created At (UTC)', 'created_at'),
             ],
             complaints: [
-                { header: 'Complaint ID', value: 'id', format: 'number' },
+                { header: 'Case ID', value: 'id', format: 'number' },
                 { header: 'Order Reference', value: (row) => row.order?.order_reference },
+                { header: 'Case Type', value: 'case_type' },
                 { header: 'Reason', value: 'reason' },
                 { header: 'Description', value: 'description' },
                 statusColumn,
+                { header: 'Refund Status', value: 'refund_status' },
+                { header: 'Requested Refund (PHP)', value: 'requested_amount', format: 'number' },
+                { header: 'Approved Refund (PHP)', value: 'approved_refund_amount', format: 'number' },
                 { header: 'Opened By', value: (row) => row.opener?.name },
                 { header: 'Respondent', value: (row) => row.respondent?.name },
                 { header: 'Resolution', value: 'resolution_reason' },

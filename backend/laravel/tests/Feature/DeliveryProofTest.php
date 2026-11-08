@@ -9,6 +9,7 @@ use App\Models\AuditLog;
 use App\Models\Delivery;
 use App\Models\DeliveryProofCorrection;
 use App\Models\Order;
+use App\Models\RiderProfile;
 use App\Models\User;
 use Illuminate\Contracts\Filesystem\Factory as FilesystemFactory;
 use Illuminate\Filesystem\FilesystemAdapter;
@@ -53,6 +54,8 @@ class DeliveryProofTest extends TestCase
         ['rider' => $rider, 'delivery' => $delivery, 'token' => $token] = $this->dropoff();
         $payload = [
             'qr_token' => $token,
+            'latitude' => 12.7321,
+            'longitude' => 121.3654,
             'photo' => UploadedFile::fake()->image('proof.jpg'),
             'recipient_confirmed' => '1',
             'recipient_name' => 'Received by Buyer',
@@ -83,6 +86,8 @@ class DeliveryProofTest extends TestCase
 
         $this->actingAs($rider)->post('/api/deliveries/'.$delivery->id.'/delivery-verify', [
             'qr_token' => $token,
+            'latitude' => 12.7321,
+            'longitude' => 121.3654,
             'photo' => UploadedFile::fake()->image('proof.jpg'),
             'recipient_confirmed' => '1',
             'recipient_name' => 'Buyer',
@@ -104,6 +109,8 @@ class DeliveryProofTest extends TestCase
 
         $this->actingAs($rider)->post('/api/deliveries/'.$delivery->id.'/delivery-verify', [
             'qr_token' => $token,
+            'latitude' => 12.7321,
+            'longitude' => 121.3654,
             'photo' => UploadedFile::fake()->image('proof.jpg'),
             'recipient_confirmed' => '1',
             'recipient_name' => 'Buyer',
@@ -120,14 +127,17 @@ class DeliveryProofTest extends TestCase
         $actors = $this->dropoff();
         $delivery = $actors['delivery'];
         $rider = $actors['rider'];
-        $payload = [
-            'qr_token' => $actors['token'],
+        $this->actingAs($rider)->post('/api/deliveries/'.$delivery->id.'/proof', [
             'photo' => UploadedFile::fake()->image('proof.jpg'),
             'recipient_confirmed' => '1',
             'recipient_name' => 'Buyer',
             'captured_at' => now()->toISOString(),
-        ];
-        $this->actingAs($rider)->post('/api/deliveries/'.$delivery->id.'/delivery-verify', $payload)->assertOk();
+        ])->assertOk();
+        $this->actingAs($rider)->post('/api/deliveries/'.$delivery->id.'/delivery-verify', [
+            'qr_token' => $actors['token'],
+            'latitude' => 12.7321,
+            'longitude' => 121.3654,
+        ])->assertOk();
 
         $this->app['auth']->forgetGuards();
         $this->getJson('/api/deliveries/'.$delivery->id.'/proof')->assertUnauthorized();
@@ -150,6 +160,8 @@ class DeliveryProofTest extends TestCase
         $initialCapturedAt = now()->subMinute();
         $this->actingAs($actors['rider'])->post('/api/deliveries/'.$delivery->id.'/delivery-verify', [
             'qr_token' => $actors['token'],
+            'latitude' => 12.7321,
+            'longitude' => 121.3654,
             'photo' => UploadedFile::fake()->image('proof.jpg'),
             'recipient_confirmed' => '1',
             'recipient_name' => 'Original Recipient',
@@ -197,12 +209,16 @@ class DeliveryProofTest extends TestCase
         Storage::fake('delivery_proofs');
         $actors = $this->dropoff();
         $delivery = $actors['delivery'];
-        $this->actingAs($actors['rider'])->post('/api/deliveries/'.$delivery->id.'/delivery-verify', [
-            'qr_token' => $actors['token'],
+        $this->actingAs($actors['rider'])->post('/api/deliveries/'.$delivery->id.'/proof', [
             'photo' => UploadedFile::fake()->image('proof.jpg'),
             'recipient_confirmed' => '1',
             'recipient_name' => 'Buyer',
             'captured_at' => now()->toISOString(),
+        ])->assertOk();
+        $this->actingAs($actors['rider'])->post('/api/deliveries/'.$delivery->id.'/delivery-verify', [
+            'qr_token' => $actors['token'],
+            'latitude' => 12.7321,
+            'longitude' => 121.3654,
         ])->assertOk();
         $audit = AuditLog::query()->where('route', 'api/deliveries/{delivery}/delivery-verify')->latest('id')->firstOrFail();
         $auditPayload = json_encode($audit->toArray());
@@ -263,12 +279,17 @@ class DeliveryProofTest extends TestCase
         $buyer = User::factory()->create(['role' => Role::BUYER]);
         $seller = User::factory()->create(['role' => Role::SELLER]);
         $rider = User::factory()->create(['role' => Role::RIDER]);
+        RiderProfile::create(['user_id' => $rider->id, 'availability' => 'OFFLINE', 'is_verified' => true]);
         $order = Order::create([
             'buyer_id' => $buyer->id,
             'seller_id' => $seller->id,
             'status' => OrderStatus::FULFILLING,
             'delivery_method' => 'STANDARD_DELIVERY',
-            'shipping_address' => ['recipient_name' => 'Buyer'],
+            'shipping_address' => [
+                'recipient_name' => 'Buyer',
+                'latitude' => 12.7321,
+                'longitude' => 121.3654,
+            ],
             'total_amount' => 100,
         ]);
         $token = str_repeat('D', 64);

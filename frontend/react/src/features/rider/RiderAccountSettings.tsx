@@ -3,12 +3,31 @@ import api, { initializeCsrf } from '../../lib/api';
 import { confirmAction, showSuccess } from '../../lib/alerts';
 import type { User } from '../../shared/types';
 
-type SettingsTab = 'profile' | 'password' | 'delivery' | 'notifications' | 'location';
+type SettingsTab = 'profile' | 'password' | 'delivery' | 'vehicle' | 'notifications' | 'location';
 type RiderSettings = {
     availability: 'AVAILABLE' | 'OFFLINE';
     vehicle_type: string | null;
+    plate_number: string | null;
+    vehicle_make_model: string | null;
+    vehicle_color: string | null;
+    license_expires_on: string | null;
+    vehicle_registration_expires_on: string | null;
+    pending_vehicle_change: {
+        id: number;
+        status: string;
+        created_at: string;
+        decision_reason: string | null;
+    } | null;
     is_verified: boolean;
     last_location_at: string | null;
+};
+type VehicleChangeFields = {
+    plate_number: string;
+    vehicle_type: string;
+    vehicle_make_model: string;
+    vehicle_color: string;
+    license_expires_on: string;
+    vehicle_registration_expires_on: string;
 };
 type AccountPreferences = {
     order_notifications: boolean;
@@ -20,6 +39,7 @@ const tabs: { id: SettingsTab; label: string }[] = [
     { id: 'profile', label: 'Profile & contact' },
     { id: 'password', label: 'Password' },
     { id: 'delivery', label: 'Delivery preferences' },
+    { id: 'vehicle', label: 'Vehicle information' },
     { id: 'notifications', label: 'Notifications' },
     { id: 'location', label: 'Location permissions' },
 ];
@@ -54,7 +74,13 @@ export function RiderAccountSettings({ user, onUserUpdated, onError }: {
     const [photoBusy, setPhotoBusy] = React.useState(false);
     const [settings, setSettings] = React.useState<RiderSettings | null>(null);
     const [settingsBusy, setSettingsBusy] = React.useState(false);
-    const [vehicleType, setVehicleType] = React.useState('');
+    const [vehicleFields, setVehicleFields] = React.useState<VehicleChangeFields>({
+        plate_number: '', vehicle_type: '', vehicle_make_model: '', vehicle_color: '',
+        license_expires_on: '', vehicle_registration_expires_on: '',
+    });
+    const [vehicleLicense, setVehicleLicense] = React.useState<File | null>(null);
+    const [vehicleRegistration, setVehicleRegistration] = React.useState<File | null>(null);
+    const [vehiclePhotos, setVehiclePhotos] = React.useState<File[]>([]);
     const [preferences, setPreferences] = React.useState(defaultPreferences);
     const [preferenceBusy, setPreferenceBusy] = React.useState(false);
     const [loading, setLoading] = React.useState(true);
@@ -77,7 +103,14 @@ export function RiderAccountSettings({ user, onUserUpdated, onError }: {
                 api.get<{ preferences: AccountPreferences }>('/api/profile/settings'),
             ]);
             setSettings(riderResponse.data.settings);
-            setVehicleType(riderResponse.data.settings.vehicle_type ?? '');
+            setVehicleFields({
+                plate_number: riderResponse.data.settings.plate_number ?? '',
+                vehicle_type: riderResponse.data.settings.vehicle_type ?? '',
+                vehicle_make_model: riderResponse.data.settings.vehicle_make_model ?? '',
+                vehicle_color: riderResponse.data.settings.vehicle_color ?? '',
+                license_expires_on: riderResponse.data.settings.license_expires_on ?? '',
+                vehicle_registration_expires_on: riderResponse.data.settings.vehicle_registration_expires_on ?? '',
+            });
             setPreferences({ ...defaultPreferences, ...accountResponse.data.preferences });
         } catch (requestError: any) {
             onError(errorMessage(requestError, 'Rider account settings could not be loaded.'));
@@ -250,21 +283,49 @@ export function RiderAccountSettings({ user, onUserUpdated, onError }: {
         }
     }
 
-    async function saveDeliveryPreferences(event: React.FormEvent<HTMLFormElement>) {
+    async function requestVehicleChange(event: React.FormEvent<HTMLFormElement>) {
         event.preventDefault();
-        if (!settings || settingsBusy) return;
+        if (!settings?.is_verified || settingsBusy) return;
+        if (!vehicleLicense || !vehicleRegistration || vehiclePhotos.length < 1 || vehiclePhotos.length > 5) {
+            onError('Upload a valid driver license, vehicle registration, and 1 to 5 vehicle photos.');
+            return;
+        }
         setSettingsBusy(true);
         try {
             await initializeCsrf();
-            const response = await api.put<{ settings: RiderSettings }>('/api/riders/settings', { vehicle_type: vehicleType.trim() || null });
-            setSettings(response.data.settings);
-            setNotice('Delivery preferences saved.');
-            showSuccess('Delivery preferences saved.');
+            const body = new FormData();
+            Object.entries(vehicleFields).forEach(([key, value]) => body.append(key, value.trim()));
+            body.append('driver_license', vehicleLicense);
+            body.append('vehicle_registration', vehicleRegistration);
+            vehiclePhotos.forEach((file) => body.append('vehicle_photos[]', file));
+            await api.post('/api/rider/vehicle-change', body);
+            setVehicleLicense(null);
+            setVehicleRegistration(null);
+            setVehiclePhotos([]);
+            setNotice('Vehicle update submitted. Your current approved vehicle remains active until an admin approves the change.');
+            showSuccess('Vehicle update submitted for admin review.');
+            await refreshSettings();
         } catch (requestError: any) {
-            onError(errorMessage(requestError, 'Delivery preferences could not be saved.'));
+            onError(errorMessage(requestError, 'Vehicle update could not be submitted. Your current vehicle remains active; check the files and retry.'));
         } finally {
             setSettingsBusy(false);
         }
+    }
+
+    function updateVehicleField(field: keyof VehicleChangeFields, value: string) {
+        setVehicleFields((current) => ({ ...current, [field]: value }));
+    }
+
+    function validVehicleFiles(files: FileList | null, imagesOnly: boolean): File[] | null {
+        const selected = Array.from(files ?? []);
+        const allowed = imagesOnly ? ['image/jpeg', 'image/png', 'image/webp'] : ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+        if (selected.some((file) => !allowed.includes(file.type) || file.size > 10 * 1024 * 1024)) {
+            onError(imagesOnly
+                ? 'Vehicle photos must be JPEG, PNG, or WebP images no larger than 10 MB.'
+                : 'Documents must be JPEG, PNG, WebP, or PDF files no larger than 10 MB.');
+            return null;
+        }
+        return selected;
     }
 
     async function changeAvailability(availability: RiderSettings['availability']) {
@@ -272,7 +333,7 @@ export function RiderAccountSettings({ user, onUserUpdated, onError }: {
         const confirmed = await confirmAction({
             title: availability === 'AVAILABLE' ? 'Go available for delivery offers?' : 'Go offline?',
             text: availability === 'AVAILABLE'
-                ? 'Your verified rider account may receive new delivery offers.'
+                ? 'Your verified rider account may receive nearby offers. While the rider dashboard is open, FARMGATE periodically refreshes your device location to match offers within the assignment distance.'
                 : 'You will stop receiving new delivery offers. Complete active deliveries before going offline.',
             confirmText: availability === 'AVAILABLE' ? 'Go available' : 'Go offline',
             danger: availability === 'OFFLINE',
@@ -318,7 +379,7 @@ export function RiderAccountSettings({ user, onUserUpdated, onError }: {
         navigator.geolocation.getCurrentPosition(
             () => {
                 setLocationPermission('granted');
-                setNotice('Location access is available on this device. Location is only shared when you start sharing on an active delivery.');
+                setNotice('Location access is available on this device. Your location is refreshed for nearby-offer matching while you are available and the rider dashboard is open.');
             },
             (error) => {
                 setLocationPermission(error.code === error.PERMISSION_DENIED ? 'denied' : 'prompt');
@@ -417,10 +478,34 @@ export function RiderAccountSettings({ user, onUserUpdated, onError }: {
                             : <button className="seller-inline-action" type="button" disabled={settingsBusy || !settings?.is_verified} onClick={() => void changeAvailability('AVAILABLE')}>{settingsBusy ? 'Saving…' : 'Go available'}</button>}
                     </div>
                 </div>
-                <form className="seller-account-form rider-delivery-preferences" onSubmit={(event) => void saveDeliveryPreferences(event)}>
-                    <label>Vehicle type<input type="text" maxLength={100} placeholder="e.g. motorcycle, tricycle, or pickup" value={vehicleType} onChange={(event) => setVehicleType(event.target.value)} /></label>
-                    <small>Vehicle information helps the operations team coordinate delivery. Keep it current.</small>
-                    <button className="seller-inline-action" type="submit" disabled={settingsBusy}>{settingsBusy ? 'Saving…' : 'Save delivery preferences'}</button>
+            </section>
+            <section className="seller-settings-section rider-settings-panel" id="rider-settings-panel-vehicle" role="tabpanel" aria-labelledby="rider-settings-tab-vehicle" hidden={tab !== 'vehicle'} tabIndex={-1}>
+                <div className="seller-work-heading"><div><p className="eyebrow">Admin-reviewed change</p><h3>Vehicle information</h3></div></div>
+                <p>Approved vehicle details remain active while updates are reviewed. License, OR/CR, and vehicle photos are private, encrypted, and available only to you and authorized admin reviewers.</p>
+                <dl className="rider-approved-vehicle">
+                <div><dt>Approved vehicle</dt><dd>{settings?.vehicle_type ?? 'Not recorded'} · {settings?.vehicle_make_model ?? '—'}</dd></div>
+                <div><dt>Plate / color</dt><dd>{settings?.plate_number ?? 'Not recorded'} · {settings?.vehicle_color ?? '—'}</dd></div>
+                <div><dt>License expires</dt><dd>{settings?.license_expires_on ?? 'Not recorded'}</dd></div>
+                <div><dt>OR/CR expires</dt><dd>{settings?.vehicle_registration_expires_on ?? 'Not recorded'}</dd></div>
+                </dl>
+                {settings?.pending_vehicle_change && <p className="rider-settings-notice" role="status">
+                {settings.pending_vehicle_change.status === 'PENDING'
+                    ? `Vehicle update #${settings.pending_vehicle_change.id} is awaiting admin review (${new Date(settings.pending_vehicle_change.created_at).toLocaleString()}).`
+                    : `Vehicle update #${settings.pending_vehicle_change.id}: ${settings.pending_vehicle_change.status.replaceAll('_', ' ')}.`}
+                {settings.pending_vehicle_change.decision_reason && <><br />Admin note: {settings.pending_vehicle_change.decision_reason}</>}
+                </p>}
+                <form className="seller-account-form rider-vehicle-change-form" onSubmit={(event) => void requestVehicleChange(event)}>
+                <h4>Request a vehicle update or document replacement</h4>
+                <label>Plate number<input autoComplete="off" pattern="[A-Za-z0-9][A-Za-z0-9 -]{1,15}" maxLength={16} required value={vehicleFields.plate_number} onChange={(event) => updateVehicleField('plate_number', event.target.value.toUpperCase())} /></label>
+                <label>Vehicle type<select required value={vehicleFields.vehicle_type} onChange={(event) => updateVehicleField('vehicle_type', event.target.value)}><option value="">Choose vehicle type</option><option>Motorcycle</option><option>Tricycle</option><option>Car</option><option>Van</option><option>Pickup</option><option>Truck</option><option>Other</option></select></label>
+                <label>Make and model<input maxLength={120} required value={vehicleFields.vehicle_make_model} onChange={(event) => updateVehicleField('vehicle_make_model', event.target.value)} /></label>
+                <label>Color<input maxLength={60} required value={vehicleFields.vehicle_color} onChange={(event) => updateVehicleField('vehicle_color', event.target.value)} /></label>
+                <label>Driver license expiry<input type="date" min={new Date().toISOString().slice(0, 10)} required value={vehicleFields.license_expires_on} onChange={(event) => updateVehicleField('license_expires_on', event.target.value)} /></label>
+                <label>OR/CR expiry<input type="date" min={new Date().toISOString().slice(0, 10)} required value={vehicleFields.vehicle_registration_expires_on} onChange={(event) => updateVehicleField('vehicle_registration_expires_on', event.target.value)} /></label>
+                <label>Replacement driver license<input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" onChange={(event) => { const files = validVehicleFiles(event.currentTarget.files, false); if (files?.[0]) setVehicleLicense(files[0]); event.currentTarget.value = ''; }} /><small>Why required: verify current license details. JPEG, PNG, WebP, or PDF, up to 10 MB. {vehicleLicense?.name}</small></label>
+                <label>Current OR/CR<input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" onChange={(event) => { const files = validVehicleFiles(event.currentTarget.files, false); if (files?.[0]) setVehicleRegistration(files[0]); event.currentTarget.value = ''; }} /><small>Why required: verify current registration. JPEG, PNG, WebP, or PDF, up to 10 MB. {vehicleRegistration?.name}</small></label>
+                <label>Vehicle photos<input type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={(event) => { const files = validVehicleFiles(event.currentTarget.files, true); if (files?.length) { if (files.length + vehiclePhotos.length > 5) onError('Upload no more than 5 vehicle photos.'); else setVehiclePhotos((current) => [...current, ...files]); } event.currentTarget.value = ''; }} /><small>1 to 5 clear JPEG, PNG, or WebP photos, up to 10 MB each.</small>{vehiclePhotos.map((file, index) => <span className="rider-vehicle-photo-file" key={`${file.name}-${index}`}>{file.name}<button type="button" className="seller-text-action" onClick={() => setVehiclePhotos((current) => current.filter((_, fileIndex) => fileIndex !== index))}>Remove</button></span>)}</label>
+                {settings?.pending_vehicle_change?.status !== 'PENDING' && <button className="seller-inline-action" type="submit" disabled={settingsBusy}>{settingsBusy ? 'Submitting…' : 'Submit vehicle update'}</button>}
                 </form>
             </section>
             <section className="seller-settings-section rider-settings-panel" id="rider-settings-panel-notifications" role="tabpanel" aria-labelledby="rider-settings-tab-notifications" hidden={tab !== 'notifications'} tabIndex={-1}>
@@ -432,7 +517,7 @@ export function RiderAccountSettings({ user, onUserUpdated, onError }: {
             </section>
             <section className="seller-settings-section rider-settings-panel" id="rider-settings-panel-location" role="tabpanel" aria-labelledby="rider-settings-tab-location" hidden={tab !== 'location'} tabIndex={-1}>
                 <div className="seller-work-heading"><div><p className="eyebrow">Device permissions</p><h3>Location access</h3></div></div>
-                <p>Location is used only when you choose to share your position for an active delivery or verify a pickup/drop-off QR. FARMGATE does not request background location access from this settings page.</p>
+                <p>When you are marked available and the rider dashboard is open, FARMGATE periodically uses your device location to match offers within the assignment distance. Active-delivery location sharing is started separately and can be stopped at any time. FARMGATE does not request background location access.</p>
                 <div className="rider-location-permission"><span>Browser permission</span><strong>{permissionLabel}</strong></div>
                 <button className="seller-inline-action" type="button" onClick={() => void checkLocationAccess()} disabled={locationPermission === 'unsupported'}>{locationPermission === 'granted' ? 'Check location access again' : 'Request location access'}</button>
                 <p className="rider-settings-field-note">You can change this permission in your browser or device settings. Delivery location sharing is started separately on an assigned delivery and can be stopped at any time.</p>

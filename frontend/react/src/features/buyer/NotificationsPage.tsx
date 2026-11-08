@@ -9,6 +9,8 @@ type AppNotification = {
     data: {
         type?: string;
         order_id?: number | string;
+        case_id?: number | string;
+        case_type?: string;
         order_reference?: string;
         status?: string;
         buyer_name?: string;
@@ -40,7 +42,18 @@ function categoryFor(notification: AppNotification): NotificationCategory {
     return 'SYSTEM';
 }
 
-function notificationContent(notification: AppNotification, role: 'BUYER' | 'SELLER' | 'RIDER'): { title: string; message: string } {
+function notificationContent(notification: AppNotification, role: 'BUYER' | 'SELLER' | 'RIDER' | 'ADMIN'): { title: string; message: string } {
+    if (notification.data.type === 'order_case_updated') {
+        const type = notification.data.case_type === 'RETURN_REFUND' ? 'Return/refund' : 'Complaint';
+        return {
+            title: `${type} update${notification.data.order_reference ? ` · ${notification.data.order_reference}` : ''}`,
+            message: notification.data.message ?? 'An order case was updated.',
+        };
+    }
+
+    if (notification.data.type === 'review_moderation_updated') {
+        return { title: 'Review moderation update', message: notification.data.message ?? 'Your review was reviewed by admin.' };
+    }
     if (notification.data.type === 'order_status_changed') {
         const orderReference = notification.data.order_reference ? ` ${notification.data.order_reference}` : '';
         const status = notification.data.status?.replaceAll('_', ' ').toLowerCase() ?? 'updated';
@@ -143,19 +156,26 @@ export function NotificationsPage({ onOpenOrder, onOpenConversation, onNotificat
     onOpenOrder?: (orderId: number) => void;
     onOpenConversation?: (conversationId: number) => void;
     onNotificationsRead?: () => void;
-    role?: 'BUYER' | 'SELLER' | 'RIDER';
+    role?: 'BUYER' | 'SELLER' | 'RIDER' | 'ADMIN';
 }) {
     const [notifications, setNotifications] = React.useState<AppNotification[]>([]);
     const [category, setCategory] = React.useState<NotificationCategory>('ALL');
     const [loading, setLoading] = React.useState(true);
     const [error, setError] = React.useState('');
     const [readError, setReadError] = React.useState('');
+    const [refreshError, setRefreshError] = React.useState('');
+    const [browserPermission, setBrowserPermission] = React.useState<NotificationPermission | 'unsupported'>(() => (
+        typeof window !== 'undefined' && 'Notification' in window ? window.Notification.permission : 'unsupported'
+    ));
+    const [browserPermissionMessage, setBrowserPermissionMessage] = React.useState('');
+    const seenNotificationIds = React.useRef(new Set<string>());
 
     React.useEffect(() => {
         let active = true;
         api.get<{ notifications: AppNotification[]; unread_count: number }>('/api/notifications')
             .then(async (response) => {
                 if (!active) return;
+                seenNotificationIds.current = new Set(response.data.notifications.map((notification) => notification.id));
                 setNotifications(response.data.notifications);
                 if (response.data.unread_count === 0) {
                     onNotificationsRead?.();
@@ -187,6 +207,50 @@ export function NotificationsPage({ onOpenOrder, onOpenConversation, onNotificat
         return () => { active = false; };
     }, [onNotificationsRead]);
 
+    React.useEffect(() => {
+        if (browserPermission === 'unsupported') return undefined;
+        const timer = window.setInterval(() => {
+            api.get<{ notifications: AppNotification[] }>('/api/notifications')
+                .then((response) => {
+                    const fresh = response.data.notifications.filter((notification) => !seenNotificationIds.current.has(notification.id));
+                    for (const notification of fresh) {
+                        seenNotificationIds.current.add(notification.id);
+                        if (browserPermission !== 'granted'
+                            || window.Notification.permission !== 'granted'
+                            || notification.data.type !== 'order_status_changed'
+                            || !['CANCELLED', 'REJECTED'].includes(notification.data.status ?? '')) continue;
+                        const content = notificationContent(notification, role);
+                        const alert = new window.Notification(content.title, { body: content.message, tag: notification.id });
+                        alert.onclick = () => {
+                            window.focus();
+                            if (notification.data.order_id && onOpenOrder) onOpenOrder(Number(notification.data.order_id));
+                            alert.close();
+                        };
+                    }
+                    setNotifications(response.data.notifications);
+                    setRefreshError('');
+                })
+                .catch((requestError: { userMessage?: string }) => {
+                    setRefreshError(requestError.userMessage ?? 'New notifications could not be checked.');
+                });
+        }, 30000);
+
+        return () => window.clearInterval(timer);
+    }, [browserPermission, onOpenOrder, role]);
+
+    async function enableBrowserNotifications(): Promise<void> {
+        if (browserPermission === 'unsupported') return;
+        try {
+            const permission = await window.Notification.requestPermission();
+            setBrowserPermission(permission);
+            setBrowserPermissionMessage(permission === 'granted'
+                ? 'Browser alerts are enabled while this notifications page is open. In-app notifications remain available.'
+                : 'Browser alerts were not enabled. You can still view updates in Farmgate notifications.');
+        } catch {
+            setBrowserPermissionMessage('Browser alerts could not be enabled. You can still view updates in Farmgate notifications.');
+        }
+    }
+
     const filteredNotifications = notifications.filter((notification) => category === 'ALL' || categoryFor(notification) === category);
 
     return <section className="buyer-notifications" aria-labelledby="buyer-notifications-title">
@@ -194,12 +258,25 @@ export function NotificationsPage({ onOpenOrder, onOpenConversation, onNotificat
             <span aria-hidden="true">🔔</span>
             <h1 id="buyer-notifications-title">Notifications</h1>
         </header>
+        <div className="buyer-notification-device-alerts">
+            <button type="button" onClick={enableBrowserNotifications} disabled={browserPermission === 'unsupported' || browserPermission === 'granted'}>
+                {browserPermission === 'granted' ? 'Browser alerts enabled' : 'Enable browser alerts'}
+            </button>
+            <p aria-live="polite">
+                {browserPermissionMessage || (browserPermission === 'unsupported'
+                    ? 'Browser alerts are unavailable on this device. In-app notifications remain available.'
+                    : browserPermission === 'denied'
+                        ? 'Browser alerts are blocked in browser settings. In-app notifications remain available.'
+                        : 'Get browser alerts for important order changes while this notifications page is open.')}
+            </p>
+        </div>
         <nav className="buyer-notification-filters" aria-label="Filter notifications" role="tablist">
             {categories.map((item) => <button type="button" role="tab" aria-selected={category === item.id} className={category === item.id ? 'active' : ''} key={item.id} onClick={() => setCategory(item.id)}>{item.label}</button>)}
         </nav>
         <div className="buyer-notification-content" aria-live="polite">
             {loading ? <p className="buyer-notifications-state">Loading notifications...</p> : error ? <p className="buyer-notifications-state error" role="alert">{error}</p> : <>
                 {readError && <p className="buyer-notifications-state error" role="alert">{readError}</p>}
+                {refreshError && <p className="buyer-notifications-state error" role="alert">{refreshError}</p>}
                 {filteredNotifications.length ? <div className="buyer-notification-list">
                     {filteredNotifications.map((notification) => {
                         const content = notificationContent(notification, role);

@@ -46,11 +46,13 @@ export function OrderRouteMap({
     const containerRef = React.useRef<HTMLDivElement>(null);
     const mapRef = React.useRef<L.Map | null>(null);
     const riderMarkerRef = React.useRef<L.Marker | null>(null);
+    const riderRouteRef = React.useRef<L.Polyline | null>(null);
     const sellerPoint = coordinate(sellerLatitude, sellerLongitude);
     const buyerPoint = coordinate(buyerLatitude, buyerLongitude);
     const riderPoint = coordinate(riderLatitude ?? null, riderLongitude ?? null);
     const [routeLoading, setRouteLoading] = React.useState(true);
     const [routeError, setRouteError] = React.useState<string | null>(null);
+    const [riderRouteError, setRiderRouteError] = React.useState<string | null>(null);
 
     React.useEffect(() => {
         if (!containerRef.current || !sellerPoint || !buyerPoint) return undefined;
@@ -119,6 +121,7 @@ export function OrderRouteMap({
             window.clearTimeout(timeout);
             mapRef.current = null;
             riderMarkerRef.current = null;
+            riderRouteRef.current = null;
             map.remove();
         };
     }, [buyerName, buyerPoint?.[0], buyerPoint?.[1], sellerName, sellerPoint?.[0], sellerPoint?.[1]]);
@@ -147,6 +150,46 @@ export function OrderRouteMap({
     }, [riderName, riderPoint?.[0], riderPoint?.[1]]);
 
     React.useEffect(() => {
+        const map = mapRef.current;
+        riderRouteRef.current?.remove();
+        riderRouteRef.current = null;
+        setRiderRouteError(null);
+        if (!map || !riderPoint || !sellerPoint || !buyerPoint) return undefined;
+
+        const controller = new AbortController();
+        const timeout = window.setTimeout(() => controller.abort(), 12_000);
+        let active = true;
+
+        fetch(`https://router.project-osrm.org/route/v1/driving/${riderPoint[1]},${riderPoint[0]};${sellerPoint[1]},${sellerPoint[0]}?overview=full&geometries=geojson`, {
+            signal: controller.signal,
+        }).then(async (response) => {
+            if (!response.ok) throw new Error('Road routing service returned an error.');
+            const result = await response.json() as RouteResponse;
+            const routeCoordinates = result.routes?.[0]?.geometry?.coordinates;
+            if (!routeCoordinates || routeCoordinates.length < 2) throw new Error('No drivable road route was found.');
+            if (!active) return;
+
+            const roadRoute = routeCoordinates.map(([longitude, latitude]) => L.latLng(latitude, longitude));
+            riderRouteRef.current = L.polyline(roadRoute, {
+                color: '#ed7d31',
+                weight: 5,
+                opacity: 0.9,
+            }).addTo(map).bindTooltip(`Rider to seller · ${riderName}`);
+            map.fitBounds(L.latLngBounds([sellerPoint, buyerPoint, ...roadRoute]), { padding: [36, 36], maxZoom: 15 });
+        }).catch(() => {
+            if (active) setRiderRouteError('The road route from the rider to the seller is temporarily unavailable.');
+        }).finally(() => {
+            window.clearTimeout(timeout);
+        });
+
+        return () => {
+            active = false;
+            controller.abort();
+            window.clearTimeout(timeout);
+        };
+    }, [buyerPoint?.[0], buyerPoint?.[1], riderName, riderPoint?.[0], riderPoint?.[1], sellerPoint?.[0], sellerPoint?.[1]]);
+
+    React.useEffect(() => {
         setRouteLoading(true);
         setRouteError(null);
     }, [buyerPoint?.[0], buyerPoint?.[1], sellerPoint?.[0], sellerPoint?.[1]]);
@@ -167,6 +210,7 @@ export function OrderRouteMap({
         <div className="buyer-order-route-map-canvas" ref={containerRef} role="img" aria-label={`Map showing the route from seller ${sellerName} to buyer ${buyerName}`} />
         {routeLoading && <p className="buyer-order-route-help" role="status">Loading road route…</p>}
         {routeError && <p className="buyer-order-route-help" role="status">{routeError}</p>}
+        {riderPoint && riderRouteError && <p className="buyer-order-route-help" role="status">{riderRouteError}</p>}
         <a className="buyer-order-route-directions" href={directionsUrl} target="_blank" rel="noreferrer">Open directions in OpenStreetMap</a>
     </section>;
 }

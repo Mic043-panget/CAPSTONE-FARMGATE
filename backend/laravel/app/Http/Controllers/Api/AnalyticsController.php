@@ -250,7 +250,15 @@ class AnalyticsController extends Controller
                 'active_sellers' => User::query()->where('role', Role::SELLER)->whereHas('livestockListings', fn ($query) => $query->where('status', ListingStatus::ACTIVE))->count(),
                 'buyers' => $user->role === Role::ADMIN ? User::query()->where('role', Role::BUYER)->count() : null,
                 'products' => $inventory->count(),
-                'refunds' => null,
+                'refunds_issued_count' => $user->role === Role::ADMIN
+                    ? Complaint::query()->where('case_type', 'RETURN_REFUND')->where('refund_status', 'PAID')->whereBetween('refund_completed_at', [$from, $to])->count()
+                    : null,
+                'refunds_issued_amount' => $user->role === Role::ADMIN
+                    ? round((float) Complaint::query()->where('case_type', 'RETURN_REFUND')->where('refund_status', 'PAID')->whereBetween('refund_completed_at', [$from, $to])->sum('approved_refund_amount'), 2)
+                    : null,
+                'refunds_action_required' => $user->role === Role::ADMIN
+                    ? Complaint::query()->where('case_type', 'RETURN_REFUND')->whereIn('refund_status', ['ACTION_REQUIRED', 'MANUAL_ACTION_REQUIRED', 'AWAITING_RETURN'])->count()
+                    : null,
                 'promotions' => null,
             ],
             'delivery_proof_summary' => [
@@ -324,7 +332,7 @@ class AnalyticsController extends Controller
             ],
             'unavailable' => [
                 'inventory_changes' => 'The project does not keep stock movement history.',
-                'refunds' => 'Refund records are not stored.',
+                'refunds' => 'PayMongo refund status and approved COD reimbursement records are stored; COD payout is performed outside Farmgate.',
                 'promotions' => 'Promotion codes and redemption records are not stored.',
                 'regions' => 'Orders do not have a structured region field.',
                 'user_reports' => 'There is no separate user report record type; disputes are represented as complaints.',

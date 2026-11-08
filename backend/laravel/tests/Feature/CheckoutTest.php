@@ -14,6 +14,7 @@ use App\Models\SystemSetting;
 use App\Models\User;
 use App\Services\SystemSettingsService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
@@ -283,7 +284,8 @@ class CheckoutTest extends TestCase
     {
         $buyer = User::factory()->create(['role' => Role::BUYER]);
         $seller = User::factory()->create(['role' => Role::SELLER]);
-        $seller->sellerProfile()->create(['latitude' => 12.7771, 'longitude' => 121.3654]);
+        $seller->sellerProfile()->create(['latitude' => 12.7771, 'longitude' => 121.3654, 'pickup_location_confirmed' => true]);
+        Http::fake(['https://router.project-osrm.org/*' => Http::response(['code' => 'Ok', 'routes' => [['distance' => 5000]]])]);
         $address = $buyer->buyerAddresses()->create([
             'label' => 'Home',
             'recipient_name' => 'Maria Santos',
@@ -309,29 +311,170 @@ class CheckoutTest extends TestCase
         ]);
 
         $this->actingAs($buyer)->postJson('/api/cart/items', ['listing_id' => $listing->id, 'quantity' => 1])->assertOk();
+        $quote = $this->actingAs($buyer)->postJson('/api/checkout/quote', [
+            'delivery_method' => 'STANDARD_DELIVERY',
+            'latitude' => $address->latitude,
+            'longitude' => $address->longitude,
+            'shipping_address' => [
+                'street_address' => $address->street_address,
+                'address_line2' => $address->address_line2,
+                'barangay' => $address->barangay,
+                'city_municipality' => $address->city_municipality,
+                'province' => $address->province,
+                'postal_code' => $address->postal_code,
+            ],
+        ])->assertOk();
         $checkout = $this->actingAs($buyer)->postJson('/api/checkout', [
             'delivery_method' => 'STANDARD_DELIVERY',
             'payment_method' => 'COD',
             'buyer_address_id' => $address->id,
-            'delivery_distance_km' => 5,
+            'delivery_quote_token' => $quote->json('delivery_quote_token'),
         ]);
         $checkout->assertOk()
             ->assertJsonPath('order.delivery_method', 'STANDARD_DELIVERY')
             ->assertJsonPath('order.payment_method', 'COD')
-            ->assertJsonPath('order.shipping_address.recipient_name', 'Maria Santos');
+            ->assertJsonPath('order.shipping_address.recipient_name', 'Maria Santos')
+            ->assertJsonPath('order.delivery_distance_km', '5.00')
+            ->assertJsonPath('order.delivery_distance_method', 'OSRM_ROAD_ROUTE')
+            ->assertJsonPath('order.seller_location_snapshot.latitude', 12.7771);
 
         $this->assertDatabaseHas('deliveries', [
             'order_id' => $checkout->json('order.id'),
             'status' => 'WAITING_FOR_RIDER',
             'pickup_latitude' => 12.7771,
         ]);
+
+        $seller->sellerProfile()->update(['latitude' => 13.0, 'longitude' => 122.0]);
+        $this->actingAs($buyer)->getJson('/api/orders/'.$checkout->json('order.id'))
+            ->assertOk()
+            ->assertJsonPath('order.seller_location_snapshot.latitude', 12.7771)
+            ->assertJsonPath('order.seller_location_snapshot.longitude', 121.3654);
+    }
+
+    public function test_delivery_quote_recalculates_when_buyer_address_changes(): void
+    {
+        $buyer = User::factory()->create(['role' => Role::BUYER]);
+        $seller = User::factory()->create(['role' => Role::SELLER]);
+        $seller->sellerProfile()->create([
+            'latitude' => 12.7771,
+            'longitude' => 121.3654,
+            'address' => 'Poblacion, Bongabong, Oriental Mindoro',
+            'pickup_location_confirmed' => true,
+        ]);
+        $category = Category::create(['name' => 'Duck', 'slug' => 'duck']);
+        $listing = LivestockListing::create([
+            'seller_id' => $seller->id,
+            'category_id' => $category->id,
+            'name' => 'Pekin Ducks',
+            'quantity' => 2,
+            'pricing_type' => PricingType::PER_HEAD,
+            'price_per_head' => 320,
+            'status' => ListingStatus::ACTIVE,
+        ]);
+        $this->actingAs($buyer)->postJson('/api/cart/items', ['listing_id' => $listing->id, 'quantity' => 1])->assertOk();
+        Http::fake([
+            'https://router.project-osrm.org/*' => Http::sequence()
+                ->push(['code' => 'Ok', 'routes' => [['distance' => 3000]]])
+                ->push(['code' => 'Ok', 'routes' => [['distance' => 12000]]]),
+        ]);
+
+        $shortRoute = $this->actingAs($buyer)->postJson('/api/checkout/quote', [
+            'delivery_method' => 'STANDARD_DELIVERY',
+            'latitude' => 12.7321,
+            'longitude' => 121.3654,
+            'shipping_address' => [
+                'barangay' => 'Poblacion',
+                'city_municipality' => 'Bongabong',
+                'province' => 'Oriental Mindoro',
+                'street_address' => 'Old address',
+            ],
+        ])->assertOk();
+        $changedAddress = $this->actingAs($buyer)->postJson('/api/checkout/quote', [
+            'delivery_method' => 'STANDARD_DELIVERY',
+            'latitude' => 12.8,
+            'longitude' => 121.4,
+            'shipping_address' => [
+                'barangay' => 'Labasan',
+                'city_municipality' => 'Bongabong',
+                'province' => 'Oriental Mindoro',
+                'street_address' => 'New address',
+            ],
+        ])->assertOk();
+
+        $this->assertEquals(3.0, $shortRoute->json('delivery_distances_km.'.$seller->id));
+        $this->assertEquals(12.0, $changedAddress->json('delivery_distances_km.'.$seller->id));
+        $this->assertNotSame($shortRoute->json('shipping'), $changedAddress->json('shipping'));
+    }
+
+    public function test_checkout_rejects_a_delivery_quote_if_the_seller_location_changes(): void
+    {
+        $buyer = User::factory()->create(['role' => Role::BUYER]);
+        $seller = User::factory()->create(['role' => Role::SELLER]);
+        $seller->sellerProfile()->create([
+            'latitude' => 12.7771,
+            'longitude' => 121.3654,
+            'address' => 'Poblacion, Bongabong, Oriental Mindoro',
+            'pickup_location_confirmed' => true,
+        ]);
+        $category = Category::create(['name' => 'Duck', 'slug' => 'duck']);
+        $listing = LivestockListing::create([
+            'seller_id' => $seller->id,
+            'category_id' => $category->id,
+            'name' => 'Pekin Ducks',
+            'quantity' => 2,
+            'pricing_type' => PricingType::PER_HEAD,
+            'price_per_head' => 320,
+            'status' => ListingStatus::ACTIVE,
+        ]);
+        $this->actingAs($buyer)->postJson('/api/cart/items', ['listing_id' => $listing->id, 'quantity' => 1])->assertOk();
+        Http::fake([
+            'https://router.project-osrm.org/*' => Http::sequence()
+                ->push(['code' => 'Ok', 'routes' => [['distance' => 5000]]])
+                ->push(['code' => 'Ok', 'routes' => [['distance' => 10000]]]),
+        ]);
+
+        $address = [
+            'recipient_name' => 'Buyer',
+            'phone_number' => '09171234567',
+            'province' => 'Oriental Mindoro',
+            'city_municipality' => 'Bongabong',
+            'barangay' => 'Poblacion',
+            'postal_code' => '5211',
+            'street_address' => 'Test Street',
+            'address_line2' => '',
+            'latitude' => 12.7321,
+            'longitude' => 121.3654,
+        ];
+        $quote = $this->actingAs($buyer)->postJson('/api/checkout/quote', [
+            'delivery_method' => 'STANDARD_DELIVERY',
+            'latitude' => $address['latitude'],
+            'longitude' => $address['longitude'],
+            'shipping_address' => $address,
+        ])->assertOk();
+
+        $seller->sellerProfile()->update(['latitude' => 12.8]);
+        $this->actingAs($buyer)->postJson('/api/checkout', [
+            'delivery_method' => 'STANDARD_DELIVERY',
+            'shipping_address' => $address,
+            'delivery_quote_token' => $quote->json('delivery_quote_token'),
+        ])->assertStatus(409)
+            ->assertJsonPath('message', 'The delivery location or fee changed while you were checking out. Review the refreshed delivery quote before placing your order.');
+
+        $this->assertDatabaseMissing('orders', ['buyer_id' => $buyer->id]);
+        $this->assertDatabaseHas('livestock_listings', ['id' => $listing->id, 'quantity' => 2]);
     }
 
     public function test_delivery_quote_calculates_distance_and_fee_from_buyer_and_seller_pins(): void
     {
         $buyer = User::factory()->create(['role' => Role::BUYER]);
         $seller = User::factory()->create(['role' => Role::SELLER]);
-        $seller->sellerProfile()->create(['latitude' => 12.7771, 'longitude' => 121.3654]);
+        $seller->sellerProfile()->create([
+            'latitude' => 12.7771,
+            'longitude' => 121.3654,
+            'address' => 'Poblacion, Bongabong, Oriental Mindoro',
+            'pickup_location_confirmed' => true,
+        ]);
+        Http::fake(['https://router.project-osrm.org/*' => Http::response(['code' => 'Ok', 'routes' => [['distance' => 5000]]])]);
         $category = Category::create(['name' => 'Duck', 'slug' => 'duck']);
         $listing = LivestockListing::create([
             'seller_id' => $seller->id,
@@ -348,10 +491,17 @@ class CheckoutTest extends TestCase
             'delivery_method' => 'STANDARD_DELIVERY',
             'latitude' => 12.7321,
             'longitude' => 121.3654,
+            'shipping_address' => [
+                'barangay' => 'Poblacion',
+                'city_municipality' => 'Bongabong',
+                'province' => 'Oriental Mindoro',
+            ],
         ])->assertOk()
             ->assertJsonPath('subtotal', '320.00')
-            ->assertJsonPath('shipping', '100.00');
+            ->assertJsonPath('shipping', '100.00')
+            ->assertJsonPath('delivery_distance_methods.'.$seller->id, 'OSRM_ROAD_ROUTE');
         $this->assertEquals(5.0, (float) $quote->json('delivery_distances_km.'.$seller->id));
+        Http::assertSent(fn ($request): bool => str_contains($request->url(), '/121.3654000,12.7771000;121.3654000,12.7321000'));
     }
 
     public function test_seller_can_save_pickup_coordinates_for_delivery_quotes(): void
@@ -361,9 +511,16 @@ class CheckoutTest extends TestCase
         $this->actingAs($seller)->putJson('/api/seller/profile/location', [
             'latitude' => 12.7321,
             'longitude' => 121.3654,
+            'pickup_barangay' => 'Poblacion',
+            'pickup_city_municipality' => 'Bongabong',
+            'pickup_province' => 'Oriental Mindoro',
         ])->assertOk()
             ->assertJsonPath('profile.latitude', 12.7321)
-            ->assertJsonPath('profile.longitude', 121.3654);
+            ->assertJsonPath('profile.longitude', 121.3654)
+            ->assertJsonPath('profile.pickup_barangay', 'Poblacion')
+            ->assertJsonPath('profile.pickup_city_municipality', 'Bongabong')
+            ->assertJsonPath('profile.pickup_province', 'Oriental Mindoro')
+            ->assertJsonPath('profile.pickup_location_confirmed', true);
     }
 
     public function test_paymongo_checkout_pays_all_seller_orders_after_signed_webhook(): void
@@ -704,19 +861,20 @@ class CheckoutTest extends TestCase
             ->assertJsonPath('order.shipping_address.longitude', 121.38);
     }
 
-    public function test_seller_profile_initializes_and_persists_the_default_pickup_pin(): void
+    public function test_seller_profile_does_not_create_an_unconfirmed_default_pickup_pin(): void
     {
         $seller = User::factory()->create(['role' => Role::SELLER]);
 
         $this->actingAs($seller)->getJson('/api/seller/profile')
             ->assertOk()
-            ->assertJsonPath('profile.latitude', 12.7321)
-            ->assertJsonPath('profile.longitude', 121.3654);
+            ->assertJsonPath('profile.latitude', null)
+            ->assertJsonPath('profile.longitude', null)
+            ->assertJsonPath('profile.pickup_location_confirmed', false);
 
         $this->assertDatabaseHas('seller_profiles', [
             'user_id' => $seller->id,
-            'latitude' => 12.7321,
-            'longitude' => 121.3654,
+            'latitude' => null,
+            'longitude' => null,
         ]);
     }
 
@@ -755,7 +913,8 @@ class CheckoutTest extends TestCase
         $admin = User::factory()->create(['role' => Role::ADMIN]);
         $buyer = User::factory()->create(['role' => Role::BUYER]);
         $seller = User::factory()->create(['role' => Role::SELLER]);
-        $seller->sellerProfile()->create(['latitude' => 13.0, 'longitude' => 121.3654]);
+        $seller->sellerProfile()->create(['latitude' => 13.0, 'longitude' => 121.3654, 'pickup_location_confirmed' => true]);
+        Http::fake(['https://router.project-osrm.org/*' => Http::response(['code' => 'Ok', 'routes' => [['distance' => 11000]]])]);
         $category = Category::create(['name' => 'Goat', 'slug' => 'goat']);
         $listing = LivestockListing::create([
             'seller_id' => $seller->id,
@@ -848,7 +1007,8 @@ class CheckoutTest extends TestCase
         $admin = User::factory()->create(['role' => Role::ADMIN]);
         $buyer = User::factory()->create(['role' => Role::BUYER]);
         $seller = User::factory()->create(['role' => Role::SELLER]);
-        $seller->sellerProfile()->create(['latitude' => 12.7771, 'longitude' => 121.3654]);
+        $seller->sellerProfile()->create(['latitude' => 12.7771, 'longitude' => 121.3654, 'pickup_location_confirmed' => true]);
+        Http::fake(['https://router.project-osrm.org/*' => Http::response(['code' => 'Ok', 'routes' => [['distance' => 5000]]])]);
         $category = Category::create(['name' => 'Goat', 'slug' => 'goat']);
         $listing = LivestockListing::create([
             'seller_id' => $seller->id,
@@ -881,14 +1041,138 @@ class CheckoutTest extends TestCase
             'latitude' => 12.7321,
             'longitude' => 121.3654,
         ]);
+        $quote = $this->actingAs($buyer)->postJson('/api/checkout/quote', [
+            'delivery_method' => 'STANDARD_DELIVERY',
+            'latitude' => $address->latitude,
+            'longitude' => $address->longitude,
+            'shipping_address' => [
+                'street_address' => $address->street_address,
+                'address_line2' => $address->address_line2,
+                'barangay' => $address->barangay,
+                'city_municipality' => $address->city_municipality,
+                'province' => $address->province,
+                'postal_code' => $address->postal_code,
+            ],
+        ])->assertOk()
+            ->assertJsonPath('shipping', '100.00');
         $response = $this->actingAs($buyer)->postJson('/api/checkout', [
             'delivery_method' => 'STANDARD_DELIVERY',
             'buyer_address_id' => $address->id,
+            'delivery_quote_token' => $quote->json('delivery_quote_token'),
         ])->assertOk();
+        $response->assertJsonPath('order.delivery_fee', '100.00');
         $orderId = $response->json('order.id');
-        $this->assertDatabaseHas('orders', ['id' => $orderId, 'delivery_fee' => 100.00, 'platform_fee' => 10.00, 'delivery_rate_per_km_snapshot' => 10.00]);
+        $this->assertDatabaseHas('orders', [
+            'id' => $orderId,
+            'delivery_fee' => 100.00,
+            'platform_fee' => 10.00,
+            'delivery_rate_per_km_snapshot' => 10.00,
+            'delivery_distance_km' => 5,
+            'delivery_distance_method' => 'OSRM_ROAD_ROUTE',
+        ]);
 
         app(SystemSettingsService::class)->update(['delivery_rate_per_km' => 20], $admin->id, 'Rate changed');
         $this->assertDatabaseHas('orders', ['id' => $orderId, 'delivery_fee' => 100.00, 'delivery_rate_per_km_snapshot' => 10.00]);
+    }
+
+    public function test_barangay_route_fallback_quotes_and_saves_the_same_distance_method_and_fee(): void
+    {
+        Cache::flush();
+        $admin = User::factory()->create(['role' => Role::ADMIN]);
+        $buyer = User::factory()->create(['role' => Role::BUYER]);
+        $seller = User::factory()->create(['role' => Role::SELLER]);
+        $seller->sellerProfile()->create([
+            'pickup_barangay' => 'Poblacion',
+            'pickup_city_municipality' => 'Bongabong',
+            'pickup_province' => 'Oriental Mindoro',
+        ]);
+        Http::fake(function ($request) {
+            $url = urldecode($request->url());
+            if (str_contains($url, 'nominatim.openstreetmap.org')) {
+                $barangay = str_contains($url, 'Poblacion') ? 'Poblacion' : 'Tuno';
+
+                return Http::response([[
+                    'lat' => $barangay === 'Poblacion' ? '12.7771' : '12.7321',
+                    'lon' => $barangay === 'Poblacion' ? '121.3654' : '121.3821',
+                    'address' => [
+                        'suburb' => $barangay,
+                        'city' => 'Bongabong',
+                        'state' => 'Oriental Mindoro',
+                        'country' => 'Philippines',
+                    ],
+                ]]);
+            }
+
+            return Http::response(['code' => 'Ok', 'routes' => [['distance' => 6000]]]);
+        });
+        app(SystemSettingsService::class)->update([
+            'delivery_base_fee' => 50,
+            'delivery_included_km' => 0,
+            'delivery_rate_per_km' => 10,
+            'delivery_min_fee' => 50,
+            'delivery_max_fee' => 0,
+            'delivery_tiers_enabled' => false,
+        ], $admin->id, 'Barangay road route fee test');
+
+        $category = Category::create(['name' => 'Goat', 'slug' => 'goat']);
+        $listing = LivestockListing::create([
+            'seller_id' => $seller->id,
+            'category_id' => $category->id,
+            'name' => 'Bongabong Goat',
+            'quantity' => 2,
+            'pricing_type' => PricingType::PER_HEAD,
+            'price_per_head' => 100,
+            'status' => ListingStatus::ACTIVE,
+        ]);
+        $this->actingAs($buyer)->postJson('/api/cart/items', ['listing_id' => $listing->id, 'quantity' => 1])->assertOk();
+        $address = $buyer->buyerAddresses()->create([
+            'label' => 'Home',
+            'recipient_name' => 'Buyer',
+            'phone_number' => '09171234567',
+            'province' => 'Oriental Mindoro',
+            'city_municipality' => 'Bongabong',
+            'barangay' => 'Tuno',
+            'postal_code' => '5211',
+            'street_address' => 'Test Street',
+            'latitude' => 12.7321,
+            'longitude' => 121.3821,
+        ]);
+
+        $quote = $this->actingAs($buyer)->postJson('/api/checkout/quote', [
+            'delivery_method' => 'STANDARD_DELIVERY',
+            'latitude' => $address->latitude,
+            'longitude' => $address->longitude,
+            'shipping_address' => [
+                'street_address' => $address->street_address,
+                'address_line2' => $address->address_line2,
+                'barangay' => $address->barangay,
+                'city_municipality' => $address->city_municipality,
+                'province' => $address->province,
+                'postal_code' => $address->postal_code,
+            ],
+        ])->assertOk()
+            ->assertJsonPath('shipping', '110.00')
+            ->assertJsonPath('delivery_distances_km.'.$seller->id, 6)
+            ->assertJsonPath('delivery_distance_methods.'.$seller->id, 'OSRM_BARANGAY_ESTIMATE');
+
+        $checkout = $this->actingAs($buyer)->postJson('/api/checkout', [
+            'delivery_method' => 'STANDARD_DELIVERY',
+            'buyer_address_id' => $address->id,
+            'delivery_quote_token' => $quote->json('delivery_quote_token'),
+        ])->assertOk()
+            ->assertJsonPath('order.delivery_distance_km', '6.00')
+            ->assertJsonPath('order.delivery_distance_method', 'OSRM_BARANGAY_ESTIMATE')
+            ->assertJsonPath('order.delivery_fee', '110.00');
+
+        $this->actingAs($buyer)->getJson('/api/orders/'.$checkout->json('order.id'))
+            ->assertOk()
+            ->assertJsonPath('order.delivery_distance_km', '6.00')
+            ->assertJsonPath('order.delivery_distance_method', 'OSRM_BARANGAY_ESTIMATE')
+            ->assertJsonPath('order.delivery_fee', '110.00');
+        $this->assertDatabaseHas('deliveries', [
+            'order_id' => $checkout->json('order.id'),
+            'pickup_latitude' => 12.7771,
+            'pickup_longitude' => 121.3654,
+        ]);
     }
 }

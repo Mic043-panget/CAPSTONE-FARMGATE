@@ -172,6 +172,8 @@ class DashboardTest extends TestCase
     {
         $rider = User::factory()->create(['role' => Role::RIDER]);
         $otherRider = User::factory()->create(['role' => Role::RIDER]);
+        RiderProfile::create(['user_id' => $rider->id, 'availability' => 'OFFLINE', 'is_verified' => true]);
+        RiderProfile::create(['user_id' => $otherRider->id, 'availability' => 'OFFLINE', 'is_verified' => true]);
         $buyer = User::factory()->create(['role' => Role::BUYER]);
         $seller = User::factory()->create(['role' => Role::SELLER]);
         $deliveredOrder = Order::create([

@@ -2,14 +2,18 @@ import React from 'react';
 import { AdminDashboard } from './AdminDashboard';
 import { AdminDataTable } from './AdminDataTable';
 import { ComplaintQueue } from './ComplaintQueue';
+import { ReviewQueue } from './ReviewQueue';
 import { ListingQueue } from './ListingQueue';
 import { ReportPanel } from '../shared/ReportPanel';
 import { AdminSettings } from './AdminSettings';
 import { AuditHistory } from './AuditHistory';
 import { AIChatPage, type ChatReportContext } from '../shared/AIChatPage';
 import { AdminDeliveryProofActions } from './AdminDeliveryProofActions';
+import { AdminOrderReceipt } from './AdminOrderReceipt';
+import { NotificationsPage } from '../buyer/NotificationsPage';
+import { RiderApplicationQueue } from './RiderApplicationQueue';
 
-type Page = 'dashboard' | 'users' | 'listings' | 'orders' | 'transactions' | 'deliveries' | 'categories' | 'complaints' | 'reports' | 'chats' | 'security' | 'settings';
+type Page = 'dashboard' | 'users' | 'listings' | 'orders' | 'transactions' | 'deliveries' | 'categories' | 'complaints' | 'reviews' | 'rider-applications' | 'notifications' | 'reports' | 'chats' | 'security' | 'settings';
 type AdminWorkspaceProps = { onError: (message: string) => void; onLogout: () => void };
 
 const primaryNavigation: { id: Page; label: string; icon: string }[] = [
@@ -21,6 +25,9 @@ const primaryNavigation: { id: Page; label: string; icon: string }[] = [
     { id: 'deliveries', label: 'Deliveries', icon: '↗' },
     { id: 'categories', label: 'Categories', icon: '⌘' },
     { id: 'complaints', label: 'Complaints & disputes', icon: '!' },
+    { id: 'reviews', label: 'Review moderation', icon: '★' },
+    { id: 'rider-applications', label: 'Rider applications', icon: '♧' },
+    { id: 'notifications', label: 'Notifications', icon: '♧' },
     { id: 'reports', label: 'Reports', icon: '▥' },
     { id: 'chats', label: 'Chats', icon: '✦' },
     { id: 'security', label: 'Security', icon: '◉' },
@@ -33,6 +40,34 @@ const userRoleTabs = [
     { label: 'Sellers', value: 'SELLER' },
     { label: 'Riders', value: 'RIDER' },
     { label: 'Admins', value: 'ADMIN' },
+];
+
+const orderStatusTabs = [
+    { label: 'All', value: '' },
+    { label: 'Pending Confirmation', value: 'PENDING_CONFIRMATION' },
+    { label: 'Confirmed', value: 'CONFIRMED' },
+    { label: 'Preparing', value: 'PREPARING' },
+    { label: 'Ready for Pickup', value: 'READY_FOR_PICKUP' },
+    { label: 'On the Way', value: 'FULFILLING' },
+    { label: 'Delivered', value: 'DELIVERED' },
+    { label: 'Completed', value: 'COMPLETED' },
+    { label: 'Cancelled', value: 'CANCELLED' },
+    { label: 'Rejected', value: 'REJECTED' },
+];
+
+const orderSortOptions = [
+    { label: 'Newest order', value: 'newest' },
+    { label: 'Oldest order', value: 'oldest' },
+    { label: 'Order reference (A-Z)', value: 'reference_asc' },
+    { label: 'Order reference (Z-A)', value: 'reference_desc' },
+    { label: 'Buyer (A-Z)', value: 'buyer_asc' },
+    { label: 'Buyer (Z-A)', value: 'buyer_desc' },
+    { label: 'Seller (A-Z)', value: 'seller_asc' },
+    { label: 'Seller (Z-A)', value: 'seller_desc' },
+    { label: 'Status (A-Z)', value: 'status_asc' },
+    { label: 'Status (Z-A)', value: 'status_desc' },
+    { label: 'Total price (low to high)', value: 'total_asc' },
+    { label: 'Total price (high to low)', value: 'total_desc' },
 ];
 
 export function AdminWorkspace({ onError, onLogout }: AdminWorkspaceProps) {
@@ -64,11 +99,14 @@ export function AdminWorkspace({ onError, onLogout }: AdminWorkspaceProps) {
             case 'dashboard': return <AdminDashboard onError={onError} />;
             case 'users': return <AdminDataTable title="Users & accounts" eyebrow="Governance" endpoint="admin/users" collection="users" onError={onError} filterParam="role" filterTabs={userRoleTabs} verifiedParam="verified" columns={[{ label: 'Name', render: (row) => <strong>{row.name}</strong> }, { label: 'Email', render: (row) => row.email }, { label: 'Role', render: (row) => <span className="status-pill">{row.role}</span> }, { label: 'Verified', render: (row) => row.email_verified_at ? 'Verified' : 'Unverified' }, { label: 'Joined', render: (row) => new Date(row.created_at).toLocaleDateString() }]} />;
             case 'listings': return <ListingQueue onError={onError} />;
-            case 'orders': return <AdminDataTable title="Orders" eyebrow="Operations" endpoint="admin/orders" collection="orders" onError={onError} columns={[{ label: 'Order reference', render: (row) => <strong>{row.order_reference}</strong> }, { label: 'Buyer', render: (row) => row.buyer?.name ?? '-' }, { label: 'Seller', render: (row) => row.seller?.name ?? '-' }, { label: 'Status', render: (row) => <span className="status-pill">{row.status}</span> }, { label: 'Total', render: (row) => `PHP ${row.total_amount}` }]} />;
+            case 'orders': return <AdminDataTable title="Orders" eyebrow="Operations" endpoint="admin/orders" collection="orders" onError={onError} filterParam="status" filterLabel="status" filterTabs={orderStatusTabs} countTabs sortOptions={orderSortOptions} searchPlaceholder="Search order reference, buyer or seller" columns={[{ label: 'Order reference', render: (row) => <AdminOrderReceipt orderId={row.id} reference={row.order_reference} onError={onError} /> }, { label: 'Buyer', render: (row) => row.buyer?.name ?? '-' }, { label: 'Seller', render: (row) => row.seller?.name ?? '-' }, { label: 'Status', render: (row) => <span className="status-pill">{row.display_status ?? row.status}</span> }, { label: 'Total', render: (row) => `PHP ${row.total_amount}` }]} />;
             case 'transactions': return <ReportPanel role="ADMIN" onError={onError} onAnalyze={analyzeReport} />;
             case 'deliveries': return <AdminDataTable title="Deliveries" eyebrow="Live operations" endpoint="admin/deliveries" collection="deliveries" onError={onError} columns={[{ label: 'Delivery', render: (row) => <strong>#{row.id}</strong> }, { label: 'Order', render: (row) => row.order?.order_reference ?? '-' }, { label: 'Rider', render: (row) => row.rider?.name ?? 'Unassigned' }, { label: 'Status', render: (row) => <span className="status-pill">{row.status}</span> }, { label: 'Proof & corrections', render: (row, refresh) => <AdminDeliveryProofActions row={row} onCorrected={refresh} /> }, { label: 'Created', render: (row) => new Date(row.created_at).toLocaleString() }]} />;
             case 'categories': return <AdminDataTable title="Categories" eyebrow="Catalog" endpoint="admin/categories" collection="categories" onError={onError} columns={[{ label: 'Category', render: (row) => <strong>{row.name}</strong> }, { label: 'Slug', render: (row) => row.slug }, { label: 'Listings', render: (row) => row.listings_count }, { label: 'Status', render: (row) => row.is_active ? 'Active' : 'Inactive' }]} />;
             case 'complaints': return <ComplaintQueue onError={onError} />;
+            case 'reviews': return <ReviewQueue onError={onError} />;
+            case 'rider-applications': return <RiderApplicationQueue onError={onError} />;
+            case 'notifications': return <NotificationsPage role="ADMIN" onOpenOrder={() => setPage('orders')} />;
             case 'reports': return <ReportPanel role="ADMIN" onError={onError} onAnalyze={analyzeReport} />;
             case 'chats': return <AIChatPage role="ADMIN" reportContext={reportContext} />;
             case 'security': return <AuditHistory onError={onError} />;

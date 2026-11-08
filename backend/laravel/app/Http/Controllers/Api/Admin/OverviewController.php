@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers\Api\Admin;
 
+use App\Enums\DeliveryStatus;
+use App\Enums\OrderStatus;
 use App\Enums\Role;
 use App\Http\Controllers\Controller;
 use App\Models\AuditLog;
@@ -10,8 +12,10 @@ use App\Models\Delivery;
 use App\Models\LoginHistory;
 use App\Models\Order;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 class OverviewController extends Controller
 {
@@ -35,7 +39,28 @@ class OverviewController extends Controller
     public function orders(Request $request): JsonResponse
     {
         $this->admin($request);
-        $query = Order::query()->with(['buyer:id,name,email', 'seller:id,name,email']);
+        $data = $request->validate([
+            'status' => ['nullable', Rule::in([...array_map(fn (OrderStatus $status): string => $status->value, OrderStatus::cases()), 'DELIVERED'])],
+            'sort' => ['nullable', Rule::in([
+                'newest',
+                'oldest',
+                'reference_asc',
+                'reference_desc',
+                'buyer_asc',
+                'buyer_desc',
+                'seller_asc',
+                'seller_desc',
+                'status_asc',
+                'status_desc',
+                'total_asc',
+                'total_desc',
+            ])],
+        ]);
+        $query = Order::query()->with([
+            'buyer:id,name,email',
+            'seller:id,name,email',
+            'delivery:id,order_id,status',
+        ]);
         if ($request->filled('search')) {
             $search = '%'.trim((string) $request->input('search')).'%';
             $query->where(function ($builder) use ($search): void {
@@ -43,7 +68,85 @@ class OverviewController extends Controller
             });
         }
 
-        return response()->json(['orders' => $query->latest()->paginate(15)->withQueryString()]);
+        $statusCounts = ['all' => (clone $query)->count()];
+        foreach ([
+            ...array_map(fn (OrderStatus $status): string => $status->value, OrderStatus::cases()),
+            'DELIVERED',
+        ] as $status) {
+            $statusQuery = clone $query;
+            $this->applyOrderStatusFilter($statusQuery, $status);
+            $statusCounts[$status] = $statusQuery->count();
+        }
+
+        if (! empty($data['status'])) {
+            $this->applyOrderStatusFilter($query, $data['status']);
+        }
+
+        $sort = $data['sort'] ?? 'newest';
+        $direction = str_ends_with($sort, '_desc') ? 'desc' : 'asc';
+        match ($sort) {
+            'oldest' => $query->orderBy('orders.created_at')->orderBy('orders.id'),
+            'reference_asc', 'reference_desc' => $query->orderBy('orders.order_reference', $direction)->orderBy('orders.id'),
+            'buyer_asc', 'buyer_desc' => $query->leftJoin('users as order_buyers', 'order_buyers.id', '=', 'orders.buyer_id')
+                ->select('orders.*')->orderBy('order_buyers.name', $direction)->orderBy('orders.id'),
+            'seller_asc', 'seller_desc' => $query->leftJoin('users as order_sellers', 'order_sellers.id', '=', 'orders.seller_id')
+                ->select('orders.*')->orderBy('order_sellers.name', $direction)->orderBy('orders.id'),
+            'status_asc', 'status_desc' => $query->orderBy('orders.status', $direction)->orderBy('orders.id'),
+            'total_asc', 'total_desc' => $query->orderBy('orders.total_amount', $direction)->orderBy('orders.id'),
+            default => $query->orderByDesc('orders.created_at')->orderByDesc('orders.id'),
+        };
+
+        $orders = $query->paginate(15)->withQueryString();
+        $orders->getCollection()->each(function (Order $order): void {
+            $displayStatus = $order->status === OrderStatus::FULFILLING
+                && $order->delivery?->status === DeliveryStatus::DELIVERED
+                ? 'DELIVERED'
+                : ($order->status === OrderStatus::FULFILLING ? 'ON THE WAY' : $order->status->value);
+            $order->setAttribute('display_status', $displayStatus);
+        });
+
+        return response()->json([
+            'orders' => $orders,
+            'status_counts' => $statusCounts,
+        ]);
+    }
+
+    public function orderDetails(Request $request, Order $order): JsonResponse
+    {
+        $this->admin($request);
+        $order->load([
+            'buyer:id,name,email,phone_number',
+            'seller:id,name,email',
+            'seller.sellerProfile:user_id,business_name,phone,address',
+            'items.listing:id,name',
+            'delivery:id,order_id,status,rider_id,delivery_verified_at',
+            'delivery.rider:id,name',
+            'statusHistory.actor:id,name',
+            'activities',
+        ]);
+        $order->setAttribute(
+            'display_status',
+            $order->status === OrderStatus::FULFILLING && $order->delivery?->status === DeliveryStatus::DELIVERED
+                ? 'DELIVERED'
+                : ($order->status === OrderStatus::FULFILLING ? 'ON THE WAY' : $order->status->value),
+        );
+
+        return response()->json(['order' => $order]);
+    }
+
+    private function applyOrderStatusFilter(Builder $query, string $status): void
+    {
+        if ($status === 'DELIVERED') {
+            $query->where('orders.status', OrderStatus::FULFILLING->value)
+                ->whereHas('delivery', fn ($delivery) => $delivery->where('status', DeliveryStatus::DELIVERED->value));
+
+            return;
+        }
+
+        $query->where('orders.status', $status);
+        if ($status === 'FULFILLING') {
+            $query->whereDoesntHave('delivery', fn ($delivery) => $delivery->where('status', 'DELIVERED'));
+        }
     }
 
     public function deliveries(Request $request): JsonResponse

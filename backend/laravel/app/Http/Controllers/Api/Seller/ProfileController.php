@@ -13,17 +13,7 @@ class ProfileController extends Controller
     {
         abort_unless($request->user()?->role === Role::SELLER, 403);
 
-        $profile = $request->user()->sellerProfile()->firstOrCreate([], [
-            'latitude' => 12.7321,
-            'longitude' => 121.3654,
-        ]);
-
-        if ($profile->latitude === null || $profile->longitude === null) {
-            $profile->fill([
-                'latitude' => $profile->latitude ?? 12.7321,
-                'longitude' => $profile->longitude ?? 121.3654,
-            ])->save();
-        }
+        $profile = $request->user()->sellerProfile()->firstOrCreate([]);
 
         return response()->json(['profile' => $profile->refresh()]);
     }
@@ -35,10 +25,13 @@ class ProfileController extends Controller
         $data = $request->validate([
             'latitude' => ['required', 'numeric', 'between:-90,90'],
             'longitude' => ['required', 'numeric', 'between:-180,180'],
+            'pickup_barangay' => ['nullable', 'string', 'max:120'],
+            'pickup_city_municipality' => ['nullable', 'string', 'max:120'],
+            'pickup_province' => ['nullable', 'string', 'max:120'],
         ]);
 
         $profile = $request->user()->sellerProfile()->firstOrCreate([]);
-        $profile->fill($data)->save();
+        $profile->fill($data + ['pickup_location_confirmed' => true])->save();
 
         return response()->json(['profile' => $profile->refresh()]);
     }

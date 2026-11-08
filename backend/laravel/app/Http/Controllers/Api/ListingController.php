@@ -144,17 +144,29 @@ class ListingController extends Controller
         $promotionPricing->attach(collect([$listing])->concat($related));
         $reviewQuery = Review::query()
             ->where('status', ReviewStatus::PUBLISHED)
-            ->whereHas('order.items', fn ($query) => $query->where('listing_id', $listing->id));
+            ->where(function ($query) use ($listing): void {
+                $query->where('listing_id', $listing->id)
+                    ->orWhere(function ($legacy) use ($listing): void {
+                        $legacy->whereNull('listing_id')
+                            ->whereHas('order.items', fn ($items) => $items->where('listing_id', $listing->id));
+                    });
+            });
         $reviews = (clone $reviewQuery)
-            ->with('buyer:id,name')
+            ->with(['buyer:id,name', 'media:id,review_id,mime_type,original_name'])
             ->latest()
             ->limit(12)
             ->get()
             ->map(fn (Review $review): array => [
+                'id' => $review->id,
                 'rating' => $review->rating,
                 'comment' => $review->comment,
                 'buyer_name' => $review->buyer?->name ?? 'Buyer',
                 'created_at' => $review->created_at,
+                'media' => $review->media->map(fn ($media): array => [
+                    'id' => $media->id,
+                    'mime_type' => $media->mime_type,
+                    'url' => route('review-media.public', ['media' => $media->id]),
+                ])->all(),
             ]);
 
         return response()->json([

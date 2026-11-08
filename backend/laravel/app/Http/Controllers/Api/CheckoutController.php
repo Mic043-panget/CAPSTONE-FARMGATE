@@ -16,6 +16,7 @@ use App\Models\OrderItem;
 use App\Models\OrderStatusHistory;
 use App\Models\SellerProfile;
 use App\Notifications\OrderStatusChangedNotification;
+use App\Services\DeliveryDistanceService;
 use App\Services\OrderReferenceGenerator;
 use App\Services\PromotionPricingService;
 use App\Services\RiderAssignmentService;
@@ -29,7 +30,7 @@ use Illuminate\Support\Facades\Http;
 
 class CheckoutController extends Controller
 {
-    public function quote(Request $request, SystemSettingsService $settings, PromotionPricingService $promotionPricing): JsonResponse
+    public function quote(Request $request, SystemSettingsService $settings, PromotionPricingService $promotionPricing, DeliveryDistanceService $deliveryDistanceService): JsonResponse
     {
         abort_unless($request->user()?->role === Role::BUYER, 403);
 
@@ -42,7 +43,17 @@ class CheckoutController extends Controller
             'delivery_method' => ['required', 'in:SELF_PICKUP,SELLER_DELIVERY,STANDARD_DELIVERY'],
             'latitude' => ['required_if:delivery_method,SELLER_DELIVERY,STANDARD_DELIVERY', 'nullable', 'numeric', 'between:-90,90'],
             'longitude' => ['required_if:delivery_method,SELLER_DELIVERY,STANDARD_DELIVERY', 'nullable', 'numeric', 'between:-180,180'],
+            'shipping_address' => ['nullable', 'array'],
+            'shipping_address.street_address' => ['nullable', 'string', 'max:255'],
+            'shipping_address.address_line2' => ['nullable', 'string', 'max:255'],
+            'shipping_address.barangay' => ['nullable', 'string', 'max:120'],
+            'shipping_address.city_municipality' => ['nullable', 'string', 'max:120'],
+            'shipping_address.province' => ['nullable', 'string', 'max:120'],
+            'shipping_address.postal_code' => ['nullable', 'string', 'max:12'],
         ]);
+        $buyerLocation = $data['shipping_address'] ?? [];
+        $buyerLocation['latitude'] = $data['latitude'] ?? null;
+        $buyerLocation['longitude'] = $data['longitude'] ?? null;
 
         if (isset($data['listing_id'])) {
             abort_if(isset($data['items']), 422, 'Choose either a single listing or cart quantities.');
@@ -58,6 +69,8 @@ class CheckoutController extends Controller
         $deliveryFeeCents = 0;
         $otherFeesCents = 0;
         $distances = [];
+        $distanceMethods = [];
+        $deliveryQuoteSnapshots = [];
 
         foreach ($items->groupBy(fn ($item) => $item->listing->seller_id) as $sellerId => $sellerItems) {
             $sellerSubtotalCents = 0;
@@ -76,15 +89,22 @@ class CheckoutController extends Controller
 
             if ($data['delivery_method'] !== 'SELF_PICKUP') {
                 $profile = $sellerItems->first()->listing->seller?->sellerProfile;
-                abort_if($profile?->latitude === null || $profile?->longitude === null, 422, 'A seller has not pinned their pickup location yet. Contact the seller or choose self pickup.');
-                $distance = $settings->distanceKm((float) $data['latitude'], (float) $data['longitude'], (float) $profile->latitude, (float) $profile->longitude);
+                $location = $this->sellerLocationSnapshot($profile, $sellerItems);
+                $distanceResult = $deliveryDistanceService->calculate($location, $buyerLocation);
+                $distance = $distanceResult['distance_km'];
                 $maxDistance = $settings->getDecimal('delivery_distance_limit_km');
                 abort_if($maxDistance > 0 && $distance > $maxDistance, 422, 'The requested delivery distance exceeds the configured delivery limit.');
                 $distances[(string) $sellerId] = $distance;
-                $deliveryFeeCents = PromotionPricingService::addCents(
-                    $deliveryFeeCents,
-                    PromotionPricingService::toCents($settings->deliveryFee($distance, $sellerSubtotal)),
-                );
+                $distanceMethods[(string) $sellerId] = $distanceResult['method'];
+                $sellerDeliveryFeeCents = PromotionPricingService::toCents($settings->deliveryFee($distance, $sellerSubtotal));
+                $deliveryFeeCents = PromotionPricingService::addCents($deliveryFeeCents, $sellerDeliveryFeeCents);
+                $deliveryQuoteSnapshots[(string) $sellerId] = [
+                    'seller_location' => $location,
+                    'subtotal_cents' => $sellerSubtotalCents,
+                    'distance_km' => round($distance, 2),
+                    'distance_method' => $distanceResult['method'],
+                    'delivery_fee_cents' => $sellerDeliveryFeeCents,
+                ];
             }
             $platformRate = $settings->getDecimal('platform_service_fee_rate') ?: $settings->getDecimal('platform_fee_percent');
             $combinedRate = (
@@ -112,10 +132,14 @@ class CheckoutController extends Controller
                 ),
             ),
             'delivery_distances_km' => $distances,
+            'delivery_distance_methods' => $distanceMethods,
+            'delivery_quote_token' => $data['delivery_method'] === 'SELF_PICKUP'
+                ? null
+                : $this->deliveryQuoteToken($data['delivery_method'], $buyerLocation, $deliveryQuoteSnapshots),
         ]);
     }
 
-    public function store(Request $request, SystemSettingsService $settings, OrderReferenceGenerator $referenceGenerator, PromotionPricingService $promotionPricing): JsonResponse
+    public function store(Request $request, SystemSettingsService $settings, OrderReferenceGenerator $referenceGenerator, PromotionPricingService $promotionPricing, DeliveryDistanceService $deliveryDistanceService): JsonResponse
     {
         abort_unless($request->user()?->role === Role::BUYER, 403);
 
@@ -127,6 +151,7 @@ class CheckoutController extends Controller
             'items.*.quantity' => ['required_with:items', 'integer', 'min:1'],
             'delivery_method' => ['sometimes', 'in:SELF_PICKUP,SELLER_DELIVERY,STANDARD_DELIVERY'],
             'payment_method' => ['sometimes', 'in:COD,GCASH,CARD,GOOGLE_PAY'],
+            'delivery_quote_token' => ['nullable', 'string', 'size:64'],
             'buyer_address_id' => ['nullable', 'integer'],
             'shipping_address' => ['nullable', 'array'],
             'shipping_address.recipient_name' => ['required_with:shipping_address', 'string', 'max:120'],
@@ -136,8 +161,8 @@ class CheckoutController extends Controller
             'shipping_address.barangay' => ['required_with:shipping_address', 'string', 'max:120'],
             'shipping_address.postal_code' => ['required_with:shipping_address', 'string', 'max:12'],
             'shipping_address.street_address' => ['required_with:shipping_address', 'string', 'max:255'],
-            'shipping_address.address_line2' => ['nullable', 'string', 'max:255'],
             'shipping_address.delivery_notes' => ['nullable', 'string', 'max:1000'],
+            'shipping_address.address_line2' => ['nullable', 'string', 'max:255'],
             'shipping_address.latitude' => ['required_with:shipping_address', 'numeric', 'between:-90,90'],
             'shipping_address.longitude' => ['required_with:shipping_address', 'numeric', 'between:-180,180'],
             'buyer_location' => ['nullable', 'array'],
@@ -204,9 +229,10 @@ class CheckoutController extends Controller
         abort_if($items->count() > $settings->getInt('maximum_items_per_order'), 422, 'This order exceeds the maximum number of items.');
         abort_if($paymentMethod !== 'COD' && ! filled(config('services.paymongo.secret_key')), 503, 'PayMongo is not configured. Use cash on delivery or contact support.');
 
-        $orders = DB::transaction(function () use ($request, $cart, $items, $settings, $referenceGenerator, $promotionPricing, $deliveryMethod, $paymentMethod, $shippingAddress): Collection {
+        $orders = DB::transaction(function () use ($request, $cart, $items, $settings, $referenceGenerator, $promotionPricing, $deliveryDistanceService, $deliveryMethod, $paymentMethod, $shippingAddress, $data): Collection {
             $sellerIds = $items->pluck('listing.seller_id')->unique();
             $orders = collect();
+            $deliveryQuoteSnapshots = [];
 
             foreach ($sellerIds as $sellerId) {
                 $sellerItems = $items->filter(fn (CartItem $item): bool => $item->listing->seller_id === $sellerId);
@@ -242,20 +268,31 @@ class CheckoutController extends Controller
                 $buyerServiceFeeCents = PromotionPricingService::percentageOfCents($subtotalCents, $buyerServiceRate);
                 $orderProcessingFeeCents = PromotionPricingService::toCents($settings->getDecimal('order_processing_fee'));
                 $deliveryDistance = null;
-                $sellerProfile = null;
+                $distanceMethod = null;
+                $sellerProfile = SellerProfile::query()->where('user_id', $sellerId)->first();
+                $sellerLocationSnapshot = $this->sellerLocationSnapshot($sellerProfile, $sellerItems);
+                $pickupCoordinates = [
+                    'latitude' => $sellerLocationSnapshot['latitude'],
+                    'longitude' => $sellerLocationSnapshot['longitude'],
+                ];
                 if ($deliveryMethod !== 'SELF_PICKUP') {
-                    $sellerProfile = SellerProfile::query()->where('user_id', $sellerId)->first();
-                    abort_if($sellerProfile?->latitude === null || $sellerProfile?->longitude === null, 422, 'A seller has not pinned their pickup location yet. Contact the seller or choose self pickup.');
-                    $deliveryDistance = $settings->distanceKm(
-                        (float) $shippingAddress['latitude'],
-                        (float) $shippingAddress['longitude'],
-                        (float) $sellerProfile->latitude,
-                        (float) $sellerProfile->longitude,
-                    );
+                    $distanceResult = $deliveryDistanceService->calculate($sellerLocationSnapshot, $shippingAddress ?? []);
+                    $deliveryDistance = $distanceResult['distance_km'];
+                    $distanceMethod = $distanceResult['method'];
+                    $pickupCoordinates = $distanceResult['pickup_coordinates'];
                     $maxDistance = $settings->getDecimal('delivery_distance_limit_km');
                     abort_if($maxDistance > 0 && $deliveryDistance > $maxDistance, 422, 'The requested delivery distance exceeds the configured delivery limit.');
                 }
                 $deliveryFeeCents = $deliveryDistance === null ? 0 : PromotionPricingService::toCents($settings->deliveryFee($deliveryDistance, $subtotal));
+                if ($deliveryDistance !== null) {
+                    $deliveryQuoteSnapshots[(string) $sellerId] = [
+                        'seller_location' => $sellerLocationSnapshot,
+                        'subtotal_cents' => $subtotalCents,
+                        'distance_km' => round($deliveryDistance, 2),
+                        'distance_method' => $distanceMethod,
+                        'delivery_fee_cents' => $deliveryFeeCents,
+                    ];
+                }
                 $discountCents = 0;
                 $totalCents = $subtotalCents;
                 foreach ([$deliveryFeeCents, $platformFeeCents, $transactionFeeCents, $paymentFeeCents, $buyerServiceFeeCents, $orderProcessingFeeCents] as $amountCents) {
@@ -271,6 +308,7 @@ class CheckoutController extends Controller
                     'delivery_method' => $deliveryMethod,
                     'payment_method' => $paymentMethod,
                     'shipping_address' => $shippingAddress,
+                    'seller_location_snapshot' => $sellerLocationSnapshot,
                     'subtotal_amount' => PromotionPricingService::fromCents($subtotalCents),
                     'delivery_fee' => PromotionPricingService::fromCents($deliveryFeeCents),
                     'platform_fee' => PromotionPricingService::fromCents($platformFeeCents),
@@ -281,6 +319,7 @@ class CheckoutController extends Controller
                     'seller_fee' => PromotionPricingService::fromCents(PromotionPricingService::percentageOfCents($subtotalCents, $settings->getDecimal('seller_fee_rate'))),
                     'discount_amount' => PromotionPricingService::fromCents($discountCents),
                     'delivery_distance_km' => $deliveryDistance,
+                    'delivery_distance_method' => $distanceMethod,
                     'delivery_base_fee_snapshot' => number_format($settings->getDecimal('delivery_base_fee'), 2, '.', ''),
                     'delivery_rate_per_km_snapshot' => number_format($settings->getDecimal('delivery_rate_per_km'), 2, '.', ''),
                     'platform_fee_rate_snapshot' => $platformRate,
@@ -293,9 +332,9 @@ class CheckoutController extends Controller
                     Delivery::create([
                         'order_id' => $order->id,
                         'status' => DeliveryStatus::WAITING_FOR_RIDER,
-                        'pickup_latitude' => $sellerProfile?->latitude,
-                        'pickup_longitude' => $sellerProfile?->longitude,
-                        'pickup_address' => $sellerProfile?->address ?: 'Seller pickup location',
+                        'pickup_latitude' => $pickupCoordinates['latitude'],
+                        'pickup_longitude' => $pickupCoordinates['longitude'],
+                        'pickup_address' => $sellerProfile?->address ?: ($sellerLocationSnapshot['listing_pickup_locations'][0] ?? 'Seller pickup location'),
                     ]);
                 }
                 if ($paymentMethod === 'COD') {
@@ -314,6 +353,15 @@ class CheckoutController extends Controller
                     $amountCents = PromotionPricingService::multiplyCents(PromotionPricingService::toCents($unitPrice), $item->quantity);
                     OrderItem::create(['order_id' => $order->id, 'listing_id' => $listing->id, 'quantity' => $item->quantity, 'unit_price' => $unitPrice, 'total_amount' => PromotionPricingService::fromCents($amountCents), 'pricing_type' => $listing->pricing_type]);
                 }
+            }
+
+            if ($deliveryMethod !== 'SELF_PICKUP' && filled($data['delivery_quote_token'] ?? null)) {
+                $currentQuoteToken = $this->deliveryQuoteToken($deliveryMethod, $shippingAddress ?? [], $deliveryQuoteSnapshots);
+                abort_unless(
+                    hash_equals($data['delivery_quote_token'], $currentQuoteToken),
+                    409,
+                    'The delivery location or fee changed while you were checking out. Review the refreshed delivery quote before placing your order.',
+                );
             }
 
             if ($paymentMethod === 'COD') {
@@ -464,5 +512,62 @@ class CheckoutController extends Controller
 
             return $item;
         });
+    }
+
+    /**
+     * @param  Collection<int, CartItem>|Collection<int, object>  $items
+     * @return array<string, mixed>
+     */
+    private function sellerLocationSnapshot(?SellerProfile $profile, Collection $items): array
+    {
+        return [
+            'business_name' => $profile?->business_name,
+            'address' => $profile?->address,
+            'pickup_barangay' => $profile?->pickup_barangay,
+            'pickup_city_municipality' => $profile?->pickup_city_municipality,
+            'pickup_province' => $profile?->pickup_province,
+            'latitude' => $profile?->pickup_location_confirmed ? $profile->latitude : null,
+            'longitude' => $profile?->pickup_location_confirmed ? $profile->longitude : null,
+            'pickup_location_confirmed' => (bool) $profile?->pickup_location_confirmed,
+            'listing_pickup_locations' => $items
+                ->map(fn ($item): ?string => $item->listing?->pickup_location)
+                ->filter(fn (?string $location): bool => is_string($location) && trim($location) !== '')
+                ->map(fn (string $location): string => trim($location))
+                ->unique()
+                ->values()
+                ->all(),
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $buyerLocation
+     * @param  array<string, array<string, mixed>>  $sellerQuotes
+     */
+    private function deliveryQuoteToken(string $deliveryMethod, array $buyerLocation, array $sellerQuotes): string
+    {
+        ksort($sellerQuotes);
+        $locationFields = [
+            'street_address',
+            'address_line2',
+            'barangay',
+            'city_municipality',
+            'province',
+            'postal_code',
+            'latitude',
+            'longitude',
+        ];
+        $normalizedBuyerLocation = [];
+        foreach ($locationFields as $field) {
+            $value = $buyerLocation[$field] ?? null;
+            $normalizedBuyerLocation[$field] = in_array($field, ['latitude', 'longitude'], true)
+                ? ($value === null ? null : round((float) $value, 7))
+                : (is_string($value) ? trim($value) : null);
+        }
+
+        return hash('sha256', json_encode([
+            'delivery_method' => $deliveryMethod,
+            'buyer_location' => $normalizedBuyerLocation,
+            'seller_quotes' => $sellerQuotes,
+        ], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
     }
 }

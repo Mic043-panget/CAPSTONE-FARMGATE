@@ -10,7 +10,6 @@ use App\Models\RiderOffer;
 use App\Models\RiderProfile;
 use App\Models\User;
 use App\Notifications\DeliveryAssignmentNotification;
-use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -30,6 +29,8 @@ class RiderAssignmentService
         return RiderProfile::query()
             ->where('is_verified', true)
             ->where('availability', 'AVAILABLE')
+            ->where(fn ($query) => $query->whereNull('license_expires_on')->orWhereDate('license_expires_on', '>', today()))
+            ->where(fn ($query) => $query->whereNull('vehicle_registration_expires_on')->orWhereDate('vehicle_registration_expires_on', '>', today()))
             ->whereNotNull('latitude')
             ->whereNotNull('longitude')
             ->whereNotNull('last_location_at')
@@ -69,6 +70,7 @@ class RiderAssignmentService
             ->whereIn('status', [
                 DeliveryStatus::WAITING_FOR_RIDER->value,
                 DeliveryStatus::RIDER_OFFERED->value,
+                DeliveryStatus::SEARCHING_FOR_RIDER->value,
             ])
             ->whereHas('order', fn ($query) => $query
                 ->where('delivery_method', 'STANDARD_DELIVERY')
@@ -124,7 +126,7 @@ class RiderAssignmentService
                     $delivery->order_id,
                     $delivery->order->order_reference,
                     $delivery->id,
-                    'No eligible rider is currently available. Assignment can be retried.',
+                    'No eligible rider is currently available within the assignment distance. Riders must be verified, marked available, and have a recent location; assignment can be retried.',
                 ));
             }
         }
@@ -348,68 +350,49 @@ class RiderAssignmentService
                 ) <= $this->settings->number('rider_offer_radius_km'));
             }
 
-            $previousRiderIds = RiderOffer::query()
+            $previousOffers = RiderOffer::query()
                 ->where('delivery_id', $delivery->id)
-                ->pluck('rider_id')
-                ->all();
-            $candidates = $candidates->reject(fn (RiderProfile $rider): bool => in_array($rider->user_id, $previousRiderIds, true));
-            $firstOffer = RiderOffer::query()
-                ->where('delivery_id', $delivery->id)
-                ->whereNotNull('expires_at')
-                ->oldest('id')
-                ->first();
+                ->get(['rider_id', 'status', 'created_at'])
+                ->groupBy('rider_id');
+            $candidates = $candidates->reject(function (RiderProfile $rider) use ($previousOffers): bool {
+                $riderOffers = $previousOffers->get($rider->user_id, collect());
+                if ($riderOffers->contains(fn (RiderOffer $offer): bool => $offer->status === 'DECLINED')) {
+                    return true;
+                }
 
-            if ($firstOffer === null && $candidates->isNotEmpty()) {
-                $candidate = $candidates->first();
-                $distance = max(0.5, $this->settings->distanceKm(
-                    $pickupLatitude,
-                    $pickupLongitude,
-                    (float) $candidate->latitude,
-                    (float) $candidate->longitude,
-                ));
-                $delivery->offers()->create([
-                    'rider_id' => $candidate->user_id,
-                    'status' => 'OPEN',
-                    'distance_km' => $distance,
-                    'expires_at' => Carbon::now()->addHours(8),
-                ]);
+                $latestOffer = $riderOffers->sortByDesc('created_at')->first();
+
+                return $latestOffer !== null
+                    && ($rider->last_location_at === null
+                        || $rider->last_location_at->lessThanOrEqualTo($latestOffer->created_at));
+            });
+            if ($candidates->isNotEmpty()) {
+                $expiresAt = now()->addMinutes(max(1, $this->settings->getInt('rider_offer_expiry_minutes')));
+                foreach ($candidates as $candidate) {
+                    $distance = max(0.5, $this->settings->distanceKm(
+                        $pickupLatitude,
+                        $pickupLongitude,
+                        (float) $candidate->latitude,
+                        (float) $candidate->longitude,
+                    ));
+                    $delivery->offers()->create([
+                        'rider_id' => $candidate->user_id,
+                        'status' => 'OPEN',
+                        'distance_km' => $distance,
+                        'expires_at' => $expiresAt,
+                    ]);
+                }
                 $delivery->forceFill([
-                    'rider_id' => $candidate->user_id,
-                    'status' => DeliveryStatus::RIDER_OFFERED,
+                    'rider_id' => null,
+                    'status' => $candidates->count() === 1
+                        ? DeliveryStatus::RIDER_OFFERED
+                        : DeliveryStatus::SEARCHING_FOR_RIDER,
                 ])->save();
 
                 return $delivery->load('offers.rider');
             }
 
-            if ($firstOffer === null) {
-                $delivery->forceFill(['status' => DeliveryStatus::WAITING_FOR_RIDER, 'rider_id' => null])->save();
-
-                return $delivery;
-            }
-
-            if ($firstOffer->expires_at && $firstOffer->expires_at->isFuture()) {
-                return $delivery;
-            }
-
-            foreach ($candidates as $candidate) {
-                $distance = max(0.5, $this->settings->distanceKm(
-                    $pickupLatitude,
-                    $pickupLongitude,
-                    (float) $candidate->latitude,
-                    (float) $candidate->longitude,
-                ));
-                $delivery->offers()->create([
-                    'rider_id' => $candidate->user_id,
-                    'status' => 'OPEN',
-                    'distance_km' => $distance,
-                    'expires_at' => null,
-                ]);
-            }
-
-            $delivery->forceFill([
-                'rider_id' => null,
-                'status' => $candidates->isNotEmpty() ? DeliveryStatus::SEARCHING_FOR_RIDER : DeliveryStatus::WAITING_FOR_RIDER,
-            ])->save();
+            $delivery->forceFill(['status' => DeliveryStatus::WAITING_FOR_RIDER, 'rider_id' => null])->save();
 
             return $delivery->load('offers.rider');
         });

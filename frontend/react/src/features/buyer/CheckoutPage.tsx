@@ -37,7 +37,15 @@ type CheckoutLine = {
     image_url: string | null;
 };
 
-type CheckoutQuote = { subtotal: string; shipping: string; fees: string; total: string };
+type CheckoutQuote = {
+    subtotal: string;
+    shipping: string;
+    fees: string;
+    total: string;
+    delivery_distances_km: Record<string, number>;
+    delivery_distance_methods: Record<string, 'OSRM_ROAD_ROUTE' | 'OSRM_BARANGAY_ESTIMATE'>;
+    delivery_quote_token: string | null;
+};
 type BuyNowSelection = { listingId: number; quantity: number } | null;
 type DeliveryMethod = 'SELF_PICKUP' | 'SELLER_DELIVERY' | 'STANDARD_DELIVERY';
 type PaymentMethod = 'COD' | 'GCASH' | 'CARD' | 'GOOGLE_PAY';
@@ -114,6 +122,8 @@ export function CheckoutPage({ user, buyNow, onCancel, onComplete, onError }: Ch
     const [quoteLoading, setQuoteLoading] = React.useState(false);
     const [submitting, setSubmitting] = React.useState(false);
     const [error, setError] = React.useState('');
+    const [quoteRevision, setQuoteRevision] = React.useState(0);
+    const [quoteUpdateNotice, setQuoteUpdateNotice] = React.useState('');
 
     React.useEffect(() => {
         let active = true;
@@ -187,7 +197,18 @@ export function CheckoutPage({ user, buyNow, onCancel, onComplete, onError }: Ch
                 ? { listing_id: buyNow.listingId, quantity: items[0].quantity }
                 : { items: items.map((item) => ({ cart_item_id: item.cart_item_id, quantity: item.quantity })) }),
             delivery_method: deliveryMethod,
-            ...(deliveryMethod !== 'SELF_PICKUP' ? { latitude: shippingAddress.latitude, longitude: shippingAddress.longitude } : {}),
+            ...(deliveryMethod !== 'SELF_PICKUP' ? {
+                latitude: shippingAddress.latitude,
+                longitude: shippingAddress.longitude,
+                shipping_address: {
+                    street_address: shippingAddress.street_address,
+                    address_line2: shippingAddress.address_line2,
+                    barangay: shippingAddress.barangay,
+                    city_municipality: shippingAddress.city_municipality,
+                    province: shippingAddress.province,
+                    postal_code: shippingAddress.postal_code,
+                },
+            } : {}),
         }).then((response) => {
             if (active) {
                 setQuote(response.data);
@@ -196,11 +217,14 @@ export function CheckoutPage({ user, buyNow, onCancel, onComplete, onError }: Ch
         }).catch((requestError: any) => {
             if (active) {
                 setQuote(null);
-                setError(requestError.userMessage ?? requestError.response?.data?.message ?? 'Delivery and order fees could not be calculated.');
+                setError(requestError.userMessage
+                    ?? requestError.response?.data?.errors?.delivery_location?.[0]
+                    ?? requestError.response?.data?.message
+                    ?? 'Delivery and order fees could not be calculated.');
             }
         }).finally(() => { if (active) setQuoteLoading(false); });
         return () => { active = false; };
-    }, [buyNow, deliveryMethod, items.map((item) => `${item.listing_id}:${item.quantity}`).join(','), locationConfirmed, shippingAddress.latitude, shippingAddress.longitude]);
+    }, [buyNow, deliveryMethod, items.map((item) => `${item.listing_id}:${item.quantity}`).join(','), locationConfirmed, shippingAddress.latitude, shippingAddress.longitude, shippingAddress.street_address, shippingAddress.address_line2, shippingAddress.barangay, shippingAddress.city_municipality, shippingAddress.province, shippingAddress.postal_code, quoteRevision]);
 
     const subtotal = items.reduce((total, item) => total + item.quantity * item.unit_price, 0);
     const requiredAddress = deliveryMethod !== 'SELF_PICKUP';
@@ -273,7 +297,10 @@ export function CheckoutPage({ user, buyNow, onCancel, onComplete, onError }: Ch
                     : { items: items.map((item) => ({ cart_item_id: item.cart_item_id, quantity: item.quantity })) }),
                 delivery_method: deliveryMethod,
                 payment_method: paymentMethod,
-                ...(requiredAddress ? { shipping_address: shippingAddress } : {}),
+                ...(requiredAddress ? {
+                    shipping_address: shippingAddress,
+                    delivery_quote_token: quote?.delivery_quote_token,
+                } : {}),
                 ...(!requiredAddress ? {
                     buyer_location: {
                         ...shippingAddress,
@@ -289,9 +316,17 @@ export function CheckoutPage({ user, buyNow, onCancel, onComplete, onError }: Ch
             showSuccess(`Order ${response.data.order.order_reference} placed for seller confirmation.`);
             onComplete(response.data.order.id, !buyNow);
         } catch (requestError: any) {
-            const message = requestError.userMessage ?? requestError.response?.data?.message ?? 'Checkout could not be completed.';
+            const message = requestError.userMessage
+                ?? requestError.response?.data?.errors?.delivery_location?.[0]
+                ?? requestError.response?.data?.message
+                ?? 'Checkout could not be completed.';
             setError(message);
             onError(message);
+            if (requiredAddress && requestError.response?.status === 409) {
+                setQuote(null);
+                setQuoteUpdateNotice('The delivery location or fee changed. Review the refreshed distance and total, then place the order again.');
+                setQuoteRevision((revision) => revision + 1);
+            }
         } finally {
             setSubmitting(false);
         }
@@ -377,6 +412,14 @@ export function CheckoutPage({ user, buyNow, onCancel, onComplete, onError }: Ch
                             {deliveryMethod === 'STANDARD_DELIVERY' && <p className="buyer-checkout-hint">Your order will be delivered within 3-5 business days. Delivery fee is calculated automatically from the seller's and your pinned locations.</p>}
                             {deliveryMethod === 'SELLER_DELIVERY' && <p className="buyer-checkout-hint">The delivery fee is calculated automatically from the seller's and your pinned locations.</p>}
                         </div>}
+                        {requiredAddress && quote && Object.entries(quote.delivery_distances_km ?? {}).map(([sellerId, distance]) => (
+                            <p className="buyer-checkout-hint" key={sellerId}>
+                                Seller {sellerId} route: {Number(distance).toFixed(2)} km
+                                {quote.delivery_distance_methods[sellerId] === 'OSRM_BARANGAY_ESTIMATE'
+                                    ? ' (barangay-level road distance estimate)'
+                                    : ' (OSRM road route)'}
+                            </p>
+                        ))}
                     </section>
                 </div>
             </section>
@@ -393,7 +436,8 @@ export function CheckoutPage({ user, buyNow, onCancel, onComplete, onError }: Ch
                 <div className="buyer-checkout-total-row"><span>Shipping</span><strong>{deliveryMethod === 'SELF_PICKUP' ? 'FREE' : quoteLoading ? 'Calculating...' : quote ? peso(quote.shipping) : '—'}</strong></div>
                 {quote && Number(quote.fees) > 0 && <div className="buyer-checkout-total-row"><span>Taxes &amp; service fees</span><strong>{peso(quote.fees)}</strong></div>}
                 <div className="buyer-checkout-total-row buyer-checkout-grand-total"><span>Total Amount</span><strong>{peso(quote?.total ?? subtotal)}</strong></div>
-                {requiredAddress && <p className="buyer-checkout-hint">Delivery distance is calculated from the saved map pins; the fee may vary by seller.</p>}
+                {requiredAddress && <p className="buyer-checkout-hint">Delivery fee uses the configured Farmgate fee rules applied to the OSRM road distance.</p>}
+                {quoteUpdateNotice && <p className="buyer-checkout-hint" role="status">{quoteUpdateNotice}</p>}
                 <p className="buyer-checkout-included">Includes all applicable taxes and fees</p>
                 {error && <p className="buyer-checkout-error" role="alert">{error}</p>}
                 <button className="buyer-checkout-primary buyer-checkout-submit" type="button" disabled={submitting || quoteLoading || (requiredAddress && !quote)} onClick={placeOrder}>{submitting ? 'Processing checkout...' : paymentMethod === 'COD' ? 'Place Order (COD)' : `Continue to PayMongo · ${paymentOptions.find((option) => option.value === paymentMethod)?.title}`}</button>

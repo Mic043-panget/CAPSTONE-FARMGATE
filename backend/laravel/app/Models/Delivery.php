@@ -16,6 +16,9 @@ class Delivery extends Model
         'qr_token',
         'pickup_qr_token_hash',
         'delivery_qr_token_hash',
+        'order_qr_token_encrypted',
+        'order_qr_token_hash',
+        'order_qr_rider_id',
         'delivery_proof_path',
         'delivery_proof_sha256',
         'delivery_proof_mime_type',
@@ -39,6 +42,9 @@ class Delivery extends Model
         'qr_token',
         'pickup_qr_token_hash',
         'delivery_qr_token_hash',
+        'order_qr_token_encrypted',
+        'order_qr_token_hash',
+        'order_qr_rider_id',
         'pickup_qr_expires_at',
         'delivery_qr_expires_at',
         'pickup_verified_at',
@@ -74,6 +80,7 @@ class Delivery extends Model
             'proof_recorded_at' => 'datetime',
             'delivery_proof_latitude' => 'float',
             'delivery_proof_longitude' => 'float',
+            'order_qr_rider_id' => 'integer',
         ];
     }
 

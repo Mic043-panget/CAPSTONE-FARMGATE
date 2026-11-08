@@ -63,6 +63,7 @@ class SystemSettingsService
         'rider_waiting_minutes' => ['default' => 15, 'type' => 'integer', 'category' => 'rider', 'label' => 'Rider waiting threshold'],
         'automatic_rider_assignment_enabled' => ['default' => true, 'type' => 'boolean', 'category' => 'rider', 'label' => 'Automatic rider assignment'],
         'rider_offer_radius_km' => ['default' => 25, 'type' => 'decimal', 'category' => 'rider', 'label' => 'Maximum rider assignment distance'],
+        'delivery_verification_radius_meters' => ['default' => 250, 'type' => 'decimal', 'category' => 'delivery', 'label' => 'Delivery QR verification radius (meters)'],
         'rider_offer_expiry_minutes' => ['default' => 10, 'type' => 'integer', 'category' => 'rider', 'label' => 'Rider offer expiry'],
         'maximum_rider_assignment_attempts' => ['default' => 3, 'type' => 'integer', 'category' => 'rider', 'label' => 'Maximum rider assignment attempts'],
         'seller_listing_approval_required' => ['default' => true, 'type' => 'boolean', 'category' => 'seller', 'label' => 'Seller listing approval required'],
@@ -88,7 +89,10 @@ class SystemSettingsService
         'time_format' => ['default' => 'H:i', 'type' => 'string', 'category' => 'system', 'label' => 'Time format'],
     ];
 
-    public function definitions(): array { return self::DEFINITIONS; }
+    public function definitions(): array
+    {
+        return self::DEFINITIONS;
+    }
 
     public function values(bool $includeMetadata = false): array
     {
@@ -97,21 +101,44 @@ class SystemSettingsService
         foreach (self::DEFINITIONS as $key => $definition) {
             $values[$key] = $this->castValue($stored[$key]->value ?? $definition['default'], $definition['type']);
         }
+
         return $includeMetadata ? ['values' => $values, 'definitions' => self::DEFINITIONS] : $values;
     }
 
     public function get(string $key): mixed
     {
         $definition = self::DEFINITIONS[$key] ?? null;
-        if (! $definition) { return null; }
+        if (! $definition) {
+            return null;
+        }
+
         return Cache::remember("farmgate.setting.{$key}", 300, fn () => $this->castValue(SystemSetting::query()->where('key', $key)->where('is_active', true)->value('value') ?? $definition['default'], $definition['type']));
     }
 
-    public function getInt(string $key): int { return (int) $this->get($key); }
-    public function getDecimal(string $key): float { return (float) $this->get($key); }
-    public function getBoolean(string $key): bool { return (bool) $this->get($key); }
-    public function getString(string $key): string { return (string) $this->get($key); }
-    public function number(string $key): float { return $this->getDecimal($key); }
+    public function getInt(string $key): int
+    {
+        return (int) $this->get($key);
+    }
+
+    public function getDecimal(string $key): float
+    {
+        return (float) $this->get($key);
+    }
+
+    public function getBoolean(string $key): bool
+    {
+        return (bool) $this->get($key);
+    }
+
+    public function getString(string $key): string
+    {
+        return (string) $this->get($key);
+    }
+
+    public function number(string $key): float
+    {
+        return $this->getDecimal($key);
+    }
 
     public function validate(array $values): array
     {
@@ -119,7 +146,11 @@ class SystemSettingsService
         $normalized = [];
         foreach ($values as $key => $value) {
             $definition = self::DEFINITIONS[$key] ?? null;
-            if (! $definition) { $errors["settings.{$key}"][] = 'This setting is not supported.'; continue; }
+            if (! $definition) {
+                $errors["settings.{$key}"][] = 'This setting is not supported.';
+
+                continue;
+            }
             $valid = match ($definition['type']) {
                 'boolean' => is_bool($value) || in_array($value, [0, 1, '0', '1', 'true', 'false'], true),
                 'integer' => filter_var($value, FILTER_VALIDATE_INT) !== false,
@@ -127,19 +158,36 @@ class SystemSettingsService
                 'json' => is_array($value) || is_object($value),
                 default => is_string($value) || is_numeric($value),
             };
-            if (! $valid) { $errors["settings.{$key}"][] = "The {$key} value has an invalid type."; continue; }
+            if (! $valid) {
+                $errors["settings.{$key}"][] = "The {$key} value has an invalid type.";
+
+                continue;
+            }
             $normalized[$key] = $this->castValue($value, $definition['type']);
-            if (in_array($definition['type'], ['integer', 'decimal'], true) && $normalized[$key] < 0) { $errors["settings.{$key}"][] = 'The value cannot be negative.'; }
-            if (str_ends_with($key, '_rate') || str_ends_with($key, '_percent')) { if ((float) $normalized[$key] > 100) { $errors["settings.{$key}"][] = 'Percentage rates cannot exceed 100.'; } }
+            if (in_array($definition['type'], ['integer', 'decimal'], true) && $normalized[$key] < 0) {
+                $errors["settings.{$key}"][] = 'The value cannot be negative.';
+            }
+            if (str_ends_with($key, '_rate') || str_ends_with($key, '_percent')) {
+                if ((float) $normalized[$key] > 100) {
+                    $errors["settings.{$key}"][] = 'Percentage rates cannot exceed 100.';
+                }
+            }
         }
-        if ($errors) { throw ValidationException::withMessages($errors); }
+        if ($errors) {
+            throw ValidationException::withMessages($errors);
+        }
+
         return $normalized;
     }
 
     public function update(array $values, int $actorId, ?string $reason = null): void
     {
         $values = $this->validate($values);
-        if (($values['delivery_min_fee'] ?? $this->getDecimal('delivery_min_fee')) > 0 && ($values['delivery_max_fee'] ?? $this->getDecimal('delivery_max_fee')) > 0 && $values['delivery_min_fee'] > $values['delivery_max_fee']) { throw ValidationException::withMessages(['settings.delivery_min_fee' => 'Minimum delivery fee cannot exceed maximum delivery fee.']); }
+        $minimumDeliveryFee = $values['delivery_min_fee'] ?? $this->getDecimal('delivery_min_fee');
+        $maximumDeliveryFee = $values['delivery_max_fee'] ?? $this->getDecimal('delivery_max_fee');
+        if ($minimumDeliveryFee > 0 && $maximumDeliveryFee > 0 && $minimumDeliveryFee > $maximumDeliveryFee) {
+            throw ValidationException::withMessages(['settings.delivery_min_fee' => 'Minimum delivery fee cannot exceed maximum delivery fee.']);
+        }
         DB::transaction(function () use ($values, $actorId, $reason): void {
             foreach ($values as $key => $value) {
                 $definition = self::DEFINITIONS[$key];
@@ -149,30 +197,39 @@ class SystemSettingsService
                 $setting->fill(['value' => is_array($value) ? json_encode($value, JSON_THROW_ON_ERROR) : (string) $value, 'type' => $definition['type'], 'category' => $definition['category'], 'label' => $definition['label'], 'is_active' => true, 'is_public' => false, 'updated_by' => $actorId]);
                 $setting->save();
                 Cache::forget("farmgate.setting.{$key}");
-                if ($oldValue !== (string) $setting->value) { SystemSettingHistory::create(['system_setting_id' => $setting->id, 'key' => $key, 'old_value' => $oldValue, 'new_value' => (string) $setting->value, 'changed_by' => $actorId, 'change_reason' => $reason]); }
+                if ($oldValue !== (string) $setting->value) {
+                    SystemSettingHistory::create(['system_setting_id' => $setting->id, 'key' => $key, 'old_value' => $oldValue, 'new_value' => (string) $setting->value, 'changed_by' => $actorId, 'change_reason' => $reason]);
+                }
             }
         });
     }
 
     public function deliveryFee(float $distanceKm, float $orderSubtotal = 0): float
     {
-        if ($this->getBoolean('free_delivery_enabled') && $orderSubtotal >= $this->getDecimal('free_delivery_minimum_order')) { return 0.0; }
+        if ($this->getBoolean('free_delivery_enabled') && $orderSubtotal >= $this->getDecimal('free_delivery_minimum_order')) {
+            return 0.0;
+        }
         $tier = $this->getBoolean('delivery_tiers_enabled') ? DeliveryRateTier::query()->where('is_active', true)->where('min_km', '<=', $distanceKm)->where(fn ($query) => $query->whereNull('max_km')->orWhere('max_km', '>=', $distanceKm))->orderByDesc('priority')->first() : null;
         $fee = $tier ? (float) $tier->base_fee + max(0, $distanceKm - (float) $tier->min_km) * (float) $tier->fee_per_km : $this->getDecimal('delivery_base_fee') + max(0, $distanceKm - $this->getDecimal('delivery_included_km')) * $this->getDecimal('delivery_rate_per_km');
         $minimum = $this->getDecimal('delivery_min_fee');
         $maximum = $this->getDecimal('delivery_max_fee');
+
         return round($maximum > 0 ? min($maximum, max($minimum, $fee)) : max($minimum, $fee), 2);
     }
 
     public function distanceKm(float $fromLat, float $fromLng, float $toLat, float $toLng): float
     {
-        $latitudeDelta = deg2rad($toLat - $fromLat); $longitudeDelta = deg2rad($toLng - $fromLng);
+        $latitudeDelta = deg2rad($toLat - $fromLat);
+        $longitudeDelta = deg2rad($toLng - $fromLng);
         $a = sin($latitudeDelta / 2) ** 2 + cos(deg2rad($fromLat)) * cos(deg2rad($toLat)) * sin($longitudeDelta / 2) ** 2;
+
         return round(6371 * 2 * atan2(sqrt($a), sqrt(1 - $a)), 2);
     }
 
     private function castValue(mixed $value, string $type): mixed
     {
-        return match ($type) { 'boolean' => filter_var($value, FILTER_VALIDATE_BOOLEAN), 'integer' => (int) $value, 'decimal' => (float) $value, 'json' => is_string($value) ? json_decode($value, true, 512, JSON_THROW_ON_ERROR) : $value, default => (string) $value };
+        return match ($type) {
+            'boolean' => filter_var($value, FILTER_VALIDATE_BOOLEAN), 'integer' => (int) $value, 'decimal' => (float) $value, 'json' => is_string($value) ? json_decode($value, true, 512, JSON_THROW_ON_ERROR) : $value, default => (string) $value
+        };
     }
 }
