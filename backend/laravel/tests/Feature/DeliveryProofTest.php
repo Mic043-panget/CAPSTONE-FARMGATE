@@ -37,8 +37,7 @@ class DeliveryProofTest extends TestCase
         $this->assertSame(DeliveryStatus::IN_TRANSIT, $delivery->fresh()->status);
         $this->assertNotNull($delivery->fresh()->delivery_qr_token_hash);
 
-        $this->actingAs($rider)->post('/api/deliveries/'.$delivery->id.'/delivery-verify', [
-            'qr_token' => $token,
+        $this->actingAs($rider)->post('/api/deliveries/'.$delivery->id.'/proof', [
             'photo' => UploadedFile::fake()->image('proof.jpg'),
             'recipient_confirmed' => '0',
             'recipient_name' => 'Buyer',
@@ -48,21 +47,27 @@ class DeliveryProofTest extends TestCase
         $this->assertNull($delivery->fresh()->delivery_verified_at);
     }
 
-    public function test_dropoff_accepts_proof_without_location_and_rejects_replay(): void
+    public function test_dropoff_verifies_saved_proof_and_rejects_replay(): void
     {
         Storage::fake('delivery_proofs');
         ['rider' => $rider, 'delivery' => $delivery, 'token' => $token] = $this->dropoff();
-        $payload = [
-            'qr_token' => $token,
-            'latitude' => 12.7321,
-            'longitude' => 121.3654,
+        $proofPayload = [
             'photo' => UploadedFile::fake()->image('proof.jpg'),
             'recipient_confirmed' => '1',
             'recipient_name' => 'Received by Buyer',
             'captured_at' => now()->toISOString(),
         ];
+        $this->actingAs($rider)->post('/api/deliveries/'.$delivery->id.'/proof', $proofPayload)
+            ->assertOk()
+            ->assertJsonPath('delivery.status', DeliveryStatus::IN_TRANSIT->value)
+            ->assertJsonPath('delivery.has_delivery_proof', true);
+        $verificationPayload = [
+            'qr_token' => $token,
+            'latitude' => 12.7321,
+            'longitude' => 121.3654,
+        ];
 
-        $this->actingAs($rider)->post('/api/deliveries/'.$delivery->id.'/delivery-verify', $payload)
+        $this->actingAs($rider)->post('/api/deliveries/'.$delivery->id.'/delivery-verify', $verificationPayload)
             ->assertOk()
             ->assertJsonPath('delivery.status', DeliveryStatus::DELIVERED->value)
             ->assertJsonPath('delivery.has_delivery_proof', true)
@@ -71,10 +76,10 @@ class DeliveryProofTest extends TestCase
         $this->assertNotNull($saved->delivery_verified_at);
         $this->assertNotNull($saved->proof_captured_at);
         $this->assertNotNull($saved->proof_recorded_at);
-        $this->assertNull($saved->delivery_verification_latitude);
-        Storage::disk('delivery_proofs')->assertExists($saved->delivery_proof_path);
+        $this->assertSame(12.7321, $saved->delivery_verification_latitude);
+        $this->assertTrue(Storage::disk('delivery_proofs')->exists($saved->delivery_proof_path));
 
-        $this->actingAs($rider)->post('/api/deliveries/'.$delivery->id.'/delivery-verify', $payload)->assertStatus(409);
+        $this->actingAs($rider)->post('/api/deliveries/'.$delivery->id.'/delivery-verify', $verificationPayload)->assertStatus(409);
         $this->assertSame(1, count(Storage::disk('delivery_proofs')->allFiles()));
         $this->assertSame(1, $saved->statusHistory()->where('to_status', DeliveryStatus::DELIVERED->value)->count());
     }
@@ -84,10 +89,7 @@ class DeliveryProofTest extends TestCase
         Storage::fake('delivery_proofs');
         ['rider' => $rider, 'delivery' => $delivery, 'token' => $token] = $this->dropoff(DeliveryStatus::RIDER_ACCEPTED);
 
-        $this->actingAs($rider)->post('/api/deliveries/'.$delivery->id.'/delivery-verify', [
-            'qr_token' => $token,
-            'latitude' => 12.7321,
-            'longitude' => 121.3654,
+        $this->actingAs($rider)->post('/api/deliveries/'.$delivery->id.'/proof', [
             'photo' => UploadedFile::fake()->image('proof.jpg'),
             'recipient_confirmed' => '1',
             'recipient_name' => 'Buyer',
@@ -107,10 +109,7 @@ class DeliveryProofTest extends TestCase
         $factory->shouldReceive('disk')->once()->with('delivery_proofs')->andReturn($filesystem);
         $this->app->instance(FilesystemFactory::class, $factory);
 
-        $this->actingAs($rider)->post('/api/deliveries/'.$delivery->id.'/delivery-verify', [
-            'qr_token' => $token,
-            'latitude' => 12.7321,
-            'longitude' => 121.3654,
+        $this->actingAs($rider)->post('/api/deliveries/'.$delivery->id.'/proof', [
             'photo' => UploadedFile::fake()->image('proof.jpg'),
             'recipient_confirmed' => '1',
             'recipient_name' => 'Buyer',
@@ -158,14 +157,17 @@ class DeliveryProofTest extends TestCase
         $actors = $this->dropoff();
         $delivery = $actors['delivery'];
         $initialCapturedAt = now()->subMinute();
-        $this->actingAs($actors['rider'])->post('/api/deliveries/'.$delivery->id.'/delivery-verify', [
+        $this->actingAs($actors['rider'])->post('/api/deliveries/'.$delivery->id.'/proof', [
             'qr_token' => $actors['token'],
-            'latitude' => 12.7321,
-            'longitude' => 121.3654,
             'photo' => UploadedFile::fake()->image('proof.jpg'),
             'recipient_confirmed' => '1',
             'recipient_name' => 'Original Recipient',
             'captured_at' => $initialCapturedAt->toISOString(),
+        ])->assertOk();
+        $this->actingAs($actors['rider'])->post('/api/deliveries/'.$delivery->id.'/delivery-verify', [
+            'qr_token' => $actors['token'],
+            'latitude' => 12.7321,
+            'longitude' => 121.3654,
         ])->assertOk();
         $verifiedAt = $delivery->fresh()->delivery_verified_at;
 
@@ -188,8 +190,8 @@ class DeliveryProofTest extends TestCase
 
         $this->assertSame($verifiedAt->toISOString(), $delivery->fresh()->delivery_verified_at->toISOString());
         $history = DeliveryProofCorrection::query()->where('delivery_id', $delivery->id)->firstOrFail();
-        Storage::disk('delivery_proofs')->assertExists($history->old_proof_path);
-        Storage::disk('delivery_proofs')->assertExists($history->new_proof_path);
+        $this->assertTrue(Storage::disk('delivery_proofs')->exists($history->old_proof_path));
+        $this->assertTrue(Storage::disk('delivery_proofs')->exists($history->new_proof_path));
         $this->assertSame('Original Recipient', $history->old_recipient_name);
         $this->assertSame('Corrected Recipient', $history->new_recipient_name);
         $this->assertSame($admin->id, $history->corrected_by);

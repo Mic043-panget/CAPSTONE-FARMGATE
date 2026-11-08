@@ -161,7 +161,7 @@ class RiderApplicationWorkflowTest extends TestCase
             ->assertJsonCount(4, 'application.documents');
         $application = RiderApplication::query()->where('user_id', $riderId)->firstOrFail();
         $licenseDocument = $application->documents()->where('document_type', 'DRIVER_LICENSE')->firstOrFail();
-        Storage::disk('rider_private')->assertExists($licenseDocument->path);
+        $this->assertTrue(Storage::disk('rider_private')->exists($licenseDocument->path));
 
         $this->actingAs($otherRider)->get($submissionResponse->json('application.documents.0.view_url'))
             ->assertForbidden();
@@ -181,7 +181,7 @@ class RiderApplicationWorkflowTest extends TestCase
             ->assertJsonPath('application.status', 'SUBMITTED')
             ->assertJsonCount(4, 'application.documents');
         $this->assertNotNull($licenseDocument->fresh()->deleted_at);
-        Storage::disk('rider_private')->assertMissing($licenseDocument->path);
+        $this->assertFalse(Storage::disk('rider_private')->exists($licenseDocument->path));
 
         $this->actingAs($admin)->patchJson('/api/admin/rider-applications/'.$application->id, ['status' => 'APPROVED'])
             ->assertOk()
