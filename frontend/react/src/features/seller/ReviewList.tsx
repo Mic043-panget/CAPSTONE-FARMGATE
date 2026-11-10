@@ -4,6 +4,7 @@ import { Pagination } from '../../shared/components/Pagination';
 
 type Review = {
     id: number;
+    review_reference: string;
     rating: number;
     comment: string | null;
     listing?: { name: string } | null;
@@ -32,7 +33,7 @@ export function ReviewList({ onError }: { onError: (message: string) => void }) 
     return <section className="seller-work-section complaint-queue">
         <div className="section-heading"><div><p className="eyebrow">Buyer feedback</p><h2>Reviews for your livestock</h2></div><span className="record-count">{reviews.length} on this page</span></div>
         {reviews.map((review) => <article className="complaint-item" key={review.id}>
-            <strong>{review.listing?.name ?? 'Order product'} · {'★'.repeat(review.rating)}{'☆'.repeat(5 - review.rating)}</strong>
+            <strong>{review.review_reference} · {review.listing?.name ?? 'Order livestock'} · {'★'.repeat(review.rating)}{'☆'.repeat(5 - review.rating)}</strong>
             <span>{review.buyer?.name ?? 'Buyer'} · {new Date(review.created_at).toLocaleDateString()}</span>
             <p>{review.comment || 'No written comment.'}</p>
             {review.media?.length ? <div className="case-saved-media">{review.media.map((media) => media.mime_type.startsWith('video/')

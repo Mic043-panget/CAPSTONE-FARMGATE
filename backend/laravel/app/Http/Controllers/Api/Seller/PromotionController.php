@@ -9,6 +9,7 @@ use App\Models\AuditLog;
 use App\Models\LivestockListing;
 use App\Models\SellerPromotion;
 use App\Models\User;
+use App\Services\PromotionNotificationService;
 use App\Services\PromotionPricingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -180,7 +181,12 @@ class PromotionController extends Controller
             Storage::disk('public')->delete($oldImagePath);
         }
 
-        return response()->json(['promotion' => $promotion->fresh()->load('listings:id,name')]);
+        $updated = $promotion->fresh()->load('listings:id,name');
+        if ($updated->status === 'ACTIVE') {
+            app(PromotionNotificationService::class)->notifyBuyers($updated, 'updated');
+        }
+
+        return response()->json(['promotion' => $updated]);
     }
 
     public function destroy(Request $request, SellerPromotion $promotion): JsonResponse
@@ -245,6 +251,7 @@ class PromotionController extends Controller
 
             return $locked->fresh()->load('listings:id,name');
         });
+        app(PromotionNotificationService::class)->notifyBuyers($updated, $action);
 
         return response()->json(['promotion' => $updated]);
     }

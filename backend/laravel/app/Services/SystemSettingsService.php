@@ -3,6 +3,8 @@
 namespace App\Services;
 
 use App\Models\DeliveryRateTier;
+use App\Models\SellerPayoutDestination;
+use App\Models\SellerPayoutPolicy;
 use App\Models\SystemSetting;
 use App\Models\SystemSettingHistory;
 use Illuminate\Support\Facades\Cache;
@@ -34,12 +36,13 @@ class SystemSettingsService
         'automatic_order_expiration_enabled' => ['default' => true, 'type' => 'boolean', 'category' => 'orders', 'label' => 'Automatic order expiration'],
         'allow_seller_cancellation' => ['default' => false, 'type' => 'boolean', 'category' => 'orders', 'label' => 'Allow seller cancellation'],
         'allow_partial_quantity_fulfillment' => ['default' => false, 'type' => 'boolean', 'category' => 'orders', 'label' => 'Allow partial fulfillment'],
-        'maximum_items_per_order' => ['default' => 50, 'type' => 'integer', 'category' => 'orders', 'label' => 'Maximum items per order'],
+        'maximum_items_per_order' => ['default' => 50, 'type' => 'integer', 'category' => 'orders', 'label' => 'Maximum livestock listings per order'],
         'order_processing_fee' => ['default' => 0, 'type' => 'decimal', 'category' => 'charges', 'label' => 'Order processing fee'],
         'platform_service_fee_rate' => ['default' => 0, 'type' => 'decimal', 'category' => 'charges', 'label' => 'Platform service fee rate (%)'],
         'platform_fee_percent' => ['default' => 0, 'type' => 'decimal', 'category' => 'charges', 'label' => 'Platform fee rate (%)'],
         'transaction_fee_rate' => ['default' => 0, 'type' => 'decimal', 'category' => 'charges', 'label' => 'Transaction fee rate (%)'],
         'seller_fee_rate' => ['default' => 0, 'type' => 'decimal', 'category' => 'charges', 'label' => 'Seller fee rate (%)'],
+        'manual_seller_payouts_enabled' => ['default' => false, 'type' => 'boolean', 'category' => 'finance', 'label' => 'Enable manual COD seller payouts (only after policy and payout destination approval)'],
         'buyer_service_fee_rate' => ['default' => 0, 'type' => 'decimal', 'category' => 'charges', 'label' => 'Buyer service fee rate (%)'],
         'payment_processing_fee_rate' => ['default' => 0, 'type' => 'decimal', 'category' => 'charges', 'label' => 'Payment processing fee rate (%)'],
         'cancellation_fee' => ['default' => 0, 'type' => 'decimal', 'category' => 'charges', 'label' => 'Cancellation fee'],
@@ -183,6 +186,39 @@ class SystemSettingsService
     public function update(array $values, int $actorId, ?string $reason = null): void
     {
         $values = $this->validate($values);
+        if (array_key_exists('manual_seller_payouts_enabled', $values)) {
+            $reason = $this->sanitizeFinancialReason($reason);
+            $currentlyEnabled = $this->getBoolean('manual_seller_payouts_enabled');
+            $requestedEnabled = (bool) $values['manual_seller_payouts_enabled'];
+            if ($requestedEnabled !== $currentlyEnabled && blank($reason)) {
+                throw ValidationException::withMessages([
+                    'reason' => ['An audit reason is required when enabling or disabling manual seller payouts.'],
+                ]);
+            }
+            if ($requestedEnabled && ! $currentlyEnabled) {
+                $hasEffectivePolicy = SellerPayoutPolicy::query()
+                    ->where('status', 'PUBLISHED')
+                    ->whereNotNull('published_at')
+                    ->whereDate('effective_date', '<=', today())
+                    ->exists();
+                $verifiedDestinations = SellerPayoutDestination::query()
+                    ->where('status', 'VERIFIED')
+                    ->count();
+                if (! $hasEffectivePolicy || $verifiedDestinations < 1) {
+                    $missing = [];
+                    if (! $hasEffectivePolicy) {
+                        $missing[] = 'publish an effective approved seller payout policy';
+                    }
+
+                    if ($verifiedDestinations < 1) {
+                        $missing[] = 'verify at least one seller payout destination';
+                    }
+                    throw ValidationException::withMessages([
+                        'settings.manual_seller_payouts_enabled' => ['Manual seller payouts cannot be enabled until you '.implode(' and ', $missing).'.'],
+                    ]);
+                }
+            }
+        }
         $minimumDeliveryFee = $values['delivery_min_fee'] ?? $this->getDecimal('delivery_min_fee');
         $maximumDeliveryFee = $values['delivery_max_fee'] ?? $this->getDecimal('delivery_max_fee');
         if ($minimumDeliveryFee > 0 && $maximumDeliveryFee > 0 && $minimumDeliveryFee > $maximumDeliveryFee) {
@@ -202,6 +238,22 @@ class SystemSettingsService
                 }
             }
         });
+    }
+
+    public function sanitizeFinancialReason(?string $reason): ?string
+    {
+        if ($reason === null) {
+            return null;
+        }
+        foreach (SellerPayoutDestination::query()->get(['account_holder', 'bank_name', 'account_number', 'wallet_number']) as $destination) {
+            foreach ([$destination->account_holder, $destination->bank_name, $destination->account_number, $destination->wallet_number] as $privateValue) {
+                if (filled($privateValue)) {
+                    $reason = str_ireplace((string) $privateValue, '[destination detail redacted]', $reason);
+                }
+            }
+        }
+
+        return trim(preg_replace('/(?<!\d)(?:\d[ -]?){7,}\d(?!\d)/u', '[masked digits]', $reason) ?? $reason);
     }
 
     public function deliveryFee(float $distanceKm, float $orderSubtotal = 0): float

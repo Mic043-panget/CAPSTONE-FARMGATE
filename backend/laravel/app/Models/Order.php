@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Support\Str;
 use LogicException;
 
 class Order extends Model
@@ -23,13 +24,25 @@ class Order extends Model
             if (blank($order->order_reference)) {
                 $order->order_reference = app(OrderReferenceGenerator::class)->generate((int) $order->seller_id);
             }
+            if (blank($order->payment_reference)) {
+                $order->payment_reference = static::newPublicReference('PAY');
+            }
         });
 
         static::updating(function (Order $order): void {
-            if ($order->isDirty('order_reference')) {
-                throw new LogicException('An order reference cannot be changed after creation.');
+            if ($order->isDirty(['order_reference', 'payment_reference'])) {
+                throw new LogicException('Order and payment references cannot be changed after creation.');
             }
         });
+    }
+
+    private static function newPublicReference(string $type): string
+    {
+        do {
+            $reference = sprintf('FG-%s-%d-%s', $type, now()->year, Str::upper(Str::random(6)));
+        } while (static::query()->where('payment_reference', $reference)->exists());
+
+        return $reference;
     }
 
     protected function casts(): array
@@ -75,6 +88,21 @@ class Order extends Model
     public function delivery(): HasOne
     {
         return $this->hasOne(Delivery::class);
+    }
+
+    public function codCollection(): HasOne
+    {
+        return $this->hasOne(CodCollection::class);
+    }
+
+    public function sellerPayout(): HasOne
+    {
+        return $this->hasOne(SellerPayout::class);
+    }
+
+    public function complaints(): HasMany
+    {
+        return $this->hasMany(Complaint::class);
     }
 
     public function statusHistory(): HasMany

@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\Storage;
 
@@ -35,6 +36,11 @@ class SellerPromotion extends Model
     public function listings(): BelongsToMany
     {
         return $this->belongsToMany(LivestockListing::class, 'seller_promotion_listings', 'promotion_id', 'listing_id');
+    }
+
+    public function calendarEvent(): HasOne
+    {
+        return $this->hasOne(FarmgateEvent::class, 'promotion_id');
     }
 
     public function getImageUrlAttribute(): ?string

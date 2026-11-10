@@ -16,12 +16,32 @@ class ComplaintController extends Controller
     {
         abort_unless($request->user()?->role === Role::SELLER, 403);
 
-        $query = Complaint::query()->with(['order:id,order_reference,status,total_amount', 'opener:id,name,email', 'statusHistory', 'messages', 'media'])->where('respondent_id', $request->user()->id);
+        $validated = $request->validate([
+            'search' => ['sometimes', 'nullable', 'string', 'max:120'],
+        ]);
+        $query = Complaint::query()->with([
+            'order:id,order_reference,status,total_amount',
+            'opener:id,name,email',
+            'statusHistory',
+            'messages.sender:id,name,role',
+            'messages.media',
+            'media',
+        ])->where('respondent_id', $request->user()->id);
         $actionRequiredTotal = (clone $query)->where('status', ComplaintStatus::OPEN->value)->count();
-        if ($request->filled('search')) {
-            $search = '%'.trim((string) $request->input('search')).'%';
-            $query->where(function ($builder) use ($search): void {
-                $builder->where('reason', 'like', $search)->orWhere('description', 'like', $search)->orWhere('status', 'like', $search);
+        if (filled($validated['search'] ?? null)) {
+            $search = '%'.trim($validated['search']).'%';
+            $typeSearch = mb_strtolower(preg_replace('/[^a-z]/i', '', trim($validated['search'])));
+            $query->where(function ($builder) use ($search, $typeSearch): void {
+                $builder->where('case_reference', 'like', $search)
+                    ->orWhere('case_type', 'like', $search)
+                    ->orWhere('reason', 'like', $search)
+                    ->orWhere('other_reason', 'like', $search)
+                    ->orWhere('description', 'like', $search)
+                    ->orWhereHas('order', fn ($order) => $order->where('order_reference', 'like', $search))
+                    ->orWhereHas('opener', fn ($buyer) => $buyer->where('name', 'like', $search));
+                if ($typeSearch === 'returnrefund') {
+                    $builder->orWhere('case_type', 'RETURN_REFUND');
+                }
             });
         }
 

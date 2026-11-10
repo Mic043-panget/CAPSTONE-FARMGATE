@@ -9,6 +9,7 @@ use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
+use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class PayMongoRefundService
 {
@@ -140,8 +141,7 @@ class PayMongoRefundService
         abort_if(filled($case->paymongo_refund_id) && filled($providerRefundId) && $case->paymongo_refund_id !== $providerRefundId, 422, 'The supplied refund ID does not match the saved PayMongo refund.');
         $refundId = $case->paymongo_refund_id ?: $providerRefundId;
         abort_unless(is_string($refundId) && $refundId !== '', 422, 'Enter the PayMongo refund ID from the provider dashboard to reconcile this case.');
-        $secret = config('services.paymongo.secret_key');
-        abort_if(! filled($secret), 503, 'PayMongo is not configured.');
+        $secret = $this->testModeSecret();
 
         try {
             $response = Http::withBasicAuth($secret, '')
@@ -197,10 +197,11 @@ class PayMongoRefundService
 
     private function submit(Complaint $case): Complaint
     {
-        $secret = config('services.paymongo.secret_key');
-        if (! filled($secret)) {
+        try {
+            $secret = $this->testModeSecret();
+        } catch (HttpException $exception) {
             $this->markActionRequired($case, 'PayMongo is not configured. Check provider setup before taking further action.');
-            abort(503, 'PayMongo is not configured. The refund is action-required; check provider setup before taking further action.');
+            throw $exception;
         }
 
         try {
@@ -213,7 +214,7 @@ class PayMongoRefundService
                         'payment_id' => $case->paymongo_payment_id,
                         'amount' => (int) round((float) $case->approved_refund_amount * 100),
                         'reason' => 'requested_by_customer',
-                        'notes' => 'FARMGATE return/refund case #'.$case->id,
+                        'notes' => 'FARMGATE return/refund '.$case->case_reference,
                         'metadata' => ['farmgate_case_id' => (string) $case->id],
                     ]],
                 ]);
@@ -236,8 +237,7 @@ class PayMongoRefundService
 
     private function retrievePaymentId(string $checkoutSessionId): string
     {
-        $secret = config('services.paymongo.secret_key');
-        abort_if(! filled($secret), 503, 'PayMongo is not configured.');
+        $secret = $this->testModeSecret();
 
         try {
             $response = Http::withBasicAuth($secret, '')
@@ -256,6 +256,18 @@ class PayMongoRefundService
         abort_unless(is_string($paymentId) && $paymentId !== '', 422, 'PayMongo has not exposed a payment ID for this checkout. Admin reconciliation is required; no refund was submitted.');
 
         return $paymentId;
+    }
+
+    private function testModeSecret(): string
+    {
+        $secret = config('services.paymongo.secret_key');
+        abort_unless(
+            is_string($secret) && str_starts_with($secret, 'sk_test_'),
+            503,
+            'PayMongo test-mode credentials are required. Live payment processing is disabled.',
+        );
+
+        return $secret;
     }
 
     private function applyStatus(Complaint $case, string $providerStatus): Complaint

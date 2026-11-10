@@ -17,6 +17,7 @@ use App\Services\RiderAssignmentService;
 use App\Services\SystemSettingsService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\Mail;
 use Tests\TestCase;
 
 class RiderAssignmentTest extends TestCase
@@ -186,6 +187,17 @@ class RiderAssignmentTest extends TestCase
 
     public function test_cancelling_order_cancels_offered_and_accepted_delivery_and_notifies_affected_riders(): void
     {
+        config([
+            'mail.default' => 'smtp',
+            'mail.mailers.smtp.scheme' => 'smtp',
+            'mail.mailers.smtp.host' => 'smtp.farmgate.test',
+            'mail.mailers.smtp.port' => 587,
+            'mail.mailers.smtp.username' => 'notifications@farmgate.test',
+            'mail.mailers.smtp.password' => 'test-only-password',
+            'mail.from.address' => 'notifications@farmgate.test',
+        ]);
+        Mail::fake();
+
         foreach ([DeliveryStatus::RIDER_OFFERED, DeliveryStatus::RIDER_ACCEPTED] as $deliveryStatus) {
             $buyer = User::factory()->create(['role' => Role::BUYER]);
             $seller = User::factory()->create(['role' => Role::SELLER]);
@@ -334,7 +346,7 @@ class RiderAssignmentTest extends TestCase
         }
     }
 
-    public function test_failed_paymongo_checkout_uses_the_same_idempotent_order_delivery_cancellation_workflow(): void
+    public function test_unsupported_paymongo_checkout_failure_event_does_not_change_pending_order(): void
     {
         Config::set('services.paymongo.webhook_secret', 'test-webhook-secret');
         Config::set('services.paymongo.secret_key', 'sk_test_example');
@@ -365,8 +377,16 @@ class RiderAssignmentTest extends TestCase
         ]);
         $payload = json_encode([
             'data' => [
-                'type' => 'checkout_session.payment.failed',
-                'data' => ['id' => 'cs_failed_order'],
+                'id' => 'evt_failed_test',
+                'type' => 'event',
+                'attributes' => [
+                    'type' => 'checkout_session.payment.failed',
+                    'livemode' => false,
+                    'data' => [
+                        'id' => 'cs_failed_order',
+                        'type' => 'checkout_session',
+                    ],
+                ],
             ],
         ], JSON_THROW_ON_ERROR);
         $timestamp = (string) time();
@@ -384,21 +404,16 @@ class RiderAssignmentTest extends TestCase
             $payload,
         );
 
-        $sendWebhook()->assertOk();
-        $this->assertSame(OrderStatus::CANCELLED, $order->fresh()->status);
-        $this->assertSame('FAILED', $order->fresh()->payment_status);
-        $this->assertSame(DeliveryStatus::CANCELLED, $delivery->fresh()->status);
-        $this->assertSame('REVOKED', $offer->fresh()->status);
-        $this->assertSame(1, $order->statusHistory()->count());
-        $this->assertDatabaseHas('notifications', [
-            'notifiable_id' => $rider->id,
-            'data->status' => OrderStatus::CANCELLED->value,
-        ]);
+        $sendWebhook()->assertOk()->assertJsonPath('message', 'Webhook event ignored.');
+        $this->assertSame(OrderStatus::PENDING_CONFIRMATION, $order->fresh()->status);
+        $this->assertSame('PENDING', $order->fresh()->payment_status);
+        $this->assertSame(DeliveryStatus::RIDER_OFFERED, $delivery->fresh()->status);
+        $this->assertSame('OPEN', $offer->fresh()->status);
 
-        $sendWebhook()->assertOk();
-        $this->assertSame(1, $order->statusHistory()->count());
-        $this->assertSame(3, $order->emailDeliveries()->count());
-        $this->assertSame(1, $buyer->notifications()->where('data->order_id', $order->id)->count());
+        $sendWebhook()->assertOk()->assertJsonPath('message', 'Webhook event ignored.');
+        $this->assertSame(0, $order->statusHistory()->count());
+        $this->assertSame(0, $order->emailDeliveries()->count());
+        $this->assertSame(0, $buyer->notifications()->where('data->order_id', $order->id)->count());
     }
 
     public function test_no_eligible_rider_leaves_ready_order_waiting_and_assignment_retry_is_idempotent(): void

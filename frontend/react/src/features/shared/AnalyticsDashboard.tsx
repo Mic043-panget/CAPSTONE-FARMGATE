@@ -30,7 +30,7 @@ type Analytics = {
     unavailable: Record<string, string>;
 };
 
-type AnalyticsDashboardProps = { role: Extract<UserRole, 'SELLER' | 'ADMIN'> };
+type AnalyticsDashboardProps = { role: Extract<UserRole, 'SELLER' | 'ADMIN'>; preparedBy?: string; onOpenOrder?: (orderId: number) => void };
 type ChartData = { label: string; value: number; formatted?: string }[];
 type ChartKind = 'bar' | 'donut';
 type AnalyticsChart = { title: string; kind: ChartKind; values: ChartData; currencyValues?: boolean; unitLabel?: string; emptyMessage?: string; limit?: number };
@@ -55,20 +55,20 @@ const integer = new Intl.NumberFormat('en-PH');
 const productSortLabels: Record<string, string> = {
     revenue_desc: 'Sales · Highest first',
     revenue_asc: 'Sales · Lowest first',
-    quantity_desc: 'Units sold · Most first',
-    quantity_asc: 'Units sold · Fewest first',
-    name_asc: 'Product name · A–Z',
-    name_desc: 'Product name · Z–A',
+    quantity_desc: 'Quantity sold · Most first',
+    quantity_asc: 'Quantity sold · Fewest first',
+    name_asc: 'Livestock listing name · A–Z',
+    name_desc: 'Livestock listing name · Z–A',
     listed_newest: 'Date listed · Newest first',
     listed_oldest: 'Date listed · Oldest first',
 };
 
 function ProductSortControl({ sort, onChange }: { sort: string; onChange: (value: string) => void }) {
-    return <label className="analytics-product-sort">Sort products
-        <select aria-label="Sort products, affects the Top products chart and table only" value={sort} onChange={(event) => onChange(event.target.value)}>
+    return <label className="analytics-product-sort">Sort livestock listings
+        <select aria-label="Sort livestock listings, affects the Top livestock listings chart and table only" value={sort} onChange={(event) => onChange(event.target.value)}>
             {Object.entries(productSortLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select>
-        <small>Applies to the Top products chart and table only.</small>
+        <small>Applies to the Top livestock listings chart and table only.</small>
     </label>;
 }
 
@@ -249,18 +249,20 @@ function DataTable({ title, headers, rows, empty, headingControl }: { title: str
     </section>;
 }
 
-function PrintTrend({ values }: { values: Analytics['series'] }) {
-    const max = Math.max(1, ...values.map((item) => item.revenue));
-    const points = values.map((item, index) => `${values.length < 2 ? 400 : 24 + index * 752 / (values.length - 1)},${175 - item.revenue / max * 145}`).join(' ');
-    return <svg className="analytics-print-trend" viewBox="0 0 800 190" role="img" aria-label="Gross sales by day in PHP">
-        <title>Gross sales by day in PHP</title>
+function PrintTrend({ values, metric }: { values: Analytics['series']; metric: TrendMetric }) {
+    const metricLabel = metric === 'revenue' ? 'Gross sales' : metric === 'orders' ? 'Orders' : 'Livestock quantity sold';
+    const metricValue = (item: Analytics['series'][number]) => item[metric];
+    const max = Math.max(1, ...values.map(metricValue));
+    const points = values.map((item, index) => `${values.length < 2 ? 400 : 24 + index * 752 / (values.length - 1)},${175 - metricValue(item) / max * 145}`).join(' ');
+    return <svg className="analytics-print-trend" viewBox="0 0 800 190" role="img" aria-label={`${metricLabel} by day`}>
+        <title>{metricLabel} by day</title>
         <line x1="24" y1="175" x2="776" y2="175" />
         <polyline points={points} />
         <text x="24" y="188">{values[0]?.date ?? ''}</text><text x="660" y="188">{values.at(-1)?.date ?? ''}</text>
     </svg>;
 }
 
-export function AnalyticsDashboard({ role }: AnalyticsDashboardProps) {
+export function AnalyticsDashboard({ role, preparedBy = '', onOpenOrder }: AnalyticsDashboardProps) {
     const [range, setRange] = React.useState(() => dateRange(30));
     const [preset, setPreset] = React.useState('30');
     const [categoryId, setCategoryId] = React.useState('');
@@ -270,13 +272,34 @@ export function AnalyticsDashboard({ role }: AnalyticsDashboardProps) {
     const [sort, setSort] = React.useState('revenue_desc');
     const [analytics, setAnalytics] = React.useState<Analytics | null>(null);
     const [loading, setLoading] = React.useState(true);
+    const [refreshVersion, setRefreshVersion] = React.useState(0);
+    const hasLoadedAnalytics = React.useRef(false);
     const [error, setError] = React.useState('');
+    const [printError, setPrintError] = React.useState('');
+    const [printing, setPrinting] = React.useState(false);
     const [expanded, setExpanded] = React.useState<
         { title: string; type: 'trend' | 'growth' } | { title: string; type: 'chart'; chartKind: ChartKind } | null
     >(null);
     const [printPreview, setPrintPreview] = React.useState(false);
     const [analysisOpen, setAnalysisOpen] = React.useState(false);
     const [trendMetric, setTrendMetric] = React.useState<TrendMetric>('revenue');
+
+    React.useEffect(() => {
+        const refresh = () => {
+            if (document.visibilityState !== 'hidden') {
+                setRefreshVersion((current) => current + 1);
+            }
+        };
+        const interval = window.setInterval(refresh, 30000);
+        window.addEventListener('focus', refresh);
+        document.addEventListener('visibilitychange', refresh);
+
+        return () => {
+            window.clearInterval(interval);
+            window.removeEventListener('focus', refresh);
+            document.removeEventListener('visibilitychange', refresh);
+        };
+    }, []);
 
     React.useEffect(() => {
         if (range.from && range.to && range.to < range.from) {
@@ -286,7 +309,7 @@ export function AnalyticsDashboard({ role }: AnalyticsDashboardProps) {
             return undefined;
         }
         let active = true;
-        setLoading(true);
+        if (!hasLoadedAnalytics.current) setLoading(true);
         setError('');
         api.get<Analytics>('/api/analytics', {
             params: {
@@ -298,24 +321,27 @@ export function AnalyticsDashboard({ role }: AnalyticsDashboardProps) {
                 sort,
             },
         }).then((response) => {
-            if (active) setAnalytics(response.data);
+            if (active) {
+                setAnalytics(response.data);
+                hasLoadedAnalytics.current = true;
+            }
         }).catch((requestError: { userMessage?: string }) => {
             if (active) setError(requestError.userMessage ?? 'Analytics could not be loaded.');
         }).finally(() => { if (active) setLoading(false); });
         return () => { active = false; };
-    }, [categoryId, listingId, range, role, sellerId, sort, status]);
+    }, [categoryId, listingId, range, refreshVersion, role, sellerId, sort, status]);
 
     const summary = analytics?.summary;
     const statusChart = Object.entries(analytics?.order_statuses ?? {}).map(([label, value]) => ({ label: label.replaceAll('_', ' '), value }));
     const listingStatusChart = Object.entries(analytics?.listing_statuses ?? {}).map(([label, value]) => ({ label: label.replaceAll('_', ' '), value }));
     const paymentChart = Object.entries(analytics?.payment_statuses ?? {}).map(([label, value]) => ({ label, value }));
-    const productChart = (analytics?.products ?? []).map((product) => ({ label: product.name, value: product.revenue, formatted: `${currency.format(product.revenue)} · ${integer.format(product.units)} units` }));
+    const productChart = (analytics?.products ?? []).map((product) => ({ label: product.name, value: product.revenue, formatted: `${currency.format(product.revenue)} · quantity ${integer.format(product.units)}` }));
     const categoryChart = (analytics?.category_listings ?? []).map((item) => ({ label: item.category, value: item.count })).sort((left, right) => right.value - left.value);
     const salesCategoryChart = (analytics?.category_sales ?? []).map((item) => ({ label: item.category, value: item.revenue }));
-    const supplyCategoryChart = (analytics?.category_supply ?? []).map((item) => ({ label: item.category, value: item.units, formatted: `${integer.format(item.units)} units` }));
+    const supplyCategoryChart = (analytics?.category_supply ?? []).map((item) => ({ label: item.category, value: item.units, formatted: `Quantity ${integer.format(item.units)}` }));
     const selectedFilterNames = [
         categoryId ? `Category: ${analytics?.filters.categories.find((item) => String(item.id) === categoryId)?.name ?? categoryId}` : '',
-        listingId ? `Product: ${analytics?.filters.products.find((item) => String(item.id) === listingId)?.name ?? listingId}` : '',
+        listingId ? `Livestock listing: ${analytics?.filters.products.find((item) => String(item.id) === listingId)?.name ?? listingId}` : '',
         sellerId ? `Seller: ${analytics?.filters.sellers.find((item) => String(item.id) === sellerId)?.name ?? sellerId}` : '',
         status ? `Status: ${status.replaceAll('_', ' ')}` : '',
     ].filter(Boolean);
@@ -327,28 +353,63 @@ export function AnalyticsDashboard({ role }: AnalyticsDashboardProps) {
         setRange(dateRange(Number(value)));
     }
 
-    const summaryRows = summary ? [
-        ['Gross sales', currency.format(summary.gross_sales ?? 0)],
-        ['Orders', integer.format(summary.orders ?? 0)],
-        ['Units sold', integer.format(summary.units_sold ?? 0)],
-        ['Average order value', currency.format(summary.average_order_value ?? 0)],
-        ['Fees', currency.format(summary.fees ?? 0)],
-        ['Estimated net payout', summary.net_payout == null ? 'Unavailable' : currency.format(summary.net_payout)],
-        ['Recorded discounts', summary.discounts == null ? 'Unavailable' : currency.format(summary.discounts)],
-        ['Delivered with proof', integer.format(analytics?.delivery_proof_summary?.recorded ?? 0)],
-        ['Delivered missing proof', integer.format(analytics?.delivery_proof_summary?.missing ?? 0)],
+    const printMetricRows = summary ? [
+        ['Gross sales', currency.format(summary.gross_sales ?? 0), 'Completed order subtotal'],
+        ['Orders', integer.format(summary.orders ?? 0), `${integer.format(summary.completed_orders ?? 0)} completed`],
+        ['Units sold', integer.format(summary.units_sold ?? 0), 'Completed orders'],
+        ['Average order value', currency.format(summary.average_order_value ?? 0), 'Completed orders'],
+        ['Fees', summary.fees == null ? 'Unavailable' : currency.format(summary.fees), 'Recorded seller fees'],
+        ['Estimated net payout', summary.net_payout == null ? 'Unavailable' : currency.format(summary.net_payout), 'Sales less recorded seller fees'],
+        ['Recorded discounts', summary.discounts == null ? 'Unavailable' : currency.format(summary.discounts), 'Promotion codes are not recorded'],
+        ['Delivered with proof', integer.format(analytics?.delivery_proof_summary?.recorded ?? 0), 'Proof photo and recipient confirmation saved in the selected date range'],
+        ['Delivered missing proof', integer.format(analytics?.delivery_proof_summary?.missing ?? 0), 'Legacy deliveries may predate the proof requirement'],
+        ['Average fulfillment time', summary.average_fulfillment_hours == null ? 'Unavailable' : `${integer.format(summary.average_fulfillment_hours)} hours`, 'Completed order history'],
+        ['New / returning buyers', `${integer.format(summary.new_customers ?? 0)} / ${integer.format(summary.returning_customers ?? 0)}`, `Repeat purchase rate: ${summary.repeat_purchase_rate == null ? 'Unavailable' : `${summary.repeat_purchase_rate}%`}`],
+        ...(role === 'ADMIN' ? [
+            ['Active sellers / buyers', `${integer.format(summary.active_sellers ?? 0)} / ${integer.format(summary.buyers ?? 0)}`, 'Current marketplace accounts'],
+            ['Active livestock listings', integer.format(summary.products ?? 0), 'Currently active listings'],
+            ['Payment success / failure', summary.payment_success_rate == null ? 'Unavailable' : `${summary.payment_success_rate}% / ${summary.payment_failure_rate}%`, 'Among paid or failed payment attempts'],
+            ['Refunds issued', `${integer.format(summary.refunds_issued_count ?? 0)} · ${currency.format(summary.refunds_issued_amount ?? 0)}`, `${integer.format(summary.refunds_action_required ?? 0)} awaiting return, manual action, or admin reconciliation`],
+        ] : []),
     ] : [];
 
     const charts: AnalyticsChart[] = [
         { title: 'Orders by status', kind: 'bar', values: statusChart, unitLabel: 'Orders · filtered date range', emptyMessage: 'No orders recorded in this date range.' },
-        { title: 'Top products by sales', kind: 'bar', values: productChart, currencyValues: true, unitLabel: 'Sales in Philippine pesos (₱) · units sold shown beside sales', emptyMessage: 'No sales recorded in this date range.' },
+        { title: 'Top livestock listings by sales', kind: 'bar', values: productChart, currencyValues: true, unitLabel: 'Sales in Philippine pesos (₱) · quantity sold shown beside sales', emptyMessage: 'No sales recorded in this date range.' },
         { title: 'Listings by status', kind: 'donut', values: listingStatusChart, unitLabel: 'Current listings by status' },
         { title: 'Listings by category', kind: 'bar', values: categoryChart, unitLabel: 'Current listing count', emptyMessage: 'No listings match this selection.', limit: 6 },
         { title: 'Sales by category', kind: 'donut', values: salesCategoryChart, currencyValues: true, unitLabel: 'Completed sales in Philippine pesos (₱)', emptyMessage: 'No sales recorded in this date range.' },
-        { title: 'Active supply by category', kind: 'bar', values: supplyCategoryChart, unitLabel: 'Available units in active listings', emptyMessage: 'No active supply matches this selection.' },
+        { title: 'Active supply by category', kind: 'bar', values: supplyCategoryChart, unitLabel: 'Available livestock quantity in active listings', emptyMessage: 'No active supply matches this selection.' },
         ...(role === 'ADMIN' ? [{ title: 'Payments by status', kind: 'bar' as const, values: paymentChart, unitLabel: 'Payment count · filtered date range', emptyMessage: 'No payment records in this date range.' }] : []),
     ];
-    const trendTitle = trendMetric === 'revenue' ? 'Gross sales over time' : trendMetric === 'orders' ? 'Orders over time' : 'Units sold over time';
+    const trendTitle = trendMetric === 'revenue' ? 'Gross sales over time' : trendMetric === 'orders' ? 'Orders over time' : 'Livestock quantity sold over time';
+
+    async function printAnalyticsReport() {
+        setPrintError('');
+        setPrinting(true);
+        try {
+            if (role === 'ADMIN') {
+                await api.post('/api/admin/reports/export-audit', {
+                    report_type: 'analytics',
+                    record_count: analytics?.summary.orders ?? 0,
+                    filters: {
+                        from: range.from,
+                        to: range.to,
+                        category_id: categoryId || undefined,
+                        listing_id: listingId || undefined,
+                        seller_id: sellerId || undefined,
+                        status: status || undefined,
+                        sort,
+                    },
+                });
+            }
+            window.print();
+        } catch (requestError: any) {
+            setPrintError(requestError.userMessage ?? 'The analytics report could not be recorded for printing.');
+        } finally {
+            setPrinting(false);
+        }
+    }
 
     return <section className="analytics-dashboard" aria-labelledby="analytics-title">
         <header className="analytics-header">
@@ -362,7 +423,7 @@ export function AnalyticsDashboard({ role }: AnalyticsDashboardProps) {
                 <label>End date<input type="date" value={range.to} onChange={(event) => setRange((current) => ({ ...current, to: event.target.value }))} /></label>
             </>}
             <label>Category<select value={categoryId} onChange={(event) => { setCategoryId(event.target.value); setListingId(''); }}><option value="">All categories</option>{analytics?.filters.categories.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-            <label>Product<select value={listingId} onChange={(event) => setListingId(event.target.value)}><option value="">All products</option>{analytics?.filters.products.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+            <label>Livestock listing<select value={listingId} onChange={(event) => setListingId(event.target.value)}><option value="">All livestock listings</option>{analytics?.filters.products.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
             {role === 'ADMIN' && <label>Seller<select value={sellerId} onChange={(event) => setSellerId(event.target.value)}><option value="">All sellers</option>{analytics?.filters.sellers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
             <label>Order status<select value={status} onChange={(event) => setStatus(event.target.value)}><option value="">All statuses</option>{['PENDING_CONFIRMATION', 'CONFIRMED', 'PREPARING', 'READY_FOR_PICKUP', 'FULFILLING', 'COMPLETED', 'CANCELLED', 'REJECTED'].map((value) => <option key={value} value={value}>{value.replaceAll('_', ' ')}</option>)}</select></label>
         </div>
@@ -385,7 +446,7 @@ export function AnalyticsDashboard({ role }: AnalyticsDashboardProps) {
                 <article><span>New / returning buyers</span><strong>{integer.format(summary?.new_customers ?? 0)} / {integer.format(summary?.returning_customers ?? 0)}</strong><small>Repeat purchase rate: {summary?.repeat_purchase_rate == null ? 'Unavailable' : `${summary.repeat_purchase_rate}%`}</small></article>
                 {role === 'ADMIN' && <>
                     <article><span>Active sellers / buyers</span><strong>{integer.format(summary?.active_sellers ?? 0)} / {integer.format(summary?.buyers ?? 0)}</strong><small>Current marketplace accounts</small></article>
-                    <article><span>Active products</span><strong>{integer.format(summary?.products ?? 0)}</strong><small>Currently active listings</small></article>
+                    <article><span>Active livestock listings</span><strong>{integer.format(summary?.products ?? 0)}</strong><small>Currently active listings</small></article>
                     <article><span>Payment success / failure</span><strong>{summary?.payment_success_rate == null ? 'Unavailable' : `${summary.payment_success_rate}% / ${summary.payment_failure_rate}%`}</strong><small>Among paid or failed payment attempts</small></article>
                     <article><span>Refunds issued</span><strong>{integer.format(summary?.refunds_issued_count ?? 0)} · {currency.format(summary?.refunds_issued_amount ?? 0)}</strong><small>{integer.format(summary?.refunds_action_required ?? 0)} awaiting return, manual action, or admin reconciliation</small></article>
                 </>}
@@ -395,7 +456,7 @@ export function AnalyticsDashboard({ role }: AnalyticsDashboardProps) {
             <div className="analytics-chart-grid">
                 <TrendChart values={analytics.series} metric={trendMetric} onMetricChange={setTrendMetric} onExpand={() => setExpanded({ title: trendTitle, type: 'trend' })} />
                 {charts.map((chart) => {
-                    const productSort = chart.title === 'Top products by sales' ? <ProductSortControl sort={sort} onChange={setSort} /> : undefined;
+                    const productSort = chart.title === 'Top livestock listings by sales' ? <ProductSortControl sort={sort} onChange={setSort} /> : undefined;
                     const onExpand = () => setExpanded({ title: chart.title, type: 'chart', chartKind: chart.kind });
                     return chart.kind === 'donut'
                         ? <DonutChart key={chart.title} title={chart.title} values={chart.values} currencyValues={chart.currencyValues} unitLabel={chart.unitLabel} emptyMessage={chart.emptyMessage} onExpand={onExpand} />
@@ -405,20 +466,20 @@ export function AnalyticsDashboard({ role }: AnalyticsDashboardProps) {
             </div>
             </section>
             <div className="analytics-detail-grid">
-                <div className="analytics-section-heading analytics-details-heading"><p className="eyebrow">Record-level detail</p><h3>Products and inventory</h3><p>Product sales follow the selected period; stock and listing status show current inventory.</p></div>
-                <DataTable title="Top products by sales and quantity" headers={['Product', 'Category', 'Sales', 'Units', 'Date listed']} rows={analytics.products.map((item) => [item.name, item.category, currency.format(item.revenue), integer.format(item.units), new Date(item.listed_at).toLocaleDateString()])} empty="No sales recorded in this date range." headingControl={<ProductSortControl sort={sort} onChange={setSort} />} />
-                <DataTable title="Low stock (3 or fewer units)" headers={['Product', 'Category', 'Available']} rows={analytics.low_stock.map((item) => [item.name, item.category, `${integer.format(item.quantity)} units`])} empty="No low-stock listings." />
-                <DataTable title="Active inventory" headers={['Product', 'Category', 'Available', 'Status']} rows={analytics.inventory.map((item) => [item.name, item.category, `${integer.format(item.quantity)} units`, item.status.replaceAll('_', ' ')])} empty="No active listings in this selection." />
+                <div className="analytics-section-heading analytics-details-heading"><p className="eyebrow">Record-level detail</p><h3>Livestock listings and availability</h3><p>Livestock sales follow the selected period; availability and listing status show current inventory.</p></div>
+                <DataTable title="Top livestock listings by sales and quantity" headers={['Livestock listing', 'Category', 'Sales', 'Quantity sold', 'Date listed']} rows={analytics.products.map((item) => [item.name, item.category, currency.format(item.revenue), integer.format(item.units), new Date(item.listed_at).toLocaleDateString()])} empty="No sales recorded in this date range." headingControl={<ProductSortControl sort={sort} onChange={setSort} />} />
+                <DataTable title="Low livestock availability (3 or fewer units)" headers={['Livestock listing', 'Category', 'Available']} rows={analytics.low_stock.map((item) => [item.name, item.category, `${integer.format(item.quantity)} units`])} empty="No low-availability livestock listings." />
+                <DataTable title="Active livestock listings" headers={['Livestock listing', 'Category', 'Available', 'Status']} rows={analytics.inventory.map((item) => [item.name, item.category, `${integer.format(item.quantity)} units`, item.status.replaceAll('_', ' ')])} empty="No active listings in this selection." />
                 {role === 'ADMIN' && <DataTable title="Seller performance" headers={['Seller', 'Orders', 'Gross sales']} rows={analytics.seller_performance.map((item) => [item.name, integer.format(item.orders), currency.format(item.sales)])} empty="No seller orders in this period." />}
                 {role === 'ADMIN' && analytics.complaints && <DataTable title="Complaints and resolution" headers={['Total', 'Open', 'Resolved', 'Avg. hours to resolve']} rows={[[integer.format(analytics.complaints.total), integer.format(analytics.complaints.open), integer.format(analytics.complaints.resolved), analytics.complaints.average_resolution_hours == null ? 'Unavailable' : integer.format(analytics.complaints.average_resolution_hours)]]} empty="No complaints in this period." />}
                 <DataTable title="Delayed orders (open for 48+ hours)" headers={['Order', 'Status', 'Age', 'Total']} rows={analytics.delayed_orders.map((item) => [item.reference, item.status.replaceAll('_', ' '), `${integer.format(item.age_hours)} hours`, currency.format(item.total)])} empty="No delayed open orders." />
-                <DataTable title="Products declining vs previous equal period" headers={['Product', 'Sales change', 'Unit change']} rows={analytics.declining_products.map((item) => [item.name, currency.format(item.change), integer.format(item.units_change)])} empty="No products have lower sales than the previous equal period." />
+                <DataTable title="Livestock listings declining vs previous equal period" headers={['Livestock listing', 'Sales change', 'Quantity change']} rows={analytics.declining_products.map((item) => [item.name, currency.format(item.change), integer.format(item.units_change)])} empty="No livestock listings have lower sales than the previous equal period." />
             </div>
             <details className="analytics-unavailable"><summary>About this data</summary><p>Some measures are unavailable because FarmGate does not record the underlying events:</p><ul>{Object.values(analytics.unavailable).map((reason) => <li key={reason}>{reason}</li>)}</ul></details>
         </>}
         {expanded && <div className="analytics-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setExpanded(null); }}>
             <section className="analytics-modal" role="dialog" aria-modal="true" aria-labelledby="analytics-chart-full-title">
-                <header><div><h2 id="analytics-chart-full-title">{expanded.type === 'trend' ? trendTitle : expanded.title}</h2><p>{range.from} to {range.to} · {selectedFilterNames.join(' · ') || 'No filters'}{expanded.title === 'Top products by sales' ? ` · Sort products: ${productSortLabels[sort]}` : ''}</p></div><button type="button" onClick={() => setExpanded(null)}>Close</button></header>
+                <header><div><h2 id="analytics-chart-full-title">{expanded.type === 'trend' ? trendTitle : expanded.title}</h2><p>{range.from} to {range.to} · {selectedFilterNames.join(' · ') || 'No filters'}{expanded.title === 'Top livestock listings by sales' ? ` · Sort livestock listings: ${productSortLabels[sort]}` : ''}</p></div><button type="button" onClick={() => setExpanded(null)}>Close</button></header>
                 {expanded.type === 'trend' && <TrendChart values={analytics?.series ?? []} metric={trendMetric} onMetricChange={setTrendMetric} onExpand={() => setExpanded(null)} />}
                 {expanded.type === 'growth' && analytics?.growth_series && <GrowthChart values={analytics.growth_series} onExpand={() => setExpanded(null)} />}
                 {expanded.type === 'chart' && (() => {
@@ -426,32 +487,105 @@ export function AnalyticsDashboard({ role }: AnalyticsDashboardProps) {
                     if (!chart) return null;
                     return chart.kind === 'donut'
                         ? <DonutChart title={chart.title} values={chart.values} currencyValues={chart.currencyValues} unitLabel={chart.unitLabel} emptyMessage={chart.emptyMessage} onExpand={() => setExpanded(null)} />
-                        : <BarChart title={chart.title} values={chart.values} currencyValues={chart.currencyValues} unitLabel={chart.unitLabel} emptyMessage={chart.emptyMessage} limit={undefined} headingControl={chart.title === 'Top products by sales' ? <ProductSortControl sort={sort} onChange={setSort} /> : undefined} onExpand={() => setExpanded(null)} />;
+                        : <BarChart title={chart.title} values={chart.values} currencyValues={chart.currencyValues} unitLabel={chart.unitLabel} emptyMessage={chart.emptyMessage} limit={undefined} headingControl={chart.title === 'Top livestock listings by sales' ? <ProductSortControl sort={sort} onChange={setSort} /> : undefined} onExpand={() => setExpanded(null)} />;
                 })()}
             </section>
         </div>}
         {printPreview && analytics && <div className="analytics-modal-backdrop" role="presentation">
             <section className="analytics-modal analytics-print-preview" role="dialog" aria-modal="true" aria-labelledby="analytics-print-preview-title">
                 <header><div><h2 id="analytics-print-preview-title">Print preview</h2><p>Review the report before printing.</p></div><button type="button" onClick={() => setPrintPreview(false)}>Close</button></header>
-                <div className="analytics-print-report">
-                    <header><strong>FARM<span>GATE</span></strong><h1>{reportTitle}</h1><p>Role: {role} · Date range: {range.from} to {range.to}</p><p>Filters: {selectedFilterNames.join(' · ') || 'None'} · Product sort: {productSortLabels[sort]} · Printed {new Date().toLocaleString()}</p></header>
-                    <h2>Summary</h2><table><tbody>{summaryRows.map((row) => <tr key={row[0]}><th>{row[0]}</th><td>{row[1]}</td></tr>)}</tbody></table>
-                    <h2>Gross sales over time (PHP)</h2><table><thead><tr><th>Date</th><th>Sales</th><th>Orders</th><th>Units</th></tr></thead><tbody>{analytics.series.filter((item) => item.revenue || item.orders || item.units).map((item) => <tr key={item.date}><td>{item.date}</td><td>{currency.format(item.revenue)}</td><td>{integer.format(item.orders)}</td><td>{integer.format(item.units)}</td></tr>)}</tbody></table>
-                    <PrintTrend values={analytics.series} />
-                    <h2>Top products</h2><table><thead><tr><th>Product</th><th>Category</th><th>Sales</th><th>Units</th></tr></thead><tbody>{analytics.products.map((item) => <tr key={item.id}><td>{item.name}</td><td>{item.category}</td><td>{currency.format(item.revenue)}</td><td>{integer.format(item.units)}</td></tr>)}</tbody></table>
-                    <h2>Orders by status</h2><table><thead><tr><th>Status</th><th>Orders</th></tr></thead><tbody>{Object.entries(analytics.order_statuses).map(([key, value]) => <tr key={key}><td>{key.replaceAll('_', ' ')}</td><td>{integer.format(value)}</td></tr>)}</tbody></table>
-                    {role === 'ADMIN' && <><h2>Payments by status</h2><table><thead><tr><th>Payment status</th><th>Transactions</th></tr></thead><tbody>{Object.entries(analytics.payment_statuses).map(([key, value]) => <tr key={key}><td>{key}</td><td>{integer.format(value)}</td></tr>)}</tbody></table></>}
-                    <h2>Low stock (3 or fewer units)</h2><table><thead><tr><th>Product</th><th>Category</th><th>Available</th></tr></thead><tbody>{analytics.low_stock.map((item) => <tr key={item.id}><td>{item.name}</td><td>{item.category}</td><td>{integer.format(item.quantity)}</td></tr>)}</tbody></table>
-                    <h2>Delayed open orders (48+ hours)</h2><table><thead><tr><th>Order</th><th>Status</th><th>Age in hours</th><th>Total</th></tr></thead><tbody>{analytics.delayed_orders.map((item) => <tr key={item.id}><td>{item.reference}</td><td>{item.status.replaceAll('_', ' ')}</td><td>{integer.format(item.age_hours)}</td><td>{currency.format(item.total)}</td></tr>)}</tbody></table>
-                    <footer>FarmGate · Analytics report · Page <span className="analytics-page-number" /></footer>
+        {printError && <p className="analytics-state error" role="alert">{printError}</p>}
+        <div className="analytics-print-report">
+                    <header className="analytics-print-cover">
+                        <div className="analytics-print-brand-row"><strong className="analytics-print-brand">FARM<span>GATE</span></strong><span className="analytics-print-document-type">Business report</span></div>
+                        <h1>{reportTitle}</h1>
+                        <p className="analytics-print-subtitle">Sales, order activity, and livestock inventory</p>
+                        <dl className="analytics-print-meta">
+                            <div><dt>Prepared by</dt><dd>{preparedBy || role}</dd></div>
+                            <div><dt>Report role</dt><dd>{role}</dd></div>
+                            <div><dt>Reporting period</dt><dd>{range.from} to {range.to}</dd></div>
+                            <div><dt>Orders represented</dt><dd>{integer.format(analytics.summary.orders ?? 0)}</dd></div>
+                            <div><dt>Generated</dt><dd>{new Date().toLocaleString()}</dd></div>
+                            <div><dt>Livestock sort</dt><dd>{productSortLabels[sort]}</dd></div>
+                            <div className="analytics-print-meta-wide"><dt>Filters</dt><dd>{selectedFilterNames.join(' · ') || 'None'}</dd></div>
+                        </dl>
+                    </header>
+                    <h2>Dashboard metrics</h2>
+                    <table><thead><tr><th>Metric</th><th>Result</th><th>Basis</th></tr></thead><tbody>{printMetricRows.map(([label, value, note]) => <tr key={label}><th>{label}</th><td>{value}</td><td>{note}</td></tr>)}</tbody></table>
+                    <h2>Performance and inventory mix</h2>
+                    <p className="analytics-print-note">Sales charts use the selected period. Listing and supply charts show current inventory.</p>
+                    <h3>{trendTitle}</h3>
+                    <p className="analytics-print-note">{trendMetric === 'revenue' ? 'Philippine pesos (₱)' : trendMetric === 'orders' ? 'Orders' : 'Units sold'} · daily totals</p>
+                    <table><thead><tr><th>Date</th><th>Gross sales</th><th>Orders</th><th>Livestock quantity</th></tr></thead><tbody>{analytics.series.map((item) => <tr key={item.date}><td>{item.date}</td><td>{currency.format(item.revenue)}</td><td>{integer.format(item.orders)}</td><td>{integer.format(item.units)}</td></tr>)}</tbody></table>
+                    {analytics.series.some((item) => item[trendMetric] > 0) ? <PrintTrend values={analytics.series} metric={trendMetric} /> : <p className="analytics-print-note">{trendMetric === 'revenue' ? 'No sales recorded in this date range.' : `No ${trendMetric === 'orders' ? 'orders' : 'livestock quantity'} in this date range.`}</p>}
+                    {charts.map((chart) => <section className="analytics-print-data-section" key={chart.title}>
+                        <h3>{chart.title}</h3>
+                        {chart.unitLabel && <p className="analytics-print-note">{chart.unitLabel}</p>}
+                        {chart.values.length ? <table>
+                            <thead><tr><th>{chart.kind === 'donut' ? 'Category / status' : 'Item'}</th><th>{chart.currencyValues ? 'Sales' : 'Count / quantity'}</th>{chart.kind === 'donut' && <th>Share</th>}</tr></thead>
+                            <tbody>{chart.values.map((item) => {
+                                const total = chart.values.reduce((sum, entry) => sum + entry.value, 0);
+                                return <tr key={item.label}><td>{item.label}</td><td>{chartValue(item, chart.currencyValues ?? false)}</td>{chart.kind === 'donut' && <td>{total ? `${(item.value / total * 100).toFixed(1)}%` : '0%'}</td>}</tr>;
+                            })}</tbody>
+                        </table> : <p className="analytics-print-note">{chart.emptyMessage ?? `No ${chart.title.toLowerCase()} data for this selection.`}</p>}
+                    </section>)}
+                    {role === 'ADMIN' && analytics.growth_series && <section className="analytics-print-data-section">
+                        <h3>Marketplace activity over time</h3>
+                        <table><thead><tr><th>Date</th><th>Sellers</th><th>Buyers</th><th>Listings</th><th>Orders</th></tr></thead><tbody>{analytics.growth_series.map((item) => <tr key={item.date}><td>{item.date}</td><td>{integer.format(item.sellers)}</td><td>{integer.format(item.buyers)}</td><td>{integer.format(item.listings)}</td><td>{integer.format(item.orders)}</td></tr>)}</tbody></table>
+                    </section>}
+                    <h2>Record-level detail</h2>
+                    <p className="analytics-print-note">Livestock sales follow the selected period; availability and listing status show current inventory.</p>
+                    <section className="analytics-print-data-section"><h3>Top livestock listings by sales and quantity</h3>
+                        {analytics.products.length ? <table><thead><tr><th>Livestock listing</th><th>Category</th><th>Sales</th><th>Quantity sold</th><th>Date listed</th></tr></thead><tbody>{analytics.products.map((item) => <tr key={item.id}><td>{item.name}</td><td>{item.category}</td><td>{currency.format(item.revenue)}</td><td>{integer.format(item.units)}</td><td>{new Date(item.listed_at).toLocaleDateString()}</td></tr>)}</tbody></table> : <p className="analytics-print-note">No sales recorded in this date range.</p>}
+                    </section>
+                    <section className="analytics-print-data-section"><h3>Low livestock availability (3 or fewer units)</h3>
+                        {analytics.low_stock.length ? <table><thead><tr><th>Livestock listing</th><th>Category</th><th>Available</th></tr></thead><tbody>{analytics.low_stock.map((item) => <tr key={item.id}><td>{item.name}</td><td>{item.category}</td><td>{integer.format(item.quantity)} units</td></tr>)}</tbody></table> : <p className="analytics-print-note">No low-availability livestock listings.</p>}
+                    </section>
+                    <section className="analytics-print-data-section"><h3>Active livestock listings</h3>
+                        {analytics.inventory.length ? <table><thead><tr><th>Livestock listing</th><th>Category</th><th>Available</th><th>Status</th></tr></thead><tbody>{analytics.inventory.map((item) => <tr key={item.id}><td>{item.name}</td><td>{item.category}</td><td>{integer.format(item.quantity)} units</td><td>{item.status.replaceAll('_', ' ')}</td></tr>)}</tbody></table> : <p className="analytics-print-note">No active listings in this selection.</p>}
+                    </section>
+                    {role === 'ADMIN' && <section className="analytics-print-data-section"><h3>Seller performance</h3>
+                        {analytics.seller_performance.length ? <table><thead><tr><th>Seller</th><th>Orders</th><th>Gross sales</th></tr></thead><tbody>{analytics.seller_performance.map((item) => <tr key={item.id}><td>{item.name}</td><td>{integer.format(item.orders)}</td><td>{currency.format(item.sales)}</td></tr>)}</tbody></table> : <p className="analytics-print-note">No seller orders in this period.</p>}
+                    </section>}
+                    {role === 'ADMIN' && analytics.complaints && <section className="analytics-print-data-section"><h3>Complaints and resolution</h3>
+                        <table><thead><tr><th>Total</th><th>Open</th><th>Resolved</th><th>Average hours to resolve</th></tr></thead><tbody><tr><td>{integer.format(analytics.complaints.total)}</td><td>{integer.format(analytics.complaints.open)}</td><td>{integer.format(analytics.complaints.resolved)}</td><td>{analytics.complaints.average_resolution_hours == null ? 'Unavailable' : integer.format(analytics.complaints.average_resolution_hours)}</td></tr></tbody></table>
+                    </section>}
+                    <section className="analytics-print-data-section"><h3>Delayed orders (open for 48+ hours)</h3>
+                        {analytics.delayed_orders.length ? <table><thead><tr><th>Order</th><th>Status</th><th>Age</th><th>Total</th></tr></thead><tbody>{analytics.delayed_orders.map((item) => <tr key={item.id}><td>{item.reference}</td><td>{item.status.replaceAll('_', ' ')}</td><td>{integer.format(item.age_hours)} hours</td><td>{currency.format(item.total)}</td></tr>)}</tbody></table> : <p className="analytics-print-note">No delayed open orders.</p>}
+                    </section>
+                    <section className="analytics-print-data-section"><h3>Livestock listings declining vs previous equal period</h3>
+                        {analytics.declining_products.length ? <table><thead><tr><th>Livestock listing</th><th>Sales change</th><th>Quantity change</th></tr></thead><tbody>{analytics.declining_products.map((item) => <tr key={item.id}><td>{item.name}</td><td>{currency.format(item.change)}</td><td>{integer.format(item.units_change)}</td></tr>)}</tbody></table> : <p className="analytics-print-note">No livestock listings have lower sales than the previous equal period.</p>}
+                    </section>
+                    <section className="analytics-print-data-section"><h3>About this data</h3><p className="analytics-print-note">Some measures are unavailable because FarmGate does not record the underlying events:</p><ul>{Object.values(analytics.unavailable).map((reason) => <li key={reason}>{reason}</li>)}</ul></section>
+                    <section className="analytics-print-signatures" aria-labelledby="analytics-print-signatures-title">
+                        <div className="analytics-print-signatures-heading"><div><h2 id="analytics-print-signatures-title">Review and acknowledgment</h2><p>Complete by hand on the printed copy, where required.</p></div><span>Report record</span></div>
+                        <div className="analytics-print-signature-grid">
+                            <div className="analytics-print-signature">
+                                <span className="analytics-print-signature-role">Prepared by</span>
+                                <div className="analytics-print-signature-line" aria-hidden="true"></div>
+                                <strong>{preparedBy || role}</strong>
+                                <span>Printed name · {role}</span>
+                                <div className="analytics-print-date-line"><span>Signature</span><span>Date</span></div>
+                            </div>
+                            <div className="analytics-print-signature">
+                                <span className="analytics-print-signature-role">Reviewed by (optional)</span>
+                                <div className="analytics-print-signature-line" aria-hidden="true"></div>
+                                <strong className="analytics-print-blank">Name and title</strong>
+                                <span>Authorized reviewer</span>
+                                <div className="analytics-print-date-line"><span>Signature</span><span>Date</span></div>
+                            </div>
+                        </div>
+                        <p className="analytics-print-signature-note">A typed name is not a verified electronic signature. Review or signature does not change the underlying Farmgate records.</p>
+                    </section>
+                    <footer><span>FARMGATE · {reportTitle}</span><span>Generated {new Date().toISOString()}</span></footer>
                 </div>
-                <div className="analytics-print-actions"><button type="button" onClick={() => window.print()}>Print report</button></div>
+                <div className="analytics-print-actions"><button type="button" disabled={printing} onClick={() => void printAnalyticsReport()}>{printing ? 'Preparing report...' : 'Print report'}</button></div>
             </section>
         </div>}
         {analysisOpen && analytics && <div className="analytics-modal-backdrop">
             <section className="analytics-modal analytics-ai-modal" role="dialog" aria-modal="true" aria-labelledby="analytics-ai-title">
                 <header><div><h2 id="analytics-ai-title">Analyze selected report with AI</h2><p>{range.from} to {range.to} · {selectedFilterNames.join(' · ')}</p></div><button type="button" onClick={() => setAnalysisOpen(false)}>Close</button></header>
-                <AIChatPage role={role} reportContext={{ type: 'sales', title: `${reportTitle} (${selectedFilterNames.join(', ') || 'all products'})`, from: range.from, to: range.to, status: status || undefined, category_id: categoryId ? Number(categoryId) : undefined, listing_id: listingId ? Number(listingId) : undefined, seller_id: role === 'ADMIN' && sellerId ? Number(sellerId) : undefined } satisfies ChatReportContext} />
+                <AIChatPage role={role} onOpenOrder={onOpenOrder} reportContext={{ type: 'sales', title: `${reportTitle} (${selectedFilterNames.join(', ') || 'all livestock listings'})`, from: range.from, to: range.to, status: status || undefined, category_id: categoryId ? Number(categoryId) : undefined, listing_id: listingId ? Number(listingId) : undefined, seller_id: role === 'ADMIN' && sellerId ? Number(sellerId) : undefined } satisfies ChatReportContext} />
             </section>
         </div>}
     </section>;

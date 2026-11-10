@@ -1,7 +1,7 @@
 export type CsvColumn<Row> = {
     header: string;
     value: keyof Row | ((row: Row) => unknown);
-    format?: 'number' | 'dateTime' | 'status' | 'boolean';
+    format?: 'number' | 'currency' | 'dateTime' | 'status' | 'boolean';
 };
 
 type CsvWritable = {
@@ -37,7 +37,7 @@ function toCellText(value: unknown, format?: CsvColumn<unknown>['format']): stri
         if (value === false || value === 0 || value === '0' || value === 'false') return 'No';
         return '';
     }
-    if (format === 'number') {
+    if (format === 'number' || format === 'currency') {
         const numericText = typeof value === 'string' ? value.trim() : String(value);
         return /^[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[-+]?\d+)?$/i.test(numericText) ? numericText : '';
     }
@@ -82,19 +82,14 @@ function escapeCsvCell(value: unknown, format?: CsvColumn<unknown>['format']): s
 export function createCsvContent<Row>(
     rows: readonly Row[],
     columns: readonly CsvColumn<Row>[],
-    metadata: readonly (readonly unknown[])[] = [],
 ): string {
-    return `${createCsvPreamble(columns, metadata)}${createCsvRows(rows, columns)}`;
+    return `${createCsvPreamble(columns)}${createCsvRows(rows, columns)}`;
 }
 
-export function createCsvPreamble<Row>(
-    columns: readonly CsvColumn<Row>[],
-    metadata: readonly (readonly unknown[])[] = [],
-): string {
-    const metadataRows = metadata.map((row) => row.map((value) => escapeCsvCell(value)).join(','));
+export function createCsvPreamble<Row>(columns: readonly CsvColumn<Row>[]): string {
     const header = columns.map((column) => escapeCsvCell(column.header)).join(',');
 
-    return `\uFEFF${[...metadataRows, header].join('\r\n')}\r\n`;
+    return `\uFEFF${header}\r\n`;
 }
 
 export function createCsvRows<Row>(rows: readonly Row[], columns: readonly CsvColumn<Row>[]): string {
@@ -143,9 +138,8 @@ export function downloadCsv<Row>(
     filename: string,
     rows: readonly Row[],
     columns: readonly CsvColumn<Row>[],
-    metadata: readonly (readonly unknown[])[] = [],
 ): void {
-    const blob = new Blob([createCsvContent(rows, columns, metadata)], { type: 'text/csv;charset=utf-8' });
+    const blob = new Blob([createCsvContent(rows, columns)], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;

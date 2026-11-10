@@ -50,7 +50,7 @@ export function DeliveryProofSummary({ deliveryId, hasProof, recipientConfirmed,
                 </button>
                 {loading && <p role="status">Loading private photo…</p>}
                 {error && <p role="alert">{error}</p>}
-                {expanded && imageUrl && <img className="delivery-proof-image" src={imageUrl} alt={`Delivery proof for delivery ${deliveryId}`} />}
+                {expanded && imageUrl && <img className="delivery-proof-image" src={imageUrl} alt="Private delivery proof photo" />}
             </>}
     </section>;
 }

@@ -14,10 +14,11 @@ import { SellerOrdersPage } from './SellerOrdersPage';
 import { SellerPromotions } from './SellerPromotions';
 import { NotificationsPage } from '../buyer/NotificationsPage';
 import { NavigationBadge, navigationBadgeLabel } from '../../shared/components/NavigationBadge';
+import { SellerPayouts } from './SellerPayouts';
 
 const LocationMap = React.lazy(() => import('../../shared/components/LocationMap').then((module) => ({ default: module.LocationMap })));
 
-type SellerPage = 'dashboard' | 'orders' | 'notifications' | 'listings' | 'promotions' | 'interests' | 'complaints' | 'reviews' | 'reports' | 'chats' | 'location' | 'account';
+type SellerPage = 'dashboard' | 'orders' | 'payouts' | 'notifications' | 'listings' | 'promotions' | 'interests' | 'complaints' | 'reviews' | 'reports' | 'chats' | 'location' | 'account';
 type SellerSettingsTab = 'profile' | 'password' | 'phone' | 'preferences' | 'pickup';
 type SellerNavigationBadge = 'orders' | 'notifications' | 'complaints' | 'chats';
 type SellerAccountPreference = 'order_notifications' | 'chat_notifications' | 'allow_direct_messages';
@@ -36,6 +37,7 @@ type SellerSummary = {
     sales_this_month: string;
     completed_orders: number;
     pending_orders: number;
+    orders_needing_confirmation: number;
     active_listings: number;
     sold_listings: number;
     interested_buyers: number;
@@ -69,11 +71,12 @@ type SellerListing = Listing & {
     vaccination_information?: string | null;
 };
 type ListingSortColumn = 'name' | 'category' | 'price' | 'quantity' | 'status';
-type SellerInterest = { id: number; status: string; buyer?: { name: string }; listing?: { name: string } };
+type SellerInterest = { id: number; status: string; created_at: string; buyer?: { name: string }; listing?: { name: string } };
 
 const navigation: { id: SellerPage; label: string; icon: string; badge?: SellerNavigationBadge }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: '◈' },
     { id: 'orders', label: 'Orders', icon: '▣', badge: 'orders' },
+    { id: 'payouts', label: 'Payouts', icon: '₱' },
     { id: 'notifications', label: 'Notifications', icon: '', badge: 'notifications' },
     { id: 'listings', label: 'My listings', icon: '▤' },
     { id: 'promotions', label: 'Promotions', icon: '％' },
@@ -87,7 +90,9 @@ const navigation: { id: SellerPage; label: string; icon: string; badge?: SellerN
 const interestStatuses = ['INTERESTED', 'CONTACTED', 'NEGOTIATING', 'PURCHASED', 'CLOSED'];
 
 export function SellerWorkspace({ categories, error, user, onError, onUserUpdated, onLogout }: SellerWorkspaceProps) {
-    const [page, setPage] = React.useState<SellerPage>('dashboard');
+    const [page, setPage] = React.useState<SellerPage>(() => window.location.hash === '#notifications' ? 'notifications' : 'dashboard');
+    const [notificationCaseReference, setNotificationCaseReference] = React.useState<string | null>(null);
+    const [notificationOrderId, setNotificationOrderId] = React.useState<number | null>(null);
     const [settingsTab, setSettingsTab] = React.useState<SellerSettingsTab>('profile');
     const [navigationCounts, setNavigationCounts] = React.useState<Record<SellerNavigationBadge, number>>({
         orders: 0,
@@ -145,13 +150,26 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
         allow_direct_messages: true,
     });
     const [initialChatConversationId, setInitialChatConversationId] = React.useState<number | null>(null);
-    const clearSellerNotificationBadge = React.useCallback(() => {
-        setNavigationCounts((counts) => ({ ...counts, notifications: 0 }));
-    }, []);
+    const [notificationListingId, setNotificationListingId] = React.useState<number | null>(null);
+    React.useEffect(() => {
+        if (page !== 'dashboard') return;
+        document.body.classList.add('seller-dashboard-open');
 
-    const refreshNavigationCounts = React.useCallback(async () => {
+        return () => document.body.classList.remove('seller-dashboard-open');
+    }, [page]);
+
+    const refreshNavigationCounts = React.useCallback(async (notificationCounts?: { unread_count: number; unread_chat_count: number }) => {
+        if (notificationCounts) {
+            setNavigationCounts((counts) => ({
+                ...counts,
+                notifications: notificationCounts.unread_count,
+                chats: notificationCounts.unread_chat_count,
+            }));
+            return;
+        }
+
         const results = await Promise.allSettled([
-            api.get<{ summary: Pick<SellerSummary, 'pending_orders'> }>('/api/dashboard/seller'),
+            api.get<{ summary: Pick<SellerSummary, 'orders_needing_confirmation'> }>('/api/dashboard/seller'),
             api.get<{ unread_count: number; unread_chat_count: number }>('/api/notifications'),
             api.get<{ action_required_total: number }>('/api/seller/complaints'),
         ]);
@@ -159,9 +177,9 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
 
         const [ordersResult, notificationsResult, complaintsResult] = results;
         if (ordersResult.status === 'fulfilled') {
-            const pendingOrders = ordersResult.value.data?.summary?.pending_orders;
-            if (typeof pendingOrders === 'number' && Number.isFinite(pendingOrders)) {
-                setNavigationCounts((counts) => ({ ...counts, orders: pendingOrders }));
+            const ordersNeedingConfirmation = ordersResult.value.data?.summary?.orders_needing_confirmation;
+            if (typeof ordersNeedingConfirmation === 'number' && Number.isFinite(ordersNeedingConfirmation)) {
+                setNavigationCounts((counts) => ({ ...counts, orders: ordersNeedingConfirmation }));
             } else {
                 errors.push('Order attention count could not be loaded.');
             }
@@ -192,6 +210,16 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
 
         if (errors.length) onError(errors.join(' '));
     }, [onError]);
+    const clearSellerNotificationBadge = refreshNavigationCounts;
+
+    React.useEffect(() => {
+        const handleHashChange = () => {
+            if (window.location.hash === '#notifications') setPage('notifications');
+        };
+        window.addEventListener('hashchange', handleHashChange);
+
+        return () => window.removeEventListener('hashchange', handleHashChange);
+    }, []);
 
     React.useEffect(() => {
         setPhoneNumber(user.phone_number ?? '');
@@ -241,11 +269,37 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
 
     React.useEffect(() => {
         if (page !== 'dashboard') return;
+        let active = true;
+        let refreshing = false;
         setSummaryLoading(true);
-        api.get<{ summary: SellerSummary }>('/api/dashboard/seller')
-            .then((response) => setSummary(response.data.summary))
-            .catch(() => onError('The seller dashboard could not be loaded.'))
-            .finally(() => setSummaryLoading(false));
+
+        const refresh = () => {
+            if (!active || refreshing || document.visibilityState === 'hidden') return;
+            refreshing = true;
+            api.get<{ summary: SellerSummary }>('/api/dashboard/seller')
+                .then((response) => {
+                    if (active) setSummary(response.data.summary);
+                })
+                .catch(() => {
+                    if (active) onError('The seller dashboard could not be loaded.');
+                })
+                .finally(() => {
+                    refreshing = false;
+                    if (active) setSummaryLoading(false);
+                });
+        };
+
+        refresh();
+        const interval = window.setInterval(refresh, 30000);
+        window.addEventListener('focus', refresh);
+        document.addEventListener('visibilitychange', refresh);
+
+        return () => {
+            active = false;
+            window.clearInterval(interval);
+            window.removeEventListener('focus', refresh);
+            document.removeEventListener('visibilitychange', refresh);
+        };
     }, [onError, page]);
 
     React.useEffect(() => {
@@ -562,21 +616,31 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
 
     function renderPage() {
         if (page === 'orders') {
-            return <SellerOrdersPage onNavigationCountsChanged={refreshNavigationCounts} />;
+            return <SellerOrdersPage
+                onNavigationCountsChanged={refreshNavigationCounts}
+                initialOrderId={notificationOrderId}
+                onInitialOrderHandled={() => setNotificationOrderId(null)}
+            />;
         }
+        if (page === 'payouts') return <SellerPayouts onError={onError} />;
         if (page === 'notifications') {
             return <NotificationsPage
                 role="SELLER"
                 onNotificationsRead={clearSellerNotificationBadge}
+                onOpenOrder={(orderId) => { setNotificationOrderId(orderId); setPage('orders'); }}
+                onOpenCase={(_, caseReference) => { setNotificationCaseReference(caseReference ?? null); setPage('complaints'); }}
+                onOpenReview={() => setPage('reviews')}
+                onOpenListing={(listingId) => { setNotificationListingId(listingId); setListingSearch(String(listingId)); setListingPage(1); setPage('listings'); }}
                 onOpenConversation={(conversationId) => {
                     setInitialChatConversationId(conversationId);
                     setPage('chats');
                 }}
+                onOpenEvent={(eventId) => { window.location.hash = `calendar/event/${eventId}`; setPage('promotions'); }}
             />;
         }
         if (page === 'dashboard') {
             return <>
-                <AnalyticsDashboard role="SELLER" />
+                <AnalyticsDashboard role="SELLER" preparedBy={user.name} onOpenOrder={(orderId) => { setNotificationOrderId(orderId); setPage('orders'); }} />
                 <section className="seller-work-section">
                     <div className="seller-work-heading"><div><p className="eyebrow">Recent activity</p><h2>Latest orders</h2></div><button type="button" className="seller-inline-action" onClick={() => setPage('reports')}>View reports</button></div>
                     {summaryLoading ? <p className="seller-loading">Loading order activity...</p> : summary?.recent_orders.length ? <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Order</th><th>Status</th><th>Delivery</th><th>Proof</th><th>Order date</th><th>Total</th></tr></thead><tbody>{summary.recent_orders.map((order) => <tr key={order.id}><td><strong>{order.order_reference}</strong></td><td><span className="status-pill">{order.status}</span></td><td>{order.delivery?.status?.replaceAll('_', ' ') ?? 'Not assigned'}</td><td>{order.delivery?.has_delivery_proof ? `Recorded · ${order.delivery.proof_captured_at ? new Date(order.delivery.proof_captured_at).toLocaleString() : 'time unavailable'}` : order.delivery?.status === 'DELIVERED' ? 'Missing' : 'Pending'}</td><td>{new Date(order.created_at).toLocaleDateString()}</td><td>PHP {order.total_amount}</td></tr>)}</tbody></table></div> : <p className="seller-empty">No orders have been placed yet.</p>}
@@ -645,7 +709,7 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
                         const cancellable = ['ACTIVE', 'PENDING_REVIEW'].includes(listing.status);
                         const busy = listingActionId === listing.id;
                         const price = listing.pricing_type === 'PER_KILO' ? listing.price_per_kilo : listing.price_per_head;
-                        return <tr key={listing.id}>
+                        return <tr key={listing.id} className={listing.id === notificationListingId ? 'seller-listing-notification-target' : undefined} aria-current={listing.id === notificationListingId ? 'true' : undefined}>
                             <td data-label="Listing"><strong>{listing.name}</strong></td>
                             <td data-label="Category">{listing.category.name}</td>
                             <td data-label="Price">PHP {Number(price ?? 0).toLocaleString()} / {listing.pricing_type === 'PER_KILO' ? 'kg' : 'head'}</td>
@@ -663,21 +727,21 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
             </section>;
         }
         if (page === 'promotions') return <SellerPromotions onError={onError} />;
-
         if (page === 'interests') {
             return <section className="seller-work-section">
                 <div className="seller-work-heading"><div><p className="eyebrow">Sales pipeline</p><h2>Buyer interest</h2></div></div>
-                {interestLoading ? <p className="seller-loading">Loading buyer interest...</p> : interests.length ? <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Buyer</th><th>Listing</th><th>Received</th><th>Interest status</th></tr></thead><tbody>{interests.map((interest) => <tr key={interest.id}><td>{interest.buyer?.name ?? 'Buyer'}</td><td><strong>{interest.listing?.name ?? 'Listing'}</strong></td><td><span className="status-pill">#{interest.id}</span></td><td><label className="seller-status-control"><span className="sr-only">Update interest status for {interest.buyer?.name ?? 'buyer'}</span><select value={interest.status} onChange={(event) => updateInterest(interest, event.target.value)}>{interestStatuses.map((status) => <option key={status} value={status}>{status.replaceAll('_', ' ')}</option>)}</select></label></td></tr>)}</tbody></table></div> : <p className="seller-empty">No buyers have expressed interest in your listings yet.</p>}
+                {interestLoading ? <p className="seller-loading">Loading buyer interest...</p> : interests.length ? <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Buyer</th><th>Listing</th><th>Received</th><th>Interest status</th></tr></thead><tbody>{interests.map((interest) => <tr key={interest.id}><td>{interest.buyer?.name ?? 'Buyer'}</td><td><strong>{interest.listing?.name ?? 'Listing'}</strong></td><td>{new Date(interest.created_at).toLocaleDateString()}</td><td><label className="seller-status-control"><span className="sr-only">Update interest status for {interest.buyer?.name ?? 'buyer'}</span><select value={interest.status} onChange={(event) => updateInterest(interest, event.target.value)}>{interestStatuses.map((status) => <option key={status} value={status}>{status.replaceAll('_', ' ')}</option>)}</select></label></td></tr>)}</tbody></table></div> : <p className="seller-empty">No buyers have expressed interest in your listings yet.</p>}
                 <Pagination page={interestPage} lastPage={interestLastPage} onChange={setInterestPage} />
             </section>;
         }
 
-        if (page === 'complaints') return <ComplaintList onError={onError} />;
+        if (page === 'complaints') return <ComplaintList onError={onError} initialCaseReference={notificationCaseReference} onInitialCaseHandled={() => setNotificationCaseReference(null)} />;
         if (page === 'reviews') return <ReviewList onError={onError} />;
         if (page === 'chats') return <AIChatPage
             role="SELLER"
             reportContext={reportContext}
             initialConversationId={initialChatConversationId ?? undefined}
+            onOpenOrder={(orderId) => { setNotificationOrderId(orderId); setPage('orders'); }}
             onUnreadMessagesRead={() => {
                 setInitialChatConversationId(null);
                 void refreshNavigationCounts();
@@ -786,20 +850,20 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
                 </section>
             </section>
         </section>;
-        return <ReportPanel role="SELLER" onError={onError} onAnalyze={analyzeReport} />;
+        return <ReportPanel role="SELLER" preparedBy={user.name} onError={onError} onAnalyze={analyzeReport} />;
     }
 
     const activeNavigation = navigation.find((item) => item.id === page) ?? (page === 'location' ? navigation.find((item) => item.id === 'account') : undefined);
     const pageTitle = page === 'location' || page === 'account' ? 'Settings' : activeNavigation?.label ?? (page === 'interests' ? 'Buyer interest' : '');
 
-    return <main className="admin-shell seller-shell">
+    return <main className={`admin-shell seller-shell${page === 'dashboard' ? ' seller-dashboard-open' : ''}`}>
         <aside className="admin-sidebar">
             <a className="brand" href="/">FARM<span>GATE</span></a>
             <div className="admin-sidebar-label">SELLER PORTAL</div>
             <nav aria-label="Seller navigation">{navigation.map((item) => {
                 const badgeCount = item.badge ? navigationCounts[item.badge] : 0;
                 const badgeDescription = item.badge === 'orders'
-                    ? navigationBadgeLabel(badgeCount, 'order needing attention', 'orders needing attention')
+                    ? navigationBadgeLabel(badgeCount, 'order awaiting confirmation', 'orders awaiting confirmation')
                     : item.badge === 'notifications'
                         ? navigationBadgeLabel(badgeCount, 'unread notification', 'unread notifications')
                         : item.badge === 'complaints'
@@ -808,14 +872,18 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
                                 ? navigationBadgeLabel(badgeCount, 'unread message', 'unread messages')
                                 : '';
                 const selected = page === item.id || (page === 'location' && item.id === 'account');
-                return <button type="button" key={item.id} className={selected ? 'active' : ''} aria-current={selected ? 'page' : undefined} aria-label={badgeCount > 0 ? `${item.label}, ${badgeDescription}` : item.label} title={badgeCount > 0 ? `${item.label}, ${badgeDescription}` : item.label} onClick={() => { setPage(item.id); setNotice(null); }}><span className="nav-icon" aria-hidden="true">{item.id === 'notifications' ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg> : item.icon}</span><span className="seller-nav-label">{item.label}</span><NavigationBadge count={badgeCount} /></button>;
+                return <button type="button" key={item.id} className={selected ? 'active' : ''} aria-current={selected ? 'page' : undefined} aria-label={badgeCount > 0 ? `${item.label}, ${badgeDescription}${item.badge === 'orders' ? '. Separate from unread notifications.' : ''}` : item.label} title={badgeCount > 0 ? `${item.label}, ${badgeDescription}${item.badge === 'orders' ? ' (separate from unread notifications)' : ''}` : item.label} onClick={() => { setPage(item.id); setNotice(null); }}><span className="nav-icon" aria-hidden="true">{item.id === 'notifications' ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg> : item.icon}</span><span className="seller-nav-label">{item.label}</span>{item.badge === 'orders' && badgeCount > 0
+                    ? <span className="seller-orders-pending-badge" aria-hidden="true">{badgeCount > 99 ? '99+' : Math.floor(badgeCount)} pending</span>
+                    : <NavigationBadge count={badgeCount} />}</button>;
             })}</nav>
             <button className="sidebar-logout" type="button" onClick={onLogout}>Log out <span>↗</span></button>
         </aside>
-        <section className="admin-content seller-content">
+        <section className={`admin-content seller-content${page === 'dashboard' ? ' seller-content-dashboard' : ''}`}>
             <header className="admin-header"><div><p className="eyebrow">FARMGATE seller workspace</p><h1>{pageTitle}</h1><p>Manage your listings, orders, and buyer relationships.</p></div><span className="admin-role">SELLER</span></header>
-            {error && <p className="seller-error" role="alert">{error}</p>}
-            {renderPage()}
+            <div className={page === 'dashboard' ? 'seller-dashboard-scroll' : undefined} tabIndex={page === 'dashboard' ? 0 : undefined} aria-label={page === 'dashboard' ? 'Seller dashboard content' : undefined}>
+                {error && <p className="seller-error" role="alert">{error}</p>}
+                {renderPage()}
+            </div>
         </section>
     </main>;
 }

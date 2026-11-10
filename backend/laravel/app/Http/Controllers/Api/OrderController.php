@@ -47,20 +47,37 @@ class OrderController extends Controller
 
         $query = Order::query()->with(['items.listing', 'statusHistory', 'delivery.rider:id,name']);
         $query->where($user->role === Role::BUYER ? 'buyer_id' : 'seller_id', $user->id);
-        if ($user->role === Role::SELLER) {
+        if ($user->role === Role::BUYER) {
+            $query->with(['seller:id,name', 'codCollection.remittance']);
+        } else {
             $query->with('buyer:id,name');
         }
         $orders = $query->latest()->get();
 
         if ($user->role === Role::BUYER) {
-            foreach ($orders as $order) {
-                $canCancel = OrderWorkflowService::buyerCanCancel($order->status);
-
-                $order->setAttribute('buyer_can_cancel', $canCancel);
-                if ($order->status === OrderStatus::FULFILLING) {
+            $orders = $orders->map(function (Order $order): array {
+                $order->setAttribute('cod_payment', $this->codPaymentSummary($order));
+                $order->unsetRelation('codCollection');
+                $rawStatus = (string) $order->getRawOriginal('status');
+                $status = OrderStatus::tryFrom($rawStatus);
+                $order->setAttribute('buyer_can_cancel', $status !== null && OrderWorkflowService::buyerCanCancel($status));
+                if ($rawStatus === OrderStatus::FULFILLING->value) {
                     $order->setAttribute('buyer_cancellation_blocked_reason', 'This order is on the way and can no longer be cancelled.');
                 }
-            }
+
+                $deliveryStatus = $order->delivery?->getRawOriginal('status');
+                $order->makeHidden('status');
+                if ($order->delivery) {
+                    $order->delivery->makeHidden('status');
+                }
+                $payload = $order->toArray();
+                $payload['status'] = $rawStatus;
+                if (isset($payload['delivery']) && $deliveryStatus !== null) {
+                    $payload['delivery']['status'] = $deliveryStatus;
+                }
+
+                return $payload;
+            });
         }
 
         return response()->json(['orders' => $orders]);
@@ -81,9 +98,17 @@ class OrderController extends Controller
         ];
         if ($request->user()->role === Role::SELLER) {
             $relations[] = 'buyer:id,name';
+        } else {
+            $relations[] = 'codCollection.remittance';
         }
 
-        return response()->json(['order' => $order->load($relations)]);
+        $order->load($relations);
+        if ($request->user()->role === Role::BUYER) {
+            $order->setAttribute('cod_payment', $this->codPaymentSummary($order));
+            $order->unsetRelation('codCollection');
+        }
+
+        return response()->json(['order' => $order]);
     }
 
     public function requestUpdate(Request $request, Order $order): JsonResponse
@@ -165,5 +190,27 @@ class OrderController extends Controller
                 || ($user->role === Role::SELLER && $order->seller_id === $user->id),
             403,
         );
+    }
+
+    /**
+     * @return array{amount_due: string, status: string, collection_status: string|null, remittance_status: string|null}|null
+     */
+    private function codPaymentSummary(Order $order): ?array
+    {
+        if ($order->payment_method !== 'COD') {
+            return null;
+        }
+
+        $collection = $order->codCollection;
+        $remittance = $collection?->remittance;
+
+        return [
+            'amount_due' => (string) $order->total_amount,
+            'status' => $order->payment_status === 'PAID'
+                ? 'PAID'
+                : ($collection ? 'AWAITING_CONFIRMATION' : 'UNPAID'),
+            'collection_status' => $collection?->status,
+            'remittance_status' => $remittance?->status,
+        ];
     }
 }

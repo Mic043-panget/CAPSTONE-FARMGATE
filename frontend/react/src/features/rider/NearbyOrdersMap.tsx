@@ -11,6 +11,7 @@ export type NearbyOrder = {
     expires_at: string | null;
     delivery: {
         id: number;
+        delivery_reference: string;
         pickup_area: string;
         pickup_latitude_approximate: number | null;
         pickup_longitude_approximate: number | null;

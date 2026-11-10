@@ -1,9 +1,11 @@
 import React from 'react';
+import { ViewDetailsAction } from '../../shared/components/Button';
 import api, { initializeCsrf } from '../../lib/api';
 import { Pagination } from '../../shared/components/Pagination';
 import { TabNav } from '../../shared/components/TabNav';
 import { useDebouncedValue } from '../../shared/hooks/useDebouncedValue';
 import { showSuccess } from '../../lib/alerts';
+import { FarmgateDetailDialog } from '../shared/FarmgateDetailDialog';
 
 type RiderDocument = {
     id: number;
@@ -24,35 +26,52 @@ type History = {
 };
 type Application = {
     id: number;
+    application_reference: string;
     status: string;
     name: string;
     email: string;
-    phone_number: string;
-    date_of_birth: string;
-    residential_address: string;
-    license_number: string | null;
-    plate_number: string | null;
-    vehicle_type: string | null;
-    vehicle_make_model: string | null;
-    vehicle_color: string | null;
-    license_expires_on: string | null;
-    vehicle_registration_expires_on: string | null;
-    decision_reason: string | null;
+    phone_number?: string;
+    date_of_birth?: string;
+    residential_address?: string;
+    license_number?: string | null;
+    plate_number?: string | null;
+    vehicle_type?: string | null;
+    vehicle_make_model?: string | null;
+    vehicle_color?: string | null;
+    license_expires_on?: string | null;
+    vehicle_registration_expires_on?: string | null;
+    decision_reason?: string | null;
     submitted_at: string | null;
-    documents: RiderDocument[];
-    history: History[];
+    privacy_policy_version?: string;
+    privacy_accepted_at?: string;
+    terms_version?: string;
+    terms_accepted_at?: string;
+    safety_policy_version?: string;
+    safety_policy_accepted_at?: string;
+    retention_policy_version?: string | null;
+    retention_policy_accepted_at?: string | null;
+    optional_updates_consent?: boolean;
+    optional_updates_consented_at?: string | null;
+    documents?: RiderDocument[];
+    history?: History[];
 };
 type VehicleChange = {
     id: number;
-    user: { id: number; name: string; email: string; phone_number: string };
+    vehicle_reference: string;
+    user: { id: number; name: string; email: string; phone_number?: string };
     plate_number: string;
-    vehicle_type: string;
-    vehicle_make_model: string;
-    vehicle_color: string;
-    license_expires_on: string;
-    vehicle_registration_expires_on: string;
-    documents: RiderDocument[];
+    status?: string;
+    vehicle_type?: string;
+    vehicle_make_model?: string;
+    vehicle_color?: string;
+    license_expires_on?: string;
+    vehicle_registration_expires_on?: string;
+    documents?: RiderDocument[];
     created_at: string;
+    decision_reason?: string | null;
+    reviewed_at?: string | null;
+    reviewer?: { name: string } | null;
+    audit_history?: { id: number; action: string; description?: string | null; created_at: string; actor?: { name: string; role?: string } | null }[];
 };
 
 const statuses = [
@@ -77,17 +96,28 @@ function DocumentList({ documents, onDelete }: { documents: RiderDocument[]; onD
     </article>)}</div>;
 }
 
-export function RiderApplicationQueue({ onError }: { onError: (message: string) => void }) {
+export function RiderApplicationQueue({ onError, initialApplicationId, onInitialApplicationHandled, initialVehicleChangeId, onInitialVehicleChangeHandled }: {
+    onError: (message: string) => void;
+    initialApplicationId?: number;
+    onInitialApplicationHandled?: () => void;
+    initialVehicleChangeId?: number;
+    onInitialVehicleChangeHandled?: () => void;
+}) {
     const [tab, setTab] = React.useState<'applications' | 'vehicles'>('applications');
     const [status, setStatus] = React.useState('');
     const [search, setSearch] = React.useState('');
+    const [vehicleSearch, setVehicleSearch] = React.useState('');
+    const [vehicleStatus, setVehicleStatus] = React.useState('PENDING');
     const [page, setPage] = React.useState(1);
     const [applications, setApplications] = React.useState<Application[]>([]);
     const [vehicleChanges, setVehicleChanges] = React.useState<VehicleChange[]>([]);
     const [total, setTotal] = React.useState(0);
     const [reasons, setReasons] = React.useState<Record<string, string>>({});
     const [busy, setBusy] = React.useState<string | null>(null);
+    const [selectedApplication, setSelectedApplication] = React.useState<Application | null>(null);
+    const [selectedVehicle, setSelectedVehicle] = React.useState<VehicleChange | null>(null);
     const debouncedSearch = useDebouncedValue(search);
+    const debouncedVehicleSearch = useDebouncedValue(vehicleSearch);
     const requestId = React.useRef(0);
 
     const load = React.useCallback(async () => {
@@ -101,7 +131,7 @@ export function RiderApplicationQueue({ onError }: { onError: (message: string) 
                 setApplications(response.data.applications.data);
                 setTotal(response.data.applications.total);
             } else {
-                const response = await api.get<{ vehicle_changes: { data: VehicleChange[]; total: number } }>('/api/admin/rider-vehicle-changes', { params: { page } });
+                const response = await api.get<{ vehicle_changes: { data: VehicleChange[]; total: number } }>('/api/admin/rider-vehicle-changes', { params: { search: debouncedVehicleSearch || undefined, status: vehicleStatus || undefined, page } });
                 if (current !== requestId.current) return;
                 setVehicleChanges(response.data.vehicle_changes.data);
                 setTotal(response.data.vehicle_changes.total);
@@ -109,7 +139,7 @@ export function RiderApplicationQueue({ onError }: { onError: (message: string) 
         } catch (requestError: any) {
             if (current === requestId.current) onError(requestError.userMessage ?? requestError.response?.data?.message ?? 'Rider applications could not be loaded.');
         }
-    }, [debouncedSearch, onError, page, status, tab]);
+    }, [debouncedSearch, debouncedVehicleSearch, onError, page, status, tab, vehicleStatus]);
 
     React.useEffect(() => {
         void load();
@@ -128,6 +158,8 @@ export function RiderApplicationQueue({ onError }: { onError: (message: string) 
             await api.patch(`/api/admin/${vehicle ? 'rider-vehicle-changes' : 'rider-applications'}/${id}`, { status: decision, reason: reason || undefined });
             showSuccess(vehicle ? 'Vehicle update decision recorded.' : 'Rider application decision recorded.');
             setReasons((current) => ({ ...current, [`${vehicle ? 'vehicle-' : ''}${id}`]: '' }));
+            if (vehicle) setSelectedVehicle(null);
+            else setSelectedApplication(null);
             await load();
         } catch (requestError: any) {
             onError(requestError.userMessage ?? requestError.response?.data?.message ?? 'The rider review decision could not be saved.');
@@ -142,11 +174,47 @@ export function RiderApplicationQueue({ onError }: { onError: (message: string) 
             await initializeCsrf();
             await api.delete(`/api/admin/rider-documents/${documentId}`);
             showSuccess('Rider document deleted.');
+            setSelectedApplication((current) => current ? { ...current, documents: current.documents?.filter((document) => document.id !== documentId) } : current);
+            setSelectedVehicle((current) => current ? { ...current, documents: current.documents?.filter((document) => document.id !== documentId) } : current);
             await load();
         } catch (requestError: any) {
             onError(requestError.userMessage ?? requestError.response?.data?.message ?? 'The document could not be deleted.');
         }
     }
+
+    async function openApplication(id: number) {
+        try {
+            const response = await api.get<{ application: Application }>(`/api/admin/rider-applications/${id}`);
+            setSelectedApplication(response.data.application);
+        } catch (requestError: any) {
+            onError(requestError.userMessage ?? 'The protected rider application details could not be loaded.');
+        }
+    }
+
+    async function openVehicle(id: number) {
+        try {
+            const response = await api.get<{ vehicle_change: VehicleChange }>(`/api/admin/rider-vehicle-changes/${id}`);
+            setSelectedVehicle(response.data.vehicle_change);
+        } catch (requestError: any) {
+            onError(requestError.userMessage ?? 'The protected vehicle update details could not be loaded.');
+        }
+    }
+
+    React.useEffect(() => {
+        if (initialApplicationId) {
+            setTab('applications');
+            onInitialApplicationHandled?.();
+            void openApplication(initialApplicationId);
+        }
+    }, [initialApplicationId, onInitialApplicationHandled]);
+
+    React.useEffect(() => {
+        if (initialVehicleChangeId) {
+            setTab('vehicles');
+            onInitialVehicleChangeHandled?.();
+            void openVehicle(initialVehicleChangeId);
+        }
+    }, [initialVehicleChangeId, onInitialVehicleChangeHandled]);
 
     return <section className="rider-review-queue">
         <div className="section-heading">
@@ -159,48 +227,47 @@ export function RiderApplicationQueue({ onError }: { onError: (message: string) 
         </div>
         {tab === 'applications' && <>
             <TabNav label="Application status" value={status} onChange={(value) => { setStatus(value); setPage(1); }} options={statuses} />
-            <label className="rider-review-search">Search applicant<input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Name or email" /></label>
-            {applications.map((application) => <article className="rider-review-card" key={application.id}>
-                <header><div><strong>{application.name}</strong><span>Application #{application.id} · {documentLabel(application.status)}</span></div><time>{application.submitted_at ? new Date(application.submitted_at).toLocaleString() : 'Draft'}</time></header>
-                <dl>
-                    <div><dt>Email</dt><dd>{application.email}</dd></div>
-                    <div><dt>Phone</dt><dd>{application.phone_number}</dd></div>
-                    <div><dt>Birthdate</dt><dd>{application.date_of_birth}</dd></div>
-                    <div><dt>Residential address</dt><dd>{application.residential_address}</dd></div>
-                    <div><dt>License number</dt><dd>{application.license_number ?? 'Not submitted'}</dd></div>
-                    <div><dt>License expiry</dt><dd>{application.license_expires_on ?? 'Not submitted'}</dd></div>
-                    <div><dt>Vehicle</dt><dd>{[application.plate_number, application.vehicle_type, application.vehicle_make_model, application.vehicle_color].filter(Boolean).join(' · ') || 'Not submitted'}</dd></div>
-                    <div><dt>OR/CR expiry</dt><dd>{application.vehicle_registration_expires_on ?? 'Not submitted'}</dd></div>
-                </dl>
-                <p className="rider-review-privacy-note">Documents are private, encrypted at rest, and only visible to this applicant and authorized admin reviewers. Links expire after five minutes. Retention schedule is awaiting policy; delete records only as authorized.</p>
-                <DocumentList documents={application.documents} onDelete={(id) => void deleteDocument(id)} />
-                {application.decision_reason && <p className="rider-review-reason">Previous decision: {application.decision_reason}</p>}
-                <ol className="rider-review-history">{application.history.map((entry) => <li key={entry.id}><strong>{documentLabel(entry.to_status)}</strong><span>{entry.actor ?? 'System'} · {new Date(entry.created_at).toLocaleString()}</span>{entry.reason && <p>{entry.reason}</p>}</li>)}</ol>
-                {!['APPROVED', 'REJECTED'].includes(application.status) && <div className="rider-review-actions">
-                    <label>Reason for rejection or more information (required for those decisions)<textarea value={reasons[String(application.id)] ?? ''} onChange={(event) => setReasons((current) => ({ ...current, [application.id]: event.target.value }))} maxLength={2000} /></label>
-                    {application.status === 'SUBMITTED' && <button type="button" disabled={busy !== null} onClick={() => void decide(application.id, 'UNDER_REVIEW')}>Mark under review</button>}
-                    {application.status !== 'DRAFT' && <>
-                        <button type="button" disabled={busy !== null} onClick={() => void decide(application.id, 'MORE_INFORMATION_REQUIRED')}>Request information</button>
-                        <button type="button" disabled={busy !== null} onClick={() => void decide(application.id, 'APPROVED')}>Approve rider</button>
-                        <button type="button" className="danger" disabled={busy !== null} onClick={() => void decide(application.id, 'REJECTED')}>Reject application</button>
-                    </>}
-                </div>}
-            </article>)}
+            <label className="rider-review-search">Search applicant<input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Application reference, name, or email" /></label>
+            {applications.length ? <div className="data-table-wrap"><table><thead><tr><th>Application reference</th><th>Applicant</th><th>Email</th><th>Status</th><th>Submitted</th><th>Details</th></tr></thead><tbody>{applications.map((application) => <tr key={application.id}><td>{application.application_reference}</td><td>{application.name}</td><td>{application.email}</td><td>{documentLabel(application.status)}</td><td>{application.submitted_at ? new Date(application.submitted_at).toLocaleString() : 'Draft'}</td><td><ViewDetailsAction contextLabel={`rider application ${application.application_reference}`} onClick={() => void openApplication(application.id)} /></td></tr>)}</tbody></table></div> : <p className="empty-state">No rider applications match this filter.</p>}
         </>}
-        {tab === 'vehicles' && vehicleChanges.map((change) => <article className="rider-review-card" key={change.id}>
-            <header><div><strong>{change.user.name}</strong><span>Vehicle update #{change.id} · {change.user.email}</span></div><time>{new Date(change.created_at).toLocaleString()}</time></header>
-            <p>{change.user.phone_number}</p>
-            <p>{change.plate_number} · {change.vehicle_type} · {change.vehicle_make_model} · {change.vehicle_color}</p>
-            <p>License expiry {change.license_expires_on} · OR/CR expiry {change.vehicle_registration_expires_on}</p>
-            <DocumentList documents={change.documents} onDelete={(id) => void deleteDocument(id)} />
-            <div className="rider-review-actions">
-                <label>Decision reason<input value={reasons[`vehicle-${change.id}`] ?? ''} onChange={(event) => setReasons((current) => ({ ...current, [`vehicle-${change.id}`]: event.target.value }))} maxLength={2000} /></label>
-                <button type="button" disabled={busy !== null} onClick={() => void decide(change.id, 'APPROVED', true)}>Approve vehicle update</button>
-                <button type="button" disabled={busy !== null} onClick={() => void decide(change.id, 'MORE_INFORMATION_REQUIRED', true)}>Request information</button>
-                <button type="button" className="danger" disabled={busy !== null} onClick={() => void decide(change.id, 'REJECTED', true)}>Reject vehicle update</button>
-            </div>
-        </article>)}
+        {tab === 'vehicles' && <><label className="rider-review-search">Search rider or plate<input value={vehicleSearch} onChange={(event) => { setVehicleSearch(event.target.value); setPage(1); }} placeholder="Reference, name, email, or plate" /></label><label className="rider-review-search">Vehicle update status<select value={vehicleStatus} onChange={(event) => { setVehicleStatus(event.target.value); setPage(1); }}><option value="">All statuses</option><option value="PENDING">Pending</option><option value="APPROVED">Approved</option><option value="REJECTED">Rejected</option><option value="MORE_INFORMATION_REQUIRED">More information required</option></select></label>
+            {vehicleChanges.length ? <div className="data-table-wrap"><table><thead><tr><th>Vehicle update reference</th><th>Rider</th><th>Email</th><th>Plate number</th><th>Status</th><th>Submitted</th><th>Details</th></tr></thead><tbody>{vehicleChanges.map((change) => <tr key={change.id}><td>{change.vehicle_reference}</td><td>{change.user.name}</td><td>{change.user.email}</td><td>{change.plate_number}</td><td>{documentLabel(change.status ?? 'PENDING')}</td><td>{new Date(change.created_at).toLocaleString()}</td><td><ViewDetailsAction contextLabel={`vehicle change ${change.vehicle_reference}`} onClick={() => void openVehicle(change.id)} /></td></tr>)}</tbody></table></div> : <p className="empty-state">No vehicle changes match this search.</p>}
+        </>}
         {total === 0 && <p className="empty-state">No rider records in this queue.</p>}
         <Pagination page={page} lastPage={Math.max(1, Math.ceil(total / 15))} onChange={setPage} />
+        {selectedApplication && <FarmgateDetailDialog
+            eyebrow="Restricted · Authorized admin reviewers"
+            title={`${selectedApplication.name} · ${selectedApplication.application_reference}`}
+            onClose={() => setSelectedApplication(null)}
+            className="audit-modal rider-application-detail"
+        >
+            <dl><div><dt>Status</dt><dd>{documentLabel(selectedApplication.status)}</dd></div><div><dt>Email / phone</dt><dd>{selectedApplication.email} · {selectedApplication.phone_number ?? '-'}</dd></div><div><dt>Birthdate</dt><dd>{selectedApplication.date_of_birth ?? '-'}</dd></div><div><dt>Residential address</dt><dd>{selectedApplication.residential_address ?? '-'}</dd></div><div><dt>License</dt><dd>{selectedApplication.license_number ?? '-'} · expires {selectedApplication.license_expires_on ?? '-'}</dd></div><div><dt>Vehicle</dt><dd>{[selectedApplication.plate_number, selectedApplication.vehicle_type, selectedApplication.vehicle_make_model, selectedApplication.vehicle_color].filter(Boolean).join(' · ') || '-'}</dd></div><div><dt>OR/CR expiry</dt><dd>{selectedApplication.vehicle_registration_expires_on ?? '-'}</dd></div></dl>
+            <section className="rider-review-acknowledgments" aria-label="Policy acknowledgments">
+                <h4>Policy acknowledgments</h4>
+                <ul>
+                    <li>Privacy: {selectedApplication.privacy_policy_version ?? 'legacy'} · {selectedApplication.privacy_accepted_at ? new Date(selectedApplication.privacy_accepted_at).toLocaleString() : 'timestamp unavailable'}</li>
+                    <li>Terms: {selectedApplication.terms_version ?? 'legacy'} · {selectedApplication.terms_accepted_at ? new Date(selectedApplication.terms_accepted_at).toLocaleString() : 'timestamp unavailable'}</li>
+                    <li>Safety: {selectedApplication.safety_policy_version ?? 'legacy'} · {selectedApplication.safety_policy_accepted_at ? new Date(selectedApplication.safety_policy_accepted_at).toLocaleString() : 'timestamp unavailable'}</li>
+                    <li>Retention: {selectedApplication.retention_policy_version ?? 'legacy'} · {selectedApplication.retention_policy_accepted_at ? new Date(selectedApplication.retention_policy_accepted_at).toLocaleString() : 'timestamp unavailable'}</li>
+                    <li>Optional rider updates consent: {selectedApplication.optional_updates_consent ? `Yes · ${selectedApplication.optional_updates_consented_at ? new Date(selectedApplication.optional_updates_consented_at).toLocaleString() : 'timestamp unavailable'}` : 'No'}</li>
+                </ul>
+            </section>
+            <p className="rider-review-privacy-note">Sensitive information and private documents are shown only to authorized admin reviewers. Document links expire after five minutes.</p>
+            <DocumentList documents={selectedApplication.documents ?? []} onDelete={(id) => void deleteDocument(id)} />
+            {selectedApplication.decision_reason && <p className="rider-review-reason">Previous decision: {selectedApplication.decision_reason}</p>}
+            <ol className="rider-review-history">{(selectedApplication.history ?? []).map((entry) => <li key={entry.id}><strong>{documentLabel(entry.to_status)}</strong><span>{entry.actor ?? 'System'} · {new Date(entry.created_at).toLocaleString()}</span>{entry.reason && <p>{entry.reason}</p>}</li>)}</ol>
+            {!['APPROVED', 'REJECTED'].includes(selectedApplication.status) && <div className="rider-review-actions"><label>Reason for rejection or more information<textarea value={reasons[String(selectedApplication.id)] ?? ''} onChange={(event) => setReasons((current) => ({ ...current, [selectedApplication.id]: event.target.value }))} maxLength={2000} /></label>{selectedApplication.status === 'SUBMITTED' && <button type="button" disabled={busy !== null} onClick={() => void decide(selectedApplication.id, 'UNDER_REVIEW')}>Mark under review</button>}{selectedApplication.status !== 'DRAFT' && <><button type="button" disabled={busy !== null} onClick={() => void decide(selectedApplication.id, 'MORE_INFORMATION_REQUIRED')}>Request information</button><button type="button" disabled={busy !== null} onClick={() => void decide(selectedApplication.id, 'APPROVED')}>Approve rider</button><button type="button" className="danger" disabled={busy !== null} onClick={() => void decide(selectedApplication.id, 'REJECTED')}>Reject application</button></>}</div>}
+        </FarmgateDetailDialog>}
+        {selectedVehicle && <FarmgateDetailDialog
+            eyebrow="Restricted · Authorized admin reviewers"
+            title={`${selectedVehicle.user.name} · ${selectedVehicle.vehicle_reference}`}
+            onClose={() => setSelectedVehicle(null)}
+            className="audit-modal rider-application-detail"
+        >
+            <dl><div><dt>Rider / contact</dt><dd>{selectedVehicle.user.email} · {selectedVehicle.user.phone_number ?? '-'}</dd></div><div><dt>Vehicle</dt><dd>{selectedVehicle.plate_number} · {selectedVehicle.vehicle_type} · {selectedVehicle.vehicle_make_model} · {selectedVehicle.vehicle_color}</dd></div><div><dt>License expiry</dt><dd>{selectedVehicle.license_expires_on ?? '-'}</dd></div><div><dt>OR/CR expiry</dt><dd>{selectedVehicle.vehicle_registration_expires_on ?? '-'}</dd></div><div><dt>Status</dt><dd>{documentLabel(selectedVehicle.status ?? 'PENDING')}</dd></div><div><dt>Decision</dt><dd>{selectedVehicle.reviewer?.name ?? 'Pending review'} · {selectedVehicle.reviewed_at ? new Date(selectedVehicle.reviewed_at).toLocaleString() : 'Not reviewed'}{selectedVehicle.decision_reason ? ` · ${selectedVehicle.decision_reason}` : ''}</dd></div></dl>
+            <DocumentList documents={selectedVehicle.documents ?? []} onDelete={(id) => void deleteDocument(id)} />
+            {!!selectedVehicle.audit_history?.length && <details><summary>Vehicle change history</summary><ol>{selectedVehicle.audit_history.map((entry) => <li key={entry.id}><strong>{entry.action}</strong> · {entry.actor?.name ?? 'System'} ({entry.actor?.role ?? '-'}) · {new Date(entry.created_at).toLocaleString()}<p>{entry.description}</p></li>)}</ol></details>}
+            {selectedVehicle.status === 'PENDING' && <div className="rider-review-actions"><label>Decision reason<input value={reasons[`vehicle-${selectedVehicle.id}`] ?? ''} onChange={(event) => setReasons((current) => ({ ...current, [`vehicle-${selectedVehicle.id}`]: event.target.value }))} maxLength={2000} /></label><button type="button" disabled={busy !== null} onClick={() => void decide(selectedVehicle.id, 'APPROVED', true)}>Approve vehicle update</button><button type="button" disabled={busy !== null} onClick={() => void decide(selectedVehicle.id, 'MORE_INFORMATION_REQUIRED', true)}>Request information</button><button type="button" className="danger" disabled={busy !== null} onClick={() => void decide(selectedVehicle.id, 'REJECTED', true)}>Reject vehicle update</button></div>}
+        </FarmgateDetailDialog>}
     </section>;
 }

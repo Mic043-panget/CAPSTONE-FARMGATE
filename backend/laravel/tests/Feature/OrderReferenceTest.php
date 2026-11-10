@@ -39,6 +39,8 @@ class OrderReferenceTest extends TestCase
             $second->order_reference,
         );
         $this->assertNotSame($first->order_reference, $second->order_reference);
+        $this->assertMatchesRegularExpression('/^FG-PAY-\d{4}-[A-Z0-9]{6}$/', $first->payment_reference);
+        $this->assertNotSame($first->payment_reference, $second->payment_reference);
 
         try {
             DB::table('orders')->where('id', $second->id)->update([
@@ -111,6 +113,17 @@ class OrderReferenceTest extends TestCase
         $order = $this->createOrder($buyer, $seller);
 
         $order->order_reference = 'FG-'.str_repeat('B', 32);
+
+        $this->expectException(LogicException::class);
+        $order->save();
+    }
+
+    public function test_a_payment_reference_cannot_be_changed_after_order_creation(): void
+    {
+        $buyer = User::factory()->create(['role' => Role::BUYER]);
+        $seller = User::factory()->create(['role' => Role::SELLER]);
+        $order = $this->createOrder($buyer, $seller);
+        $order->payment_reference = 'FG-PAY-2026-ABC123';
 
         $this->expectException(LogicException::class);
         $order->save();

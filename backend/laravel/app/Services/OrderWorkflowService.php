@@ -196,13 +196,12 @@ class OrderWorkflowService
                     $recipients = $recipients->merge(User::query()->whereIn('id', $affectedRiderIds)->get());
                 }
                 foreach ($recipients->filter()->unique('id') as $recipient) {
-                    if ($criticalStatus || $recipient->accountPreferenceEnabled('order_notifications')) {
-                        $recipient->notify(new OrderStatusChangedNotification($lockedOrder->id, $nextStatus, $lockedOrder->order_reference, $reason));
-                    }
+                    $recipient->notify(new OrderStatusChangedNotification($lockedOrder->id, $nextStatus, $lockedOrder->order_reference, $reason));
                 }
             }
 
             if ($criticalStatus && $this->settings->getBoolean('email_notifications_enabled')) {
+                $emailConfigured = app(EmailDeliveryConfiguration::class)->isConfigured();
                 $recipients = collect([$lockedOrder->buyer, $lockedOrder->seller])
                     ->merge(User::query()->whereIn('id', $affectedRiderIds)->get())
                     ->filter()
@@ -216,21 +215,68 @@ class OrderWorkflowService
                         'recipient_id' => $recipient->id,
                         'order_status' => $nextStatus->value,
                         'reason' => $reason,
+                        'delivery_status' => $emailConfigured ? 'QUEUED' : 'FAILED',
+                        'error_code' => $emailConfigured ? null : 'SMTP_NOT_CONFIGURED',
                     ]);
-                    DB::afterCommit(function () use ($email): void {
-                        try {
-                            SendOrderStatusEmail::dispatch($email->id);
-                        } catch (Throwable $exception) {
-                            $email->forceFill([
-                                'delivery_status' => 'FAILED',
-                                'error_code' => $exception::class,
-                            ])->save();
-                            Log::error('An order status email could not be queued.', [
-                                'email_delivery_id' => $email->id,
-                                'exception' => $exception::class,
-                            ]);
-                        }
-                    });
+                    if ($emailConfigured) {
+                        DB::afterCommit(function () use ($email): void {
+                            try {
+                                SendOrderStatusEmail::dispatch($email->id)->onQueue('notifications');
+                            } catch (Throwable $exception) {
+                                $email->forceFill([
+                                    'delivery_status' => 'FAILED',
+                                    'error_code' => $exception::class,
+                                ])->save();
+                                Log::error('An order status email could not be queued.', [
+                                    'email_delivery_id' => $email->id,
+                                    'exception' => $exception::class,
+                                ]);
+                            }
+                        });
+                    } else {
+                        Log::notice('An order status email was not queued because SMTP is not configured.', [
+                            'email_delivery_id' => $email->id,
+                        ]);
+                    }
+                }
+            }
+
+            return $lockedOrder->load('items', 'statusHistory');
+        });
+    }
+
+    public function completeAfterVerifiedDelivery(Order $order, User $actor, string $reason): Order
+    {
+        return DB::transaction(function () use ($order, $actor, $reason): Order {
+            $lockedOrder = Order::query()->lockForUpdate()->findOrFail($order->id);
+            abort_unless(in_array($actor->role, [Role::ADMIN, Role::RIDER], true), 403);
+            abort_unless($lockedOrder->status === OrderStatus::FULFILLING, 409, 'Only a fulfilling order can be completed after delivery.');
+            abort_unless($lockedOrder->payment_status === 'PAID', 409, 'The order payment must be confirmed before completion.');
+
+            $delivery = Delivery::query()->where('order_id', $lockedOrder->id)->lockForUpdate()->firstOrFail();
+            abort_unless($delivery->status === DeliveryStatus::DELIVERED, 409, 'The delivery must be verified before order completion.');
+            abort_unless($actor->role === Role::ADMIN || $delivery->rider_id === $actor->id, 403);
+
+            $fromStatus = $lockedOrder->status;
+            $lockedOrder->forceFill(['status' => OrderStatus::COMPLETED])->save();
+            $lockedOrder->statusHistory()->create([
+                'from_status' => $fromStatus,
+                'to_status' => OrderStatus::COMPLETED,
+                'changed_by' => $actor->id,
+                'reason' => $reason,
+            ]);
+
+            if ($this->settings->getBoolean('in_app_notifications_enabled')
+                && $this->settings->getBoolean('order_notifications_enabled')) {
+                foreach ([$lockedOrder->buyer, $lockedOrder->seller] as $recipient) {
+                    if ($recipient) {
+                        $recipient->notify(new OrderStatusChangedNotification(
+                            $lockedOrder->id,
+                            OrderStatus::COMPLETED,
+                            $lockedOrder->order_reference,
+                            $reason,
+                        ));
+                    }
                 }
             }
 

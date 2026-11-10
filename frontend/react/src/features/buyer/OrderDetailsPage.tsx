@@ -10,10 +10,17 @@ type OrderDetails = {
     id: number;
     seller_id: number;
     order_reference: string;
+    payment_reference?: string;
     status: string;
     total_amount: string;
     payment_method?: string | null;
     payment_status?: string | null;
+    cod_payment?: {
+        amount_due: string;
+        status: string;
+        collection_status: string | null;
+        remittance_status: string | null;
+    } | null;
     subtotal_amount?: string;
     delivery_fee?: string;
     delivery_distance_km?: number | string | null;
@@ -58,6 +65,7 @@ type OrderDetails = {
     } | null;
     delivery?: {
         id: number;
+        delivery_reference: string;
         status: string;
         pickup_latitude?: number | null;
         pickup_longitude?: number | null;
@@ -81,10 +89,6 @@ function formatAmount(amount: string | number | undefined): string {
     return Number(amount ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function identifierCode(prefix: string, id: number | undefined): string {
-    return `${prefix}${String(id ?? 0).padStart(5, '0')}`;
-}
-
 function positiveAmount(amount: string | number | undefined): boolean {
     const value = Number(amount ?? 0);
     return Number.isFinite(value) && value > 0;
@@ -105,6 +109,7 @@ function paymentStatusLabel(status: string | null | undefined): string {
         UNPAID: 'Not paid',
         PENDING: 'Payment pending',
         FAILED: 'Payment failed',
+        AWAITING_CONFIRMATION: 'Awaiting Farmgate confirmation',
     } as Record<string, string>)[status ?? ''] ?? status?.replaceAll('_', ' ') ?? 'Not available';
 }
 
@@ -115,11 +120,12 @@ function formatCoordinates(latitude: number | string | null | undefined, longitu
     return Number.isFinite(lat) && Number.isFinite(lng) ? `${lat.toFixed(5)}, ${lng.toFixed(5)}` : null;
 }
 
-export function OrderDetailsPage({ orderId, user, onBack, onChatWithSeller, onError }: {
+export function OrderDetailsPage({ orderId, user, onBack, onChatWithSeller, onOpenSeller, onError }: {
     orderId: number;
     user: User;
     onBack: () => void;
     onChatWithSeller: (sellerId: number) => void;
+    onOpenSeller: (sellerId: number) => void;
     onError: (message: string) => void;
 }) {
     const [order, setOrder] = React.useState<OrderDetails | null>(null);
@@ -234,9 +240,19 @@ export function OrderDetailsPage({ orderId, user, onBack, onChatWithSeller, onEr
                 <span className={`buyer-order-status status-${(displayOrderStatus ?? order.status).toLowerCase().replaceAll(' ', '_')}`}>{displayOrderStatus}</span>
             </header>
             <div className="buyer-order-details-grid">
-                <section><h2>Items</h2><ul>{order.items.map((item) => <li key={item.id}><span>{item.quantity} {item.pricing_type === 'PER_KILO' ? 'kg' : 'head'} × {item.listing?.name ?? 'Removed listing'} · PHP {formatAmount(item.unit_price)} each</span><strong>PHP {formatAmount(item.total_amount)}</strong></li>)}</ul></section>
-                <section><h2>Order cost</h2><dl><div><dt>Product value</dt><dd>PHP {formatAmount(order.subtotal_amount ?? order.total_amount)}</dd></div><div><dt>Shipping</dt><dd>PHP {formatAmount(order.delivery_fee)}</dd></div>{order.delivery_distance_km !== null && order.delivery_distance_km !== undefined && <div><dt>Delivery distance</dt><dd>{Number(order.delivery_distance_km).toFixed(2)} km · {distanceDescription}</dd></div>}<div className="buyer-order-grand-total"><dt>Total</dt><dd>PHP {formatAmount(order.total_amount)}</dd></div></dl></section>
+                <section><h2>Livestock</h2><ul>{order.items.map((item) => <li key={item.id}><span>{item.quantity} {item.pricing_type === 'PER_KILO' ? 'kg' : 'head'} × {item.listing?.name ?? 'Removed listing'} · PHP {formatAmount(item.unit_price)} each</span><strong>PHP {formatAmount(item.total_amount)}</strong></li>)}</ul></section>
+                <section><h2>Order cost</h2><dl><div><dt>Livestock total</dt><dd>PHP {formatAmount(order.subtotal_amount ?? order.total_amount)}</dd></div><div><dt>Shipping</dt><dd>PHP {formatAmount(order.delivery_fee)}</dd></div>{order.delivery_distance_km !== null && order.delivery_distance_km !== undefined && <div><dt>Delivery distance</dt><dd>{Number(order.delivery_distance_km).toFixed(2)} km · {distanceDescription}</dd></div>}<div className="buyer-order-grand-total"><dt>Total</dt><dd>PHP {formatAmount(order.total_amount)}</dd></div></dl></section>
             </div>
+            {order.cod_payment && <section className="buyer-order-cod-payment" aria-labelledby="buyer-order-cod-payment-title">
+                <h2 id="buyer-order-cod-payment-title">Cash on delivery payment</h2>
+                <dl>
+                    <div><dt>Amount due</dt><dd>PHP {formatAmount(order.cod_payment.amount_due)}</dd></div>
+                    <div><dt>Buyer payment</dt><dd>{paymentStatusLabel(order.cod_payment.status)}</dd></div>
+                    {order.cod_payment.collection_status && <div><dt>Rider collection</dt><dd>{order.cod_payment.collection_status.replaceAll('_', ' ')}</dd></div>}
+                    {order.cod_payment.remittance_status && <div><dt>Farmgate remittance</dt><dd>{order.cod_payment.remittance_status.replaceAll('_', ' ')}</dd></div>}
+                </dl>
+                {order.cod_payment.status === 'AWAITING_CONFIRMATION' && <p>Cash collection or uploaded proof is not payment confirmation. Farmgate will update this status after the remittance is verified.</p>}
+            </section>}
             <div className="buyer-order-details-grid">
                 <section><h2>Customer details</h2><p>{order.shipping_address?.recipient_name ?? user.name}</p><p>{user.email}</p><p>{order.shipping_address?.phone_number ?? user.phone_number ?? 'Phone not provided'}</p></section>
             </div>
@@ -245,6 +261,7 @@ export function OrderDetailsPage({ orderId, user, onBack, onChatWithSeller, onEr
                     <p className="eyebrow">From</p>
                     <h2>Seller shipping address</h2>
                     <p className="buyer-order-address-name">{order.seller?.name ?? 'Seller'}</p>
+                    {order.seller?.id && <button className="seller-shop-inline-link" type="button" onClick={() => { if (order.seller) onOpenSeller(order.seller.id); }}>Visit seller shop</button>}
                     <p>{sellerAddress || 'Street address not provided; use the pinned seller location on the map.'}</p>
                     {sellerCoordinates && <p className="buyer-order-address-coordinates">Pinned location: {sellerCoordinates}</p>}
                 </article>
@@ -301,24 +318,26 @@ export function OrderDetailsPage({ orderId, user, onBack, onChatWithSeller, onEr
                     <p className="eyebrow">FARMGATE · Order receipt</p>
                     <h2 id="buyer-order-receipt-title">Order {order.order_reference}</h2>
                     <p className="buyer-order-receipt-meta">{new Date(order.created_at).toLocaleString()} · {displayOrderStatus}</p>
-                    <p className="buyer-order-receipt-meta">Category: {order.order_reference.match(/^FG-([A-Z]{2})-/)?.[1] ?? 'OT'} · Seller ID: {identifierCode('S', order.seller?.id ?? order.seller_id)}</p>
+                    <p className="buyer-order-receipt-meta">Payment reference: {order.payment_reference ?? 'Not available'}</p>
+                    {order.delivery?.delivery_reference && <p className="buyer-order-receipt-meta">Delivery reference: {order.delivery.delivery_reference}</p>}
                     <div className="buyer-order-receipt-parties"><div><strong>Seller</strong><span>{order.seller?.name ?? 'Seller'}</span></div><div><strong>Buyer</strong><span>{order.shipping_address?.recipient_name ?? user.name}</span></div></div>
                     <div className="buyer-order-receipt-address"><strong>Seller shipping address</strong><span>{sellerAddress || 'Address not provided'}</span></div>
                     <div className="buyer-order-receipt-address"><strong>{order.delivery_method === 'SELF_PICKUP' ? 'Buyer pickup location' : 'Buyer shipping address'}</strong><span>{deliveryAddress}</span></div>
                     <dl className="buyer-order-receipt-payment">
                         <div><dt>Payment method</dt><dd>{paymentMethodLabel(order.payment_method)}</dd></div>
-                        <div><dt>Payment status</dt><dd>{paymentStatusLabel(order.payment_status)}</dd></div>
+                        <div><dt>Payment status</dt><dd>{paymentStatusLabel(order.cod_payment?.status ?? order.payment_status)}</dd></div>
+                        {order.cod_payment && <div><dt>COD amount due</dt><dd>PHP {formatAmount(order.cod_payment.amount_due)}</dd></div>}
                     </dl>
                     <table className="buyer-order-receipt-items">
-                        <thead><tr><th scope="col">Item</th><th scope="col">Unit price</th><th scope="col">Line total</th></tr></thead>
+                        <thead><tr><th scope="col">Livestock</th><th scope="col">Unit price</th><th scope="col">Line total</th></tr></thead>
                         <tbody>{order.items.map((item) => <tr key={item.id}>
-                            <td>{item.quantity.toLocaleString()} {item.pricing_type === 'PER_KILO' ? 'kg' : 'head'} × {item.listing?.name ?? 'Removed listing'}<br /><small>Product ID: {item.listing ? identifierCode('P', item.listing.id) : 'Unavailable'} · Category: {item.listing?.category?.name ?? 'Unavailable'} ({item.listing?.category?.reference_code ?? 'OT'})</small></td>
+                            <td>{item.quantity.toLocaleString()} {item.pricing_type === 'PER_KILO' ? 'kg' : 'head'} × {item.listing?.name ?? 'Removed listing'}<br /><small>Category: {item.listing?.category?.name ?? 'Unavailable'} ({item.listing?.category?.reference_code ?? 'OT'})</small></td>
                             <td>PHP {formatAmount(item.unit_price)} / {item.pricing_type === 'PER_KILO' ? 'kg' : 'head'}</td>
                             <td>PHP {formatAmount(item.total_amount)}</td>
                         </tr>)}</tbody>
                     </table>
                     <dl className="buyer-order-receipt-totals">
-                        <div><dt>Product value</dt><dd>PHP {formatAmount(order.subtotal_amount ?? order.total_amount)}</dd></div>
+                        <div><dt>Livestock total</dt><dd>PHP {formatAmount(order.subtotal_amount ?? order.total_amount)}</dd></div>
                         {positiveAmount(order.delivery_fee) && <div><dt>{order.delivery_method === 'SELF_PICKUP' ? 'Pickup fee' : 'Delivery fee'}</dt><dd>PHP {formatAmount(order.delivery_fee)}</dd></div>}
                         {order.delivery_distance_km !== null && order.delivery_distance_km !== undefined && <div><dt>Delivery distance</dt><dd>{Number(order.delivery_distance_km).toFixed(2)} km · {distanceDescription}</dd></div>}
                         {positiveAmount(order.platform_fee) && <div><dt>Platform fee</dt><dd>PHP {formatAmount(order.platform_fee)}</dd></div>}

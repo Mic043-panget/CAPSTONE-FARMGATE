@@ -2,10 +2,11 @@
 
 namespace App\Notifications;
 
+use App\Contracts\FarmgateNotification;
 use App\Enums\OrderStatus;
 use Illuminate\Notifications\Notification;
 
-class OrderStatusChangedNotification extends Notification
+class OrderStatusChangedNotification extends Notification implements FarmgateNotification
 {
     public function __construct(
         public int $orderId,

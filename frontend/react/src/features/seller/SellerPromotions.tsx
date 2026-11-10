@@ -1,7 +1,9 @@
 import React from 'react';
+import { LoadingSkeleton } from '../../shared/components/LoadingSkeleton';
 import api, { initializeCsrf } from '../../lib/api';
 import { confirmAction, showSuccess } from '../../lib/alerts';
 import { Pagination } from '../../shared/components/Pagination';
+import { SystemCalendar } from '../shared/SystemCalendar';
 
 type EligibleListing = {
     id: number;
@@ -71,6 +73,10 @@ function errorMessage(error: any): string {
 }
 
 export function SellerPromotions({ onError }: { onError: (message: string) => void }) {
+    const [activeTab, setActiveTab] = React.useState<'promotions' | 'events'>(() =>
+        /^#calendar\/(?:event|promotion)\/\d+$/.test(window.location.hash) ? 'events' : 'promotions',
+    );
+    const [clock, setClock] = React.useState(Date.now());
     const [promotions, setPromotions] = React.useState<Promotion[]>([]);
     const [page, setPage] = React.useState(1);
     const [lastPage, setLastPage] = React.useState(1);
@@ -89,6 +95,16 @@ export function SellerPromotions({ onError }: { onError: (message: string) => vo
     const [imageError, setImageError] = React.useState('');
     const imageInputRef = React.useRef<HTMLInputElement>(null);
     const [localImagePreview, setLocalImagePreview] = React.useState<string | null>(null);
+
+    React.useEffect(() => {
+        const syncTabWithHash = () => {
+            if (/^#calendar\/(?:event|promotion)\/\d+$/.test(window.location.hash)) {
+                setActiveTab('events');
+            }
+        };
+        window.addEventListener('hashchange', syncTabWithHash);
+        return () => window.removeEventListener('hashchange', syncTabWithHash);
+    }, []);
 
     const reload = React.useCallback(async () => {
         setLoading(true);
@@ -115,6 +131,11 @@ export function SellerPromotions({ onError }: { onError: (message: string) => vo
     }, [eligibleListingPage, onError, page]);
 
     React.useEffect(() => { void reload(); }, [reload]);
+
+    React.useEffect(() => {
+        const timer = window.setInterval(() => setClock(Date.now()), 60_000);
+        return () => window.clearInterval(timer);
+    }, []);
 
     React.useEffect(() => {
         if (!localImagePreview) return;
@@ -211,9 +232,10 @@ export function SellerPromotions({ onError }: { onError: (message: string) => vo
             } else {
                 await api.post('/api/seller/promotions', payload);
             }
+            setPage(1);
             clearPromotionForm();
             showSuccess(editing ? 'Promotion updated.' : 'Draft promotion saved.');
-            await reload();
+            if (page === 1) await reload();
         } catch (error) {
             onError(errorMessage(error));
         } finally {
@@ -261,7 +283,12 @@ export function SellerPromotions({ onError }: { onError: (message: string) => vo
                 .map((listing) => [listing.id, listing]),
         ).values()];
 
-    return <section className="seller-work-section" aria-labelledby="seller-promotions-title">
+    return <>
+        <nav className="seller-promotion-tabs" role="group" aria-label="Seller promotions area">
+            <button type="button" aria-pressed={activeTab === 'promotions'} className={activeTab === 'promotions' ? 'active' : ''} onClick={() => setActiveTab('promotions')}>Promotions</button>
+            <button type="button" aria-pressed={activeTab === 'events'} className={activeTab === 'events' ? 'active' : ''} onClick={() => setActiveTab('events')}>Events</button>
+        </nav>
+        {activeTab === 'events' ? <SystemCalendar role="SELLER" onError={onError} /> : <section className="seller-work-section" aria-labelledby="seller-promotions-title">
         <div className="seller-work-heading">
             <div><p className="eyebrow">Offers &amp; discounts</p><h2 id="seller-promotions-title">Promotions</h2></div>
             <span>{totalPromotions} total promotions</span>
@@ -287,15 +314,15 @@ export function SellerPromotions({ onError }: { onError: (message: string) => vo
                 <label>Discount type<select value={form.discount_type} onChange={(event) => updateForm('discount_type', event.target.value as PromotionForm['discount_type'])}><option value="PERCENTAGE">Percentage</option><option value="FIXED">Fixed amount (PHP)</option></select></label>
                 <label>{form.discount_type === 'PERCENTAGE' ? 'Discount (%)' : 'Discount (PHP)'}<input type="number" min="0.01" max={form.discount_type === 'PERCENTAGE' ? 100 : undefined} step="0.01" required value={form.discount_value} onChange={(event) => updateForm('discount_value', event.target.value)} /></label>
             </div>
-            <fieldset><legend>Product scope</legend>
+            <fieldset><legend>Livestock listing scope</legend>
                 <label className="seller-promotion-radio"><input type="radio" checked={form.applies_to_all} onChange={() => updateForm('applies_to_all', true)} /> All eligible active listings</label>
                 <label className="seller-promotion-radio"><input type="radio" checked={!form.applies_to_all} onChange={() => updateForm('applies_to_all', false)} /> Selected active listings</label>
                 {!form.applies_to_all && <><div className="seller-promotion-listings">{inactiveSelectedListings.filter((listing) => form.listing_ids.includes(listing.id)).map((listing) => <label key={listing.id}><input type="checkbox" checked onChange={() => updateForm('listing_ids', form.listing_ids.filter((id) => id !== listing.id))} />{listing.name} <small>Unavailable — deselect to continue</small></label>)}{listings.length ? listings.map((listing) => <label key={listing.id}><input type="checkbox" checked={form.listing_ids.includes(listing.id)} onChange={(event) => updateForm('listing_ids', event.target.checked ? [...form.listing_ids, listing.id] : form.listing_ids.filter((id) => id !== listing.id))} />{listing.name} <small>PHP {Number(listing.pricing_type === 'PER_KILO' ? listing.price_per_kilo : listing.price_per_head).toLocaleString()} / {listing.pricing_type === 'PER_KILO' ? 'kg' : 'head'}</small></label>) : <p>No eligible active listings.</p>}</div><Pagination page={eligibleListingPage} lastPage={eligibleListingsLastPage} onChange={setEligibleListingPage} /></>}
             </fieldset>
             <section className="seller-promotion-preview" aria-labelledby="seller-promotion-preview-title">
-                <h3 id="seller-promotion-preview-title">Included products and price preview</h3>
+                <h3 id="seller-promotion-preview-title">Included livestock listings and price preview</h3>
                 {form.applies_to_all && <p>All eligible active listings are included. The preview below shows the currently loaded page; the promotion applies to all eligible listings, including other pages.</p>}
-                {!form.applies_to_all && !selectedPreviewListings.length && <p>Select at least one active product to preview its discounted price.</p>}
+                {!form.applies_to_all && !selectedPreviewListings.length && <p>Select at least one active livestock listing to preview its discounted price.</p>}
                 {selectedPreviewListings.length > 0 && <div className="seller-promotion-preview-list">
                     {selectedPreviewListings.map((listing) => {
                         const preview = previewPrice(listing);
@@ -309,10 +336,10 @@ export function SellerPromotions({ onError }: { onError: (message: string) => vo
             </div>
             <div className="seller-promotion-form-actions"><button className="seller-inline-action" type="submit" disabled={saving || Boolean(imageError)}>{saving ? 'Saving...' : editing ? 'Save changes' : 'Save as draft'}</button><button className="seller-table-action" type="button" onClick={clearPromotionForm}>Cancel</button></div>
         </form>}
-        {loading ? <p className="seller-loading">Loading promotions...</p> : promotions.length ? <div className="seller-promotion-list">{promotions.map((promotion) => {
-            const expired = new Date(promotion.ends_at).getTime() <= Date.now();
-            const scheduled = new Date(promotion.starts_at).getTime() > Date.now();
-            const status = promotion.status === 'ACTIVE' ? expired ? 'ENDED' : scheduled ? 'SCHEDULED' : 'ACTIVE' : promotion.status;
+        {loading ? <LoadingSkeleton variant="cards" count={3} label="Loading seller promotions" /> : promotions.length ? <div className="seller-promotion-list">{promotions.map((promotion) => {
+            const expired = new Date(promotion.ends_at).getTime() <= clock;
+            const scheduled = new Date(promotion.starts_at).getTime() > clock;
+            const status = promotion.status === 'DRAFT' ? 'DRAFT' : expired ? 'ENDED' : promotion.status === 'ACTIVE' ? scheduled ? 'SCHEDULED' : 'ACTIVE' : promotion.status;
             return <article className="seller-promotion-card" key={promotion.id}>
                 <div className="seller-promotion-card-heading"><div><h3>{promotion.name}</h3><span className={`status-pill status-${status.toLowerCase()}`}>{status}</span></div><strong>{promotion.discount_type === 'PERCENTAGE' ? `${Number(promotion.discount_value)}% off` : `PHP ${Number(promotion.discount_value).toLocaleString()} off`}</strong></div>
                 {promotion.image_url && <img className="seller-promotion-card-image" src={promotion.image_url} alt={`${promotion.name} promotion`} />}
@@ -329,5 +356,6 @@ export function SellerPromotions({ onError }: { onError: (message: string) => vo
             </article>;
         })}</div> : <p className="seller-empty">No promotions yet. Create a draft to prepare an offer for your active listings.</p>}
         <Pagination page={page} lastPage={lastPage} onChange={setPage} />
-    </section>;
+        </section>}
+    </>;
 }

@@ -6,6 +6,7 @@ const OrderRouteMap = React.lazy(() => import('../buyer/OrderRouteMap').then((mo
 
 type LiveDelivery = {
     id: number;
+    delivery_reference: string;
     status: string;
     rider?: { name: string } | null;
     rider_location_latitude?: number | null;
@@ -73,7 +74,7 @@ export function DeliveryTrackingPanel({ deliveryId, sellerName, buyerName, selle
 
     return <section className="delivery-tracking-panel" aria-label="Live delivery tracking">
         <div className="delivery-tracking-heading">
-            <div><p className="eyebrow">Delivery tracking</p><h3>{delivery ? statusLabel(delivery.status) : 'Loading delivery status'}</h3></div>
+            <div><p className="eyebrow">{delivery?.delivery_reference ?? 'Delivery tracking'}</p><h3>{delivery ? statusLabel(delivery.status) : 'Loading delivery status'}</h3></div>
             {delivery?.rider?.name && <span>Rider · {delivery.rider.name}</span>}
         </div>
         {loading && <p role="status">Loading the latest rider location…</p>}

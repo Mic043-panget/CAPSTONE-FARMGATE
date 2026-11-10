@@ -3,13 +3,16 @@ import { flushSync } from 'react-dom';
 import api from '../../lib/api';
 import { confirmAction, showSuccess } from '../../lib/alerts';
 import { Pagination } from '../../shared/components/Pagination';
+import { LoadingSkeleton } from '../../shared/components/LoadingSkeleton';
 import { QRCodeSVG } from 'qrcode.react';
 import { DeliveryTrackingPanel } from '../shared/DeliveryTrackingPanel';
+import { FarmgateDetailDialog } from '../shared/FarmgateDetailDialog';
 
 type SellerOrder = {
     id: number;
     buyer_id: number;
     order_reference: string;
+    payment_reference?: string;
     status: string;
     total_amount: string | number;
     subtotal_amount?: string | number;
@@ -65,6 +68,7 @@ type SellerOrder = {
     activities?: { id: number; activity_key: string; details: string; created_at: string; actor?: { name: string } | null }[];
     delivery?: {
         id: number;
+        delivery_reference: string;
         status: string;
         rider_id?: number | null;
         assigned_at?: string | null;
@@ -84,18 +88,6 @@ type SellerOrder = {
             longitude?: number | string | null;
         } | null;
     } | null;
-};
-
-type SellerOrderNotification = {
-    id: string;
-    data: {
-        type?: string;
-        order_id?: number;
-        order_reference?: string;
-        status?: string;
-        message?: string;
-    };
-    created_at: string;
 };
 
 const orderStatuses = [
@@ -142,9 +134,12 @@ function orderAddress(order: SellerOrder): string {
     ].filter(Boolean).join(', ') || 'No delivery address was saved.';
 }
 
-export function SellerOrdersPage({ onNavigationCountsChanged }: { onNavigationCountsChanged?: () => Promise<void> }) {
+export function SellerOrdersPage({ onNavigationCountsChanged, initialOrderId, onInitialOrderHandled }: {
+    onNavigationCountsChanged?: () => Promise<void>;
+    initialOrderId?: number | null;
+    onInitialOrderHandled?: () => void;
+}) {
     const [orders, setOrders] = React.useState<SellerOrder[]>([]);
-    const [notifications, setNotifications] = React.useState<SellerOrderNotification[]>([]);
     const [selectedOrder, setSelectedOrder] = React.useState<SellerOrder | null>(null);
     const [statusFilter, setStatusFilter] = React.useState('');
     const [search, setSearch] = React.useState('');
@@ -153,9 +148,9 @@ export function SellerOrdersPage({ onNavigationCountsChanged }: { onNavigationCo
     const [rejectReason, setRejectReason] = React.useState('');
     const [loading, setLoading] = React.useState(true);
     const [detailsLoading, setDetailsLoading] = React.useState(false);
+    const [confirming, setConfirming] = React.useState(false);
     const [saving, setSaving] = React.useState(false);
     const [error, setError] = React.useState('');
-    const [notificationError, setNotificationError] = React.useState('');
     const [detailsError, setDetailsError] = React.useState('');
     const [pickupCode, setPickupCode] = React.useState<{ code: string } | null>(null);
     const [pickupCodeLoading, setPickupCodeLoading] = React.useState(false);
@@ -175,35 +170,17 @@ export function SellerOrdersPage({ onNavigationCountsChanged }: { onNavigationCo
         }
     }, []);
 
-    const refreshNotifications = React.useCallback(async () => {
-        setNotificationError('');
-        try {
-            const response = await api.get<{ notifications: SellerOrderNotification[] }>('/api/notifications');
-            setNotifications(response.data.notifications.filter((notification) =>
-                notification.data?.type === 'order_status_changed'
-                || notification.data?.type === 'rider_assignment_waiting'
-                || notification.data?.type === 'delivery_proof_recorded',
-            ));
-        } catch (requestError: any) {
-            setNotificationError(requestError.userMessage ?? 'Order notifications could not be loaded.');
-        }
-    }, []);
-
     React.useEffect(() => {
         void refreshOrders();
-        void refreshNotifications();
-    }, [refreshNotifications, refreshOrders]);
+    }, [refreshOrders]);
 
     React.useEffect(() => {
-        if (!selectedOrder) return undefined;
-        function closeOnEscape(event: KeyboardEvent) {
-            if (event.key === 'Escape' && !saving) setSelectedOrder(null);
-        }
-        window.addEventListener('keydown', closeOnEscape);
-        return () => window.removeEventListener('keydown', closeOnEscape);
-    }, [saving, selectedOrder]);
+        if (initialOrderId === undefined || initialOrderId === null || loading) return;
+        void openOrder(initialOrderId);
+        onInitialOrderHandled?.();
+    }, [initialOrderId, loading, onInitialOrderHandled]);
 
-    async function openOrder(orderId: number) {
+    async function openOrder(orderId: number): Promise<boolean> {
         setSelectedOrder(orders.find((order) => order.id === orderId) ?? null);
         setPickupCode(null);
         setPickupCodeError('');
@@ -213,8 +190,10 @@ export function SellerOrdersPage({ onNavigationCountsChanged }: { onNavigationCo
             const response = await api.get<{ order: SellerOrder }>(`/api/orders/${orderId}`);
             setSelectedOrder(response.data.order);
             setRejectReason('');
+            return true;
         } catch (requestError: any) {
             setDetailsError(requestError.userMessage ?? requestError.response?.data?.message ?? 'Order details could not be loaded.');
+            return false;
         } finally {
             setDetailsLoading(false);
         }
@@ -257,7 +236,7 @@ export function SellerOrdersPage({ onNavigationCountsChanged }: { onNavigationCo
     }
 
     async function decideOrder(status: 'CONFIRMED' | 'REJECTED' | 'PREPARING' | 'READY_FOR_PICKUP') {
-        if (!selectedOrder || saving) return;
+        if (!selectedOrder || saving || confirming) return;
         const reason = rejectReason.trim();
         if (status === 'REJECTED' && !reason) {
             setError('Enter a reason before rejecting this order.');
@@ -271,7 +250,7 @@ export function SellerOrdersPage({ onNavigationCountsChanged }: { onNavigationCo
                 ? 'This will update the order and begin rider assignment.'
                 : 'This will update the order and notify the buyer.' },
         }[status];
-        setSaving(true);
+        setConfirming(true);
         let confirmed = false;
         try {
             confirmed = await confirmAction({
@@ -282,32 +261,45 @@ export function SellerOrdersPage({ onNavigationCountsChanged }: { onNavigationCo
             });
         } catch {
             setError('The confirmation dialog could not be opened. Try the decision again.');
-            setSaving(false);
+            setConfirming(false);
             return;
         }
         if (!confirmed) {
-            setSaving(false);
+            setConfirming(false);
             return;
         }
+        setConfirming(false);
+        setSaving(true);
         setError('');
+        const orderId = selectedOrder.id;
         try {
-            const response = await api.patch<{ rider_assignment_warning?: string | null }>(`/api/orders/${selectedOrder.id}/status`, {
+            const response = await api.patch<{
+                order: SellerOrder;
+                delivery?: SellerOrder['delivery'] | null;
+                rider_assignment_warning?: string | null;
+            }>(`/api/orders/${orderId}/status`, {
                 status,
                 ...(status === 'REJECTED' ? { reason } : {}),
-            });
+            }, { timeout: 20_000 });
             showSuccess(`Order ${selectedOrder.order_reference} ${action.success}.`);
             const assignmentWarning = response.data.rider_assignment_warning;
             setRejectReason('');
-            await refreshOrders();
-            await openOrder(selectedOrder.id);
-            await refreshNotifications();
-            await onNavigationCountsChanged?.();
+            const updatedOrder: SellerOrder = {
+                ...selectedOrder,
+                ...response.data.order,
+                ...(response.data.delivery ? { delivery: response.data.delivery } : {}),
+            };
+            setSelectedOrder(updatedOrder);
+            setOrders((current) => current.map((order) => order.id === orderId ? { ...order, ...response.data.order } : order));
+            void onNavigationCountsChanged?.();
             if (assignmentWarning) setError(assignmentWarning);
         } catch (requestError: any) {
-            const message = requestError.userMessage ?? requestError.response?.data?.message ?? `Could not ${action.label.toLowerCase()} for this order. Refresh and review its current status.`;
-            await refreshOrders();
-            await openOrder(selectedOrder.id);
-            await refreshNotifications();
+            const message = requestError.userMessage
+                ?? requestError.response?.data?.message
+                ?? (['ECONNABORTED', 'ETIMEDOUT'].includes(requestError.code)
+                    ? 'The server did not confirm this update in time. The order may have changed; check its current status before trying again.'
+                    : `Could not ${action.label.toLowerCase()} for this order. Refresh and review its current status.`);
+            void refreshOrders().then(() => openOrder(orderId));
             setError(message);
         } finally {
             setSaving(false);
@@ -323,7 +315,6 @@ export function SellerOrdersPage({ onNavigationCountsChanged }: { onNavigationCo
             const waitingForRider = response.data.delivery.status === 'WAITING_FOR_RIDER';
             await refreshOrders();
             await openOrder(selectedOrder.id);
-            await refreshNotifications();
             await onNavigationCountsChanged?.();
             if (waitingForRider) setError('No eligible rider is available yet. The order remains awaiting rider assignment; you can retry later.');
             else showSuccess(`Rider offer updated for ${selectedOrder.order_reference}.`);
@@ -399,11 +390,11 @@ export function SellerOrdersPage({ onNavigationCountsChanged }: { onNavigationCo
 
     return <section className="seller-orders" aria-labelledby="seller-orders-title">
         <header className="seller-orders-heading">
-            <div><p className="eyebrow">Order management</p><h2 id="seller-orders-title">Orders</h2><p>Review incoming orders, make a decision, and track delivery.</p></div>
+            <div><p className="eyebrow">Order management</p><h2 id="seller-orders-title">Orders</h2><p>Review incoming orders, make a decision, and track delivery. The Orders badge counts orders still awaiting confirmation; reading a notification does not confirm an order.</p></div>
             <span>{orders.length} {orders.length === 1 ? 'order' : 'orders'}</span>
         </header>
         <div className="seller-orders-filters" role="search">
-            <label>Search orders<input type="search" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Order number, buyer, or product" /></label>
+            <label>Search orders<input type="search" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Order number, buyer, or livestock" /></label>
             <label>Filter by status<select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }}><option value="">All statuses</option>{orderStatuses.map((status) => <option key={status} value={status}>{formatStatus(status)}</option>)}</select></label>
             <label>Sort orders<select value={sort} onChange={(event) => { setSort(event.target.value as OrderSort); setPage(1); }}>
                 <option value="newest">Date · Newest first</option>
@@ -415,28 +406,12 @@ export function SellerOrdersPage({ onNavigationCountsChanged }: { onNavigationCo
             </select></label>
         </div>
         {error && <p className="seller-orders-error" role="alert">{error} {orders.length === 0 && !loading && <button type="button" onClick={() => void refreshOrders()}>Try again</button>}</p>}
-        {notificationError && <p className="seller-orders-error" role="alert">{notificationError}</p>}
-        {notifications.length > 0 && <section className="seller-order-notifications" aria-labelledby="seller-order-notifications-title">
-            <h3 id="seller-order-notifications-title">Order notifications</h3>
-            <ul>{notifications.slice(0, 8).map((notification) => {
-                const { type, order_id: orderId, order_reference: reference, status, message } = notification.data;
-                const description = type === 'rider_assignment_waiting' || type === 'delivery_proof_recorded'
-                    ? message ?? 'Rider assignment needs attention.'
-                    : status === 'PENDING_CONFIRMATION'
-                        ? `New order ${reference ?? ''} needs your decision.`
-                        : `Order ${reference ?? ''} updated: ${status ? formatStatus(status) : 'status updated'}.`;
-                return <li key={notification.id}>
-                    <span>{description}</span><time dateTime={notification.created_at}>{new Date(notification.created_at).toLocaleString()}</time>
-                    {orderId && <button type="button" onClick={() => void openOrder(orderId)}>Review order</button>}
-                </li>;
-            })}</ul>
-        </section>}
-        {loading ? <p className="seller-orders-state" role="status">Loading your orders...</p>
+        {loading ? <LoadingSkeleton variant="table" count={5} columns={7} label="Loading seller orders" />
             : error && orders.length === 0 ? null
             : orders.length === 0 ? <div className="seller-orders-empty"><h3>No orders yet</h3><p>New buyer orders will appear here when they are placed.</p></div>
                 : filteredOrders.length === 0 ? <div className="seller-orders-empty"><h3>No matching orders</h3><p>Try a different search or status filter.</p></div>
                     : <><div className="seller-orders-table-wrap"><table className="seller-orders-table">
-                        <thead><tr><th scope="col">Order</th><th scope="col">Date</th><th scope="col">Buyer</th><th scope="col">Products</th><th scope="col">Total</th><th scope="col">Status</th><th scope="col"><span className="sr-only">Details</span></th></tr></thead>
+                        <thead><tr><th scope="col">Order</th><th scope="col">Date</th><th scope="col">Buyer</th><th scope="col">Livestock</th><th scope="col">Total</th><th scope="col">Status</th><th scope="col"><span className="sr-only">Details</span></th></tr></thead>
                         <tbody>{visibleOrders.map((order) => <tr key={order.id}>
                             <td><strong>{order.order_reference}</strong></td>
                             <td><time dateTime={order.created_at}>{new Date(order.created_at).toLocaleDateString()}</time></td>
@@ -451,21 +426,25 @@ export function SellerOrdersPage({ onNavigationCountsChanged }: { onNavigationCo
                         <span>Showing {(page - 1) * ordersPerPage + 1}–{Math.min(page * ordersPerPage, sortedOrders.length)} of {sortedOrders.length} orders</span>
                         {lastPage > 1 && <Pagination page={page} lastPage={lastPage} onChange={setPage} />}
                     </div></>}
-        {selectedOrder && <div className="seller-order-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setSelectedOrder(null); }}>
-            <section className="seller-order-modal" role="dialog" aria-modal="true" aria-labelledby="seller-order-detail-title">
-                <header className="seller-order-modal-heading">
-                    <div><p className="eyebrow">Order details</p><h2 id="seller-order-detail-title">{selectedOrder.order_reference}</h2><time dateTime={selectedOrder.created_at}>{new Date(selectedOrder.created_at).toLocaleString()}</time></div>
-                    <button type="button" aria-label="Close order details" onClick={() => setSelectedOrder(null)} disabled={saving}>Close</button>
-                </header>
+        {selectedOrder && <FarmgateDetailDialog
+            eyebrow="Order details"
+            title={selectedOrder.order_reference}
+            description={<time dateTime={selectedOrder.created_at}>{new Date(selectedOrder.created_at).toLocaleString()}</time>}
+            onClose={() => setSelectedOrder(null)}
+            closeDisabled={saving}
+            className="seller-order-modal"
+            contentClassName="seller-order-content"
+        >
                 {detailsLoading ? <p role="status">Loading order details...</p> : detailsError ? <p className="seller-orders-error" role="alert">{detailsError} <button type="button" onClick={() => void openOrder(selectedOrder.id)}>Try again</button></p> : <>
                     <div className="seller-order-detail-grid">
                         <section><h3>Buyer</h3><p>{selectedOrder.buyer?.name ?? selectedOrder.shipping_address?.recipient_name ?? 'Buyer'}</p>{selectedOrder.shipping_address?.phone_number && <p>Phone: {selectedOrder.shipping_address.phone_number}</p>}</section>
                         <section><h3>{selectedOrder.delivery_method === 'SELF_PICKUP' ? 'Pickup' : 'Delivery'}</h3><p>{selectedOrder.delivery_method?.replaceAll('_', ' ') ?? 'Not specified'}</p><p>{orderAddress(selectedOrder)}</p>{selectedOrder.shipping_address?.delivery_notes && <p>Notes: {selectedOrder.shipping_address.delivery_notes}</p>}</section>
-                        <section><h3>Payment</h3><p>{selectedOrder.payment_method?.replaceAll('_', ' ') ?? 'Not specified'} · {selectedOrder.payment_status?.replaceAll('_', ' ') ?? 'Status unavailable'}</p></section>
+                        <section><h3>Payment</h3><p>{selectedOrder.payment_method?.replaceAll('_', ' ') ?? 'Not specified'} · {selectedOrder.payment_status?.replaceAll('_', ' ') ?? 'Status unavailable'}</p><p>Payment reference: {selectedOrder.payment_reference ?? 'Not available'}</p></section>
                         <section><h3>Order status</h3><p><span className={`seller-order-status status-${displayOrderStatus(selectedOrder).toLowerCase().replaceAll(' ', '_')}`}>{displayOrderStatus(selectedOrder)}</span></p></section>
                     </div>
-                    <section className="seller-order-items"><h3>Products and amounts</h3><div className="seller-order-table-scroll"><table><thead><tr><th scope="col">Product</th><th scope="col">Quantity</th><th scope="col">Unit price</th><th scope="col">Amount</th></tr></thead><tbody>{selectedOrder.items.map((item) => <tr key={item.id}><td>{item.listing?.name ?? 'Removed listing'}</td><td>{item.quantity} {item.pricing_type === 'PER_KILO' ? 'kg' : 'head'}</td><td>{amount(item.unit_price)}</td><td>{amount(item.total_amount)}</td></tr>)}</tbody></table></div><p>Products: {amount(selectedOrder.subtotal_amount)} · Delivery: {amount(selectedOrder.delivery_fee)}{selectedOrder.delivery_distance_km !== null && selectedOrder.delivery_distance_km !== undefined ? ` · ${Number(selectedOrder.delivery_distance_km).toFixed(2)} km (${selectedOrder.delivery_distance_method === 'OSRM_BARANGAY_ESTIMATE' ? 'barangay-level road distance estimate' : 'OSRM road route'})` : ''}{Number(selectedOrder.platform_fee ?? 0) > 0 ? ` · Platform fee: ${amount(selectedOrder.platform_fee)}` : ''}{Number(selectedOrder.order_processing_fee ?? 0) > 0 ? ` · Order processing: ${amount(selectedOrder.order_processing_fee)}` : ''}{Number(selectedOrder.transaction_fee ?? 0) > 0 ? ` · Transaction fee: ${amount(selectedOrder.transaction_fee)}` : ''}{Number(selectedOrder.payment_processing_fee ?? 0) > 0 ? ` · Payment processing: ${amount(selectedOrder.payment_processing_fee)}` : ''}{Number(selectedOrder.buyer_service_fee ?? 0) > 0 ? ` · Buyer service: ${amount(selectedOrder.buyer_service_fee)}` : ''}{Number(selectedOrder.discount_amount ?? 0) > 0 ? ` · Discount: − ${amount(selectedOrder.discount_amount)}` : ''} · Total: <strong>{amount(selectedOrder.total_amount)}</strong></p></section>
+                    <section className="seller-order-items"><h3>Livestock and amounts</h3><div className="seller-order-table-scroll"><table><thead><tr><th scope="col">Livestock listing</th><th scope="col">Quantity</th><th scope="col">Unit price</th><th scope="col">Amount</th></tr></thead><tbody>{selectedOrder.items.map((item) => <tr key={item.id}><td>{item.listing?.name ?? 'Removed listing'}</td><td>{item.quantity} {item.pricing_type === 'PER_KILO' ? 'kg' : 'head'}</td><td>{amount(item.unit_price)}</td><td>{amount(item.total_amount)}</td></tr>)}</tbody></table></div><p>Livestock: {amount(selectedOrder.subtotal_amount)} · Delivery: {amount(selectedOrder.delivery_fee)}{selectedOrder.delivery_distance_km !== null && selectedOrder.delivery_distance_km !== undefined ? ` · ${Number(selectedOrder.delivery_distance_km).toFixed(2)} km (${selectedOrder.delivery_distance_method === 'OSRM_BARANGAY_ESTIMATE' ? 'barangay-level road distance estimate' : 'OSRM road route'})` : ''}{Number(selectedOrder.platform_fee ?? 0) > 0 ? ` · Platform fee: ${amount(selectedOrder.platform_fee)}` : ''}{Number(selectedOrder.order_processing_fee ?? 0) > 0 ? ` · Order processing: ${amount(selectedOrder.order_processing_fee)}` : ''}{Number(selectedOrder.transaction_fee ?? 0) > 0 ? ` · Transaction fee: ${amount(selectedOrder.transaction_fee)}` : ''}{Number(selectedOrder.payment_processing_fee ?? 0) > 0 ? ` · Payment processing: ${amount(selectedOrder.payment_processing_fee)}` : ''}{Number(selectedOrder.buyer_service_fee ?? 0) > 0 ? ` · Buyer service: ${amount(selectedOrder.buyer_service_fee)}` : ''}{Number(selectedOrder.discount_amount ?? 0) > 0 ? ` · Discount: − ${amount(selectedOrder.discount_amount)}` : ''} · Total: <strong>{amount(selectedOrder.total_amount)}</strong></p></section>
                     <section className="seller-order-delivery"><h3>Rider assignment</h3>
+                        {delivery?.delivery_reference && <p>Delivery reference: <strong>{delivery.delivery_reference}</strong></p>}
                         {selectedOrder.delivery_method !== 'STANDARD_DELIVERY' ? <p>No rider assignment is required for this delivery method.</p>
                             : ['CANCELLED', 'REJECTED', 'COMPLETED'].includes(selectedOrder.status) ? <p>No active rider assignment is required for this {formatStatus(selectedOrder.status).toLowerCase()} order.</p>
                             : riderConfirmed ? <p role="status">Assigned to {delivery?.rider?.name ?? 'rider'} · {formatStatus(delivery?.status ?? '')}{delivery?.assigned_at ? ` · ${new Date(delivery.assigned_at).toLocaleString()}` : ''}</p>
@@ -495,7 +474,7 @@ export function SellerOrdersPage({ onNavigationCountsChanged }: { onNavigationCo
                             <div><dt>Order status</dt><dd>{formatStatus(selectedOrder.status)}</dd></div>
                         </dl>
                         <table className="buyer-order-receipt-items">
-                            <thead><tr><th scope="col">Item</th><th scope="col">Unit price</th><th scope="col">Line total</th></tr></thead>
+                            <thead><tr><th scope="col">Livestock</th><th scope="col">Unit price</th><th scope="col">Line total</th></tr></thead>
                             <tbody>{selectedOrder.items.map((item) => <tr key={item.id}>
                                 <td>{item.quantity.toLocaleString()} {item.pricing_type === 'PER_KILO' ? 'kg' : 'head'} × {item.listing?.name ?? 'Removed listing'}</td>
                                 <td>{amount(item.unit_price)} / {item.pricing_type === 'PER_KILO' ? 'kg' : 'head'}</td>
@@ -503,7 +482,7 @@ export function SellerOrdersPage({ onNavigationCountsChanged }: { onNavigationCo
                             </tr>)}</tbody>
                         </table>
                         <dl className="buyer-order-receipt-totals">
-                            <div><dt>Products</dt><dd>{amount(selectedOrder.subtotal_amount)}</dd></div>
+                            <div><dt>Livestock total</dt><dd>{amount(selectedOrder.subtotal_amount)}</dd></div>
                             <div><dt>{selectedOrder.delivery_method === 'SELF_PICKUP' ? 'Pickup fee' : 'Delivery fee'}</dt><dd>{amount(selectedOrder.delivery_fee)}</dd></div>
                             {Number(selectedOrder.platform_fee ?? 0) > 0 && <div><dt>Platform fee</dt><dd>{amount(selectedOrder.platform_fee)}</dd></div>}
                             {Number(selectedOrder.order_processing_fee ?? 0) > 0 && <div><dt>Order processing fee</dt><dd>{amount(selectedOrder.order_processing_fee)}</dd></div>}
@@ -545,9 +524,9 @@ export function SellerOrdersPage({ onNavigationCountsChanged }: { onNavigationCo
                     {canDecide && <section className="seller-order-decision" aria-label="Order decision">
                         {!paymentReady && <p className="seller-orders-error">This online payment is awaiting confirmation. You can decide after payment is confirmed.</p>}
                         {selectedOrder.payment_method !== 'COD' && selectedOrder.payment_status !== 'PAID' ? null : <div className="seller-order-decision-actions">
-                            <button type="button" disabled={saving} onClick={() => void decideOrder('CONFIRMED')}>{saving ? 'Updating...' : 'Accept order'}</button>
+                            <button type="button" disabled={saving || confirming} onClick={() => void decideOrder('CONFIRMED')}>{confirming ? 'Confirming...' : saving ? 'Updating...' : 'Accept order'}</button>
                             <label>Reason for rejection<textarea value={rejectReason} onChange={(event) => setRejectReason(event.target.value)} maxLength={500} required rows={2} /></label>
-                            <button type="button" className="danger" disabled={saving || !rejectReason.trim()} onClick={() => void decideOrder('REJECTED')}>Reject order</button>
+                            <button type="button" className="danger" disabled={saving || confirming || !rejectReason.trim()} onClick={() => void decideOrder('REJECTED')}>{confirming ? 'Confirming...' : saving ? 'Updating...' : 'Reject order'}</button>
                         </div>}
                     </section>}
                     {selectedOrder.status === 'CONFIRMED' && <section className="seller-order-decision" aria-label="Order preparation">
@@ -555,7 +534,7 @@ export function SellerOrdersPage({ onNavigationCountsChanged }: { onNavigationCo
                         <p>Begin preparing the accepted order. Mark it ready when it can be handed over for pickup.</p>
                         {!paymentReady && <p className="seller-orders-error">This online payment is awaiting confirmation. You can continue after payment is confirmed.</p>}
                         <div className="seller-order-decision-actions">
-                            <button type="button" disabled={saving || !paymentReady} onClick={() => void decideOrder('PREPARING')}>{saving ? 'Updating...' : 'Start preparing'}</button>
+                            <button type="button" disabled={saving || confirming || !paymentReady} onClick={() => void decideOrder('PREPARING')}>{confirming ? 'Confirming...' : saving ? 'Updating...' : 'Start preparing'}</button>
                         </div>
                     </section>}
                     {selectedOrder.status === 'PREPARING' && <section className="seller-order-decision" aria-label="Pickup readiness">
@@ -563,13 +542,12 @@ export function SellerOrdersPage({ onNavigationCountsChanged }: { onNavigationCo
                         <p>Mark the order ready only after it has been prepared. For standard delivery, this starts rider assignment.</p>
                         {!paymentReady && <p className="seller-orders-error">This online payment is awaiting confirmation. You can continue after payment is confirmed.</p>}
                         <div className="seller-order-decision-actions">
-                            <button type="button" disabled={saving || !paymentReady} onClick={() => void decideOrder('READY_FOR_PICKUP')}>{saving ? 'Updating...' : 'Mark Ready for Pickup'}</button>
+                            <button type="button" disabled={saving || confirming || !paymentReady} onClick={() => void decideOrder('READY_FOR_PICKUP')}>{confirming ? 'Confirming...' : saving ? 'Updating...' : 'Mark Ready for Pickup'}</button>
                         </div>
                     </section>}
                     <section className="seller-order-history"><h3>Order history</h3>{selectedOrder.status_history?.length ? <ol>{selectedOrder.status_history.map((entry) => <li key={entry.id}><strong>{formatStatus(entry.to_status)}</strong><span>{entry.actor?.name ? ` · ${entry.actor.name}` : ''} · {new Date(entry.created_at).toLocaleString()}</span>{entry.reason && <p>{entry.reason}</p>}</li>)}</ol> : <p>No status history is recorded.</p>}</section>
                     {!!selectedOrder.activities?.length && <section className="seller-order-history"><h3>Case and review activity</h3><ol>{selectedOrder.activities.map((activity) => <li key={activity.id}><strong>{activity.activity_key.replaceAll('_', ' ')}</strong><span>{activity.actor?.name ? ` · ${activity.actor.name}` : ''} · {new Date(activity.created_at).toLocaleString()}</span><p>{activity.details}</p></li>)}</ol></section>}
                 </>}
-            </section>
-        </div>}
+        </FarmgateDetailDialog>}
     </section>;
 }

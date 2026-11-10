@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Str;
 
 class Delivery extends Model
 {
@@ -29,6 +30,7 @@ class Delivery extends Model
     protected $appends = ['has_delivery_proof'];
 
     protected $fillable = [
+        'delivery_reference',
         'order_id',
         'rider_id',
         'status',
@@ -55,6 +57,27 @@ class Delivery extends Model
         'delivery_verification_longitude',
         'assigned_at',
     ];
+
+    protected static function booted(): void
+    {
+        static::creating(function (Delivery $delivery): void {
+            if (filled($delivery->delivery_reference)) {
+                return;
+            }
+
+            do {
+                $reference = sprintf('FG-DEL-%d-%s', now()->year, Str::upper(Str::random(6)));
+            } while (static::query()->where('delivery_reference', $reference)->exists());
+
+            $delivery->delivery_reference = $reference;
+        });
+
+        static::updating(function (Delivery $delivery): void {
+            if ($delivery->isDirty('delivery_reference')) {
+                throw new \LogicException('A delivery reference cannot be changed after creation.');
+            }
+        });
+    }
 
     protected function casts(): array
     {

@@ -7,10 +7,30 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Str;
+use LogicException;
 
 class Review extends Model
 {
     use SoftDeletes;
+
+    protected static function booted(): void
+    {
+        static::creating(function (Review $review): void {
+            if (blank($review->review_reference)) {
+                do {
+                    $reference = sprintf('FG-REV-%d-%s', now()->year, Str::upper(Str::random(6)));
+                } while (static::query()->where('review_reference', $reference)->exists());
+                $review->review_reference = $reference;
+            }
+        });
+
+        static::updating(function (Review $review): void {
+            if ($review->isDirty('review_reference')) {
+                throw new LogicException('A review reference cannot be changed after creation.');
+            }
+        });
+    }
 
     protected $fillable = ['order_id', 'listing_id', 'buyer_id', 'seller_id', 'rating', 'comment', 'status'];
 

@@ -9,14 +9,17 @@ use App\Enums\PricingType;
 use App\Enums\Role;
 use App\Models\Category;
 use App\Models\Complaint;
+use App\Models\ComplaintMessage;
 use App\Models\LivestockListing;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\OrderStatusHistory;
 use App\Models\User;
+use App\Notifications\OrderCaseUpdatedNotification;
 use App\Services\EscalateOrderCases;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
@@ -50,17 +53,61 @@ class FeedbackDisputeTest extends TestCase
         $order = Order::create(['buyer_id' => $buyer->id, 'seller_id' => $seller->id, 'status' => OrderStatus::COMPLETED, 'total_amount' => 700]);
 
         $response = $this->actingAs($buyer)->postJson("/api/orders/{$order->id}/complaint", [
-            'reason' => 'Damaged livestock',
+            'reason' => 'Animal arrived injured or unwell',
             'description' => 'The order did not match the agreed condition.',
             'evidence' => 'Photo reference stored with the order.',
         ])->assertCreated();
 
         $complaintId = $response->json('complaint.id');
+        $caseReference = $response->json('complaint.case_reference');
+        $this->assertMatchesRegularExpression('/^FG-CASE-\d{4}-[A-Z0-9]{5}$/', $caseReference);
+        $this->assertDatabaseHas('complaints', ['id' => $complaintId, 'case_reference' => $caseReference, 'reason' => 'Animal arrived injured or unwell']);
+        $notification = DB::table('notifications')->where('notifiable_id', $buyer->id)->where('type', OrderCaseUpdatedNotification::class)->first();
+        $this->assertSame($caseReference, json_decode($notification->data, true)['case_reference']);
+        $this->assertSame($caseReference, $this->actingAs($buyer)->getJson('/api/buyer/complaints')->assertOk()->json('complaints.0.case_reference'));
         $this->actingAs($seller)->getJson('/api/seller/complaints')
             ->assertOk()
             ->assertJsonPath('complaints.data.0.id', $complaintId)
+            ->assertJsonPath('complaints.data.0.case_reference', $caseReference)
             ->assertJsonPath('action_required_total', 1);
         $this->assertDatabaseHas('complaint_status_histories', ['complaint_id' => $complaintId, 'to_status' => ComplaintStatus::OPEN->value]);
+    }
+
+    public function test_seller_case_search_matches_case_order_buyer_type_and_reason_without_leaking_other_cases(): void
+    {
+        $seller = User::factory()->create(['role' => Role::SELLER]);
+        $buyer = User::factory()->create(['role' => Role::BUYER, 'name' => 'Searchable Case Buyer']);
+        $otherSeller = User::factory()->create(['role' => Role::SELLER]);
+        $otherBuyer = User::factory()->create(['role' => Role::BUYER, 'name' => 'Other Searchable Case Buyer']);
+        $order = Order::create(['buyer_id' => $buyer->id, 'seller_id' => $seller->id, 'status' => OrderStatus::COMPLETED, 'total_amount' => 700]);
+        $case = Complaint::create([
+            'order_id' => $order->id,
+            'opened_by' => $buyer->id,
+            'respondent_id' => $seller->id,
+            'case_type' => 'RETURN_REFUND',
+            'reason' => 'Searchable livestock return reason',
+            'description' => 'The buyer provided a distinct case description.',
+            'status' => ComplaintStatus::OPEN,
+        ]);
+        $otherOrder = Order::create(['buyer_id' => $otherBuyer->id, 'seller_id' => $otherSeller->id, 'status' => OrderStatus::COMPLETED, 'total_amount' => 700]);
+        Complaint::create([
+            'order_id' => $otherOrder->id,
+            'opened_by' => $otherBuyer->id,
+            'respondent_id' => $otherSeller->id,
+            'case_type' => 'RETURN_REFUND',
+            'reason' => 'Searchable livestock return reason',
+            'description' => 'A case belonging to a different seller.',
+            'status' => ComplaintStatus::OPEN,
+        ]);
+
+        foreach ([$case->case_reference, $order->order_reference, 'Searchable Case Buyer', 'RETURN_REFUND', 'Return / refund', 'Searchable livestock return reason'] as $term) {
+            $this->actingAs($seller)->getJson('/api/seller/complaints?search='.urlencode($term))
+                ->assertOk()
+                ->assertJsonPath('complaints.total', 1)
+                ->assertJsonPath('complaints.data.0.id', $case->id)
+                ->assertJsonPath('complaints.data.0.order.order_reference', $order->order_reference)
+                ->assertJsonPath('complaints.data.0.case_type', 'RETURN_REFUND');
+        }
     }
 
     public function test_admin_resolution_requires_reason_and_records_history(): void
@@ -84,6 +131,39 @@ class FeedbackDisputeTest extends TestCase
 
         $this->assertDatabaseHas('complaint_status_histories', ['complaint_id' => $complaint->id, 'to_status' => 'RESOLVED', 'changed_by' => $admin->id]);
         $this->actingAs($seller)->getJson('/api/seller/complaints')->assertOk()->assertJsonPath('action_required_total', 0);
+    }
+
+    public function test_admin_case_queue_search_includes_order_and_party_and_returns_order_items(): void
+    {
+        $admin = User::factory()->create(['role' => Role::ADMIN]);
+        $buyer = User::factory()->create(['role' => Role::BUYER, 'name' => 'Queue Search Buyer']);
+        $seller = User::factory()->create(['role' => Role::SELLER, 'name' => 'Queue Search Seller']);
+        $order = $this->orderWithListing($buyer, $seller, ['delivery_fee' => 25], 2, 300);
+        $case = Complaint::create([
+            'order_id' => $order->id,
+            'opened_by' => $buyer->id,
+            'respondent_id' => $seller->id,
+            'reason' => 'Animal arrived injured or unwell',
+            'description' => 'The delivered livestock needs review.',
+            'status' => ComplaintStatus::OPEN,
+        ]);
+        ComplaintMessage::create([
+            'complaint_id' => $case->id,
+            'sender_id' => $seller->id,
+            'message' => 'I am reviewing the livestock report.',
+        ]);
+
+        $this->actingAs($admin)->getJson('/api/admin/complaints?search='.$order->order_reference.'&status=OPEN&sort=oldest')
+            ->assertOk()
+            ->assertJsonPath('complaints.total', 1)
+            ->assertJsonPath('complaints.data.0.order.delivery_fee', '25.00')
+            ->assertJsonPath('complaints.data.0.order.items.0.listing.name', 'Boer Goat')
+            ->assertJsonPath('complaints.data.0.messages.0.sender.name', 'Queue Search Seller')
+            ->assertJsonPath('complaints.data.0.messages.0.sender.role', 'SELLER');
+        $this->actingAs($admin)->getJson('/api/admin/complaints?search='.$case->case_reference)
+            ->assertOk()
+            ->assertJsonPath('complaints.total', 1)
+            ->assertJsonPath('complaints.data.0.case_reference', $case->case_reference);
     }
 
     public function test_buyer_can_submit_media_review_and_admin_can_moderate_a_report(): void

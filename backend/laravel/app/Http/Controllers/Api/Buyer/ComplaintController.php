@@ -76,7 +76,7 @@ class ComplaintController extends Controller
         foreach ($data['items'] as $selected) {
             $item = $order->items->firstWhere('id', (int) $selected['order_item_id']);
             if (! $item || $selected['quantity'] > $item->quantity) {
-                throw ValidationException::withMessages(['items' => 'Select valid quantities from products included in this order.']);
+                throw ValidationException::withMessages(['items' => 'Select valid quantities from livestock included in this order.']);
             }
             $lineAmount = round((float) $item->unit_price * (int) $selected['quantity'], 2);
             $requestedAmount += $lineAmount;
@@ -127,7 +127,7 @@ class ComplaintController extends Controller
                         'reason' => 'Seller responded to the case.',
                     ]);
                 }
-                $workflow->activity($case, $request->user()->id, 'CASE_MESSAGE', 'A participant added a message to case #'.$case->id.'.');
+                $workflow->activity($case, $request->user()->id, 'CASE_MESSAGE', 'A participant added a message to case '.$case->case_reference.'.');
 
                 return $message->load(['sender:id,name', 'media']);
             });
@@ -136,7 +136,7 @@ class ComplaintController extends Controller
             throw $exception;
         }
 
-        $workflow->notifyParticipants($complaint, 'A new message was added to case #'.$complaint->id.'.');
+        $workflow->notifyParticipants($complaint, 'A new message was added to case '.$complaint->case_reference.'.');
         $message->setAttribute('media_files', $workflow->mediaPayload($message->media));
         $message->makeHidden('media');
 
@@ -191,7 +191,7 @@ class ComplaintController extends Controller
                     $case,
                     $request->user()->id,
                     $case->case_type === 'RETURN_REFUND' ? 'RETURN_REQUESTED' : 'COMPLAINT_OPENED',
-                    ($case->case_type === 'RETURN_REFUND' ? 'Return/refund request' : 'Complaint').' opened as case #'.$case->id.'.',
+                    ($case->case_type === 'RETURN_REFUND' ? 'Return/refund request' : 'Complaint').' opened as case '.$case->case_reference.'.',
                 );
 
                 return $case->load(['order:id,order_reference,status,total_amount', 'statusHistory', 'media']);
@@ -203,7 +203,7 @@ class ComplaintController extends Controller
         $case->setAttribute('evidence_media', $workflow->mediaPayload($case->media));
         $workflow->attachPayoutEvidenceUrl($case);
         $case->makeHidden(['media', 'evidence']);
-        $workflow->notifyParticipants($case, $case->case_type === 'RETURN_REFUND' ? 'A return/refund request was opened and requires admin review.' : 'A complaint was opened for this order.');
+        $workflow->notifyParticipants($case, ($case->case_type === 'RETURN_REFUND' ? 'A return/refund request was opened' : 'A complaint was opened').' as case '.$case->case_reference.' and requires admin review.');
 
         return response()->json(['complaint' => $case], 201);
     }

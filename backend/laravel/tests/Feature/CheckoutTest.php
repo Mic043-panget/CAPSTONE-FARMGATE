@@ -15,6 +15,7 @@ use App\Models\User;
 use App\Services\SystemSettingsService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
@@ -593,8 +594,27 @@ class CheckoutTest extends TestCase
 
         $payload = [
             'data' => [
-                'type' => 'checkout_session.payment.paid',
-                'data' => ['id' => 'cs_farmgate_test', 'attributes' => ['reference_number' => (string) $unpaidOrderId]],
+                'id' => 'evt_farmgate_test',
+                'type' => 'event',
+                'attributes' => [
+                    'type' => 'checkout_session.payment.paid',
+                    'livemode' => false,
+                    'data' => [
+                        'id' => 'cs_farmgate_test',
+                        'type' => 'checkout_session',
+                        'attributes' => [
+                            'reference_number' => (string) $unpaidOrderId,
+                            'payments' => [[
+                                'id' => 'pay_farmgate_test',
+                                'attributes' => [
+                                    'status' => 'paid',
+                                    'amount' => 64000,
+                                    'currency' => 'PHP',
+                                ],
+                            ],
+                            ]],
+                    ],
+                ],
             ],
         ];
         $body = json_encode($payload, JSON_THROW_ON_ERROR);
@@ -605,9 +625,57 @@ class CheckoutTest extends TestCase
             'CONTENT_TYPE' => 'application/json',
             'HTTP_ACCEPT' => 'application/json',
         ], $body)->assertOk();
+        $this->call('POST', '/api/payments/paymongo/webhook', [], [], [], [
+            'HTTP_PAYMONGO_SIGNATURE' => 't='.$timestamp.',te='.$signature,
+            'CONTENT_TYPE' => 'application/json',
+            'HTTP_ACCEPT' => 'application/json',
+        ], $body)->assertOk()->assertJsonPath('message', 'Duplicate webhook event ignored.');
 
         $this->assertSame(2, Order::query()->where('payment_status', 'PAID')->count());
         $this->assertNotNull(Order::query()->where('paymongo_checkout_session_id', 'cs_farmgate_test')->first()?->paid_at);
+        $this->assertDatabaseCount('paymongo_webhook_events', 1);
+    }
+
+    public function test_paymongo_checkout_requires_a_test_key_and_handles_invalid_credentials_safely(): void
+    {
+        $buyer = User::factory()->create(['role' => Role::BUYER]);
+        $seller = User::factory()->create(['role' => Role::SELLER]);
+        $category = Category::create(['name' => 'Goat', 'slug' => 'goat']);
+        $listing = LivestockListing::create([
+            'seller_id' => $seller->id,
+            'category_id' => $category->id,
+            'name' => 'Boer Goat',
+            'quantity' => 2,
+            'pricing_type' => PricingType::PER_HEAD,
+            'price_per_head' => 100,
+            'status' => ListingStatus::ACTIVE,
+        ]);
+        $this->actingAs($buyer)->postJson('/api/cart/items', ['listing_id' => $listing->id, 'quantity' => 1])->assertOk();
+
+        config(['services.paymongo.secret_key' => null]);
+        $this->actingAs($buyer)->postJson('/api/checkout', ['payment_method' => 'GCASH'])
+            ->assertStatus(503)
+            ->assertJsonPath('message', 'PayMongo test-mode credentials are required. Use cash on delivery or contact support.');
+
+        config(['services.paymongo.secret_key' => 'sk_live_must_not_be_used']);
+        $this->actingAs($buyer)->postJson('/api/checkout', ['payment_method' => 'GCASH'])
+            ->assertStatus(503);
+        $this->assertDatabaseCount('orders', 0);
+
+        config(['services.paymongo.secret_key' => 'sk_test_invalid_credentials']);
+        config(['services.frontend_url' => 'http://127.0.0.1:5173']);
+        Http::fake([
+            'https://api.paymongo.com/v2/checkout_sessions' => Http::response(['errors' => [['code' => 'authentication_error']]], 401),
+        ]);
+        $response = $this->actingAs($buyer)->postJson('/api/checkout', ['payment_method' => 'GCASH'])
+            ->assertStatus(502);
+        $this->assertStringNotContainsString('sk_test_invalid_credentials', $response->getContent());
+        $this->assertDatabaseHas('orders', ['payment_status' => 'FAILED', 'status' => OrderStatus::CANCELLED->value]);
+        $this->assertDatabaseHas('livestock_listings', ['id' => $listing->id, 'quantity' => 2]);
+        Http::assertSent(fn ($request): bool => $request->hasHeader(
+            'Authorization',
+            'Basic '.base64_encode('sk_test_invalid_credentials:'),
+        ));
     }
 
     public function test_buy_now_checks_out_only_the_selected_listing_and_reserves_its_stock(): void
@@ -789,6 +857,25 @@ class CheckoutTest extends TestCase
             'status' => OrderStatus::CANCELLED->value,
         ])->assertOk()
             ->assertJsonPath('order.status', OrderStatus::CANCELLED->value);
+    }
+
+    public function test_buyer_order_list_preserves_unknown_saved_status_without_enabling_actions(): void
+    {
+        $buyer = User::factory()->create(['role' => Role::BUYER]);
+        $seller = User::factory()->create(['role' => Role::SELLER]);
+        $order = Order::create([
+            'buyer_id' => $buyer->id,
+            'seller_id' => $seller->id,
+            'status' => OrderStatus::PENDING_CONFIRMATION,
+            'total_amount' => 440,
+        ]);
+        DB::table('orders')->where('id', $order->id)->update(['status' => 'AWAITING_PAYMENT']);
+
+        $this->actingAs($buyer)->getJson('/api/orders')
+            ->assertOk()
+            ->assertJsonPath('orders.0.status', 'AWAITING_PAYMENT')
+            ->assertJsonPath('orders.0.buyer_can_cancel', false)
+            ->assertJsonPath('orders.0.seller.name', $seller->name);
     }
 
     public function test_buyer_can_cancel_orders_until_they_are_on_the_way(): void

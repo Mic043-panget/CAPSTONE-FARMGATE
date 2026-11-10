@@ -32,12 +32,12 @@ class EscalateOrderCases
                             return null;
                         }
                         $locked->forceFill(['escalated_at' => now()])->save();
-                        $this->workflow->activity($locked, null, 'CASE_ESCALATED', 'Case #'.$locked->id.' was escalated to admin because the seller did not respond within three calendar days.');
+                        $this->workflow->activity($locked, null, 'CASE_ESCALATED', 'Case '.$locked->case_reference.' was escalated to admin because the seller did not respond within three calendar days.');
 
                         return $locked->fresh('order');
                     });
                     if ($changed) {
-                        $this->workflow->notifyParticipants($changed, 'Case #'.$changed->id.' was escalated to admin because the seller response window expired.');
+                        $this->workflow->notifyParticipants($changed, 'Case '.$changed->case_reference.' was escalated to admin because the seller response window expired.');
                         $escalated++;
                     }
                 }

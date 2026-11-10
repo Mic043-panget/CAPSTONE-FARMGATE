@@ -70,13 +70,31 @@ class DashboardTest extends TestCase
             'status' => OrderStatus::PENDING_CONFIRMATION,
             'total_amount' => 300,
         ]);
+        Order::create([
+            'buyer_id' => $buyer->id,
+            'seller_id' => $seller->id,
+            'status' => OrderStatus::CONFIRMED,
+            'total_amount' => 200,
+        ]);
+        Order::create([
+            'buyer_id' => $buyer->id,
+            'seller_id' => $seller->id,
+            'status' => OrderStatus::CANCELLED,
+            'total_amount' => 100,
+        ]);
 
         $this->actingAs($seller)->getJson('/api/dashboard/seller')
             ->assertOk()
             ->assertJsonPath('summary.total_completed_sales', '500.00')
-            ->assertJsonPath('summary.pending_orders', 1)
+            ->assertJsonPath('summary.pending_orders', 2)
+            ->assertJsonPath('summary.orders_needing_confirmation', 1)
             ->assertJsonPath('summary.active_listings', 1)
             ->assertJsonPath('summary.interested_buyers', 0);
+
+        $pending->update(['status' => OrderStatus::CONFIRMED]);
+        $this->getJson('/api/dashboard/seller')
+            ->assertOk()
+            ->assertJsonPath('summary.orders_needing_confirmation', 0);
     }
 
     public function test_buyer_dashboard_returns_account_summary(): void

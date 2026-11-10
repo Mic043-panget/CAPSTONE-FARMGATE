@@ -66,6 +66,29 @@ class ChatApiTest extends TestCase
         $this->assertDatabaseCount('chat_messages', 2);
     }
 
+    public function test_uncertain_ai_response_is_labeled_for_handoff_and_notifies_an_admin(): void
+    {
+        $admin = User::factory()->create(['role' => Role::ADMIN]);
+        $buyer = User::factory()->create(['role' => Role::BUYER]);
+        $provider = Mockery::mock(ChatProvider::class);
+        $provider->shouldReceive('respond')->once()->withArgs(
+            fn (string $instruction): bool => str_contains($instruction, 'Never promise refunds')
+                && str_contains($instruction, '[HUMAN_REVIEW_NEEDED]'),
+        )->andReturn('[HUMAN_REVIEW_NEEDED] I cannot verify this. Please contact FARMGATE support.');
+        $this->app->instance(ChatProvider::class, $provider);
+
+        $this->actingAs($buyer)->postJson('/api/chat/messages', [
+            'message' => 'Will I get a refund?',
+        ])->assertCreated()
+            ->assertJsonPath('assistant_message.content', 'I cannot verify this. Please contact FARMGATE support.')
+            ->assertJsonPath('conversation.needs_human_attention', true);
+
+        $notice = $admin->notifications()->firstOrFail();
+        $this->assertSame('chat_message', $notice->data['type']);
+        $this->assertTrue($notice->data['attention_required']);
+        $this->assertArrayNotHasKey('content', $notice->data);
+    }
+
     public function test_seller_report_context_is_recomputed_and_scoped_to_authenticated_seller(): void
     {
         $seller = User::factory()->create(['role' => Role::SELLER, 'name' => 'Farm Seller']);

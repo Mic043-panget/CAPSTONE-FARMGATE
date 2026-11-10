@@ -30,7 +30,7 @@ not persisted.
 - `DELETE /api/chat/conversations/{id}` deletes an owned AI conversation and its messages. Direct conversations cannot be deleted by one participant.
 - `PATCH /api/chat/conversations/{id}/report-context` clears the selected report context for an owned AI conversation.
 - `GET /api/chat/recipients?search={name}` searches eligible recipients by name (at least two characters; results are capped at 15). It returns only `id`, `name`, and `role`.
-- `POST /api/chat/direct-conversations` starts or retrieves the unique direct conversation for a recipient pair. The body contains only `recipient_id`.
+- `POST /api/chat/direct-conversations` starts or retrieves the unique direct conversation for a recipient pair. The body contains `recipient_id` and may include `listing_id` for a buyer-seller listing chat. Listing context is accepted only when the listing belongs to the paired seller and an interest or order connects the buyer to that specific listing. The conversation response includes only the listing name, first image URL, and an in-app listing link.
 - `POST /api/chat/conversations/{id}/messages` stores a direct message from the authenticated participant. Direct messages are limited to 2,000 characters and require a UUID `client_message_id` for retry idempotency.
 
 Example AI request:
@@ -74,11 +74,30 @@ conversation; repeating it with the same content returns the saved message,
 while reusing it with different content returns 409. Message contents are
 excluded from audit change values.
 Fetch/send is request-based; realtime delivery is not provided.
+
+AI replies are informational and clearly labeled as automated in chat. The AI
+is instructed not to promise refunds, complaint outcomes, or order/payment/
+delivery status changes. When the AI marks uncertainty or a sensitive topic,
+or a direct/AI message matches a sensitive-topic rule, the conversation is
+flagged for human attention and a database notification is sent after commit
+to the relevant seller or admins. Attention notifications contain no message
+content and are de-duplicated per conversation. This is an escalation signal,
+not a guarantee that a human has responded or resolved the issue.
 Users can load or update their own chat and privacy preferences with
 `GET /api/profile/settings` and `PUT /api/profile/settings`. The
 `chat_notifications` preference controls database notifications for direct
 messages, and `allow_direct_messages` controls whether other users can start
 or continue a direct thread with that account.
+
+Notification emails and device push share the notification center record and
+its reference. Device delivery uses the Web Push API; configure
+`VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and `VAPID_SUBJECT` through the
+deployment's secret manager, apply migrations, and run a queue worker for the
+`notifications` queue. Never commit the VAPID private key. Users enable device permission from the Notifications page; denied or
+unsupported devices continue to receive in-app notifications and eligible
+transactional email. Push subscriptions are owner-scoped and encrypted at rest.
+Email and push delivery attempts and outcomes are recorded per notification in
+`notification_deliveries`.
 
 AI role access follows existing reports: admins can request all report types;
 sellers can request sales, transactions, listings, and deliveries; buyers can

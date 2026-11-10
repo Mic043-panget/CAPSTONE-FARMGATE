@@ -3,6 +3,14 @@ import api, { initializeCsrf } from '../../lib/api';
 import { showSuccess } from '../../lib/alerts';
 
 type FeedbackForm = 'review' | 'complaint' | 'return' | null;
+const caseReasons = [
+    'Animal arrived injured or unwell',
+    'Wrong animal or breed delivered',
+    'Animal was not included in the delivery',
+    'Animal’s description or listing was inaccurate',
+    'Delivery issue',
+    'Other',
+];
 const MAX_MEDIA_COUNT = 5;
 const MAX_MEDIA_SIZE = 20 * 1024 * 1024;
 const SUPPORTED_MEDIA_TYPES = new Set([
@@ -19,6 +27,7 @@ type OrderCaseItem = {
     id: number;
     quantity: number;
     unit_price: string;
+    pricing_type: 'PER_HEAD' | 'PER_KILO';
     listing?: { id: number; name: string } | null;
 };
 
@@ -35,6 +44,7 @@ type Media = { id: number; mime_type: string; original_name: string; url: string
 type CaseMessage = { id: number; sender_id: number; sender?: { name: string }; message: string; created_at: string; media_files?: Media[] };
 type OrderCase = {
     id: number;
+    case_reference: string;
     case_type: 'COMPLAINT' | 'RETURN_REFUND';
     reason: string;
     other_reason?: string | null;
@@ -201,7 +211,7 @@ export function OrderCasePanel({ order, onError }: { order: CaseOrder; onError: 
 
     async function submitReview(event: React.FormEvent<HTMLFormElement>) {
         event.preventDefault();
-        if (!listingId) { onError('Choose a product from this order to review.'); return; }
+        if (!listingId) { onError('Choose a livestock listing from this order to review.'); return; }
         if (!rating || Number(rating) < 1 || Number(rating) > 5) { onError('Choose a rating from 1 to 5 stars.'); return; }
         const body = new FormData();
         body.append('listing_id', listingId);
@@ -228,7 +238,7 @@ export function OrderCasePanel({ order, onError }: { order: CaseOrder; onError: 
         if (!reason || description.trim().length < 5) { onError('Choose a reason and describe the issue in at least 5 characters.'); return; }
         if (reason === 'Other' && !otherReason.trim()) { onError('Explain the Other reason before submitting.'); return; }
         const selected = order.items.filter((item) => (selectedItems[item.id] ?? 0) > 0);
-        if (caseType === 'RETURN_REFUND' && selected.length === 0) { onError('Choose at least one item and quantity for a return or refund request.'); return; }
+        if (caseType === 'RETURN_REFUND' && selected.length === 0) { onError('Choose at least one livestock listing and quantity for a return or refund request.'); return; }
         const body = new FormData();
         body.append('reason', reason);
         if (reason === 'Other') body.append('other_reason', otherReason);
@@ -292,19 +302,19 @@ export function OrderCasePanel({ order, onError }: { order: CaseOrder; onError: 
                     <button ref={closeButtonRef} type="button" aria-label="Close form" disabled={saving} onClick={closeForm}>×</button>
                 </header>
                 {activeForm === 'review' ? <form onSubmit={submitReview}>
-                    <label>Product<select value={listingId} onChange={(event) => setListingId(event.target.value)} required><option value="">Choose a product</option>{reviewableItems.map((item) => <option key={item.id} value={item.listing?.id}>{item.listing?.name}</option>)}</select></label>
+                    <label>Livestock listing<select value={listingId} onChange={(event) => setListingId(event.target.value)} required><option value="">Choose a livestock listing</option>{reviewableItems.map((item) => <option key={item.id} value={item.listing?.id}>{item.listing?.name}</option>)}</select></label>
                     <label>Rating<select value={rating} onChange={(event) => setRating(event.target.value)} required>{[5, 4, 3, 2, 1].map((value) => <option key={value} value={value}>{value} - {value === 5 ? 'Excellent' : value === 4 ? 'Good' : value === 3 ? 'Fair' : value === 2 ? 'Poor' : 'Very poor'}</option>)}</select></label>
                     <label>Written review<textarea value={comment} onChange={(event) => setComment(event.target.value)} maxLength={2000} rows={4} /></label>
                     <MediaPicker label="Optional photos or videos" files={reviewMedia} onChange={setReviewMedia} onError={onError} />
                     <footer className="order-case-modal-footer"><button type="button" disabled={saving} onClick={closeForm}>Cancel</button><button type="submit" disabled={saving}>{saving ? 'Submitting…' : 'Submit review'}</button></footer>
                 </form> : <form onSubmit={submitCase}>
-                <label>Reason<select value={reason} onChange={(event) => setReason(event.target.value)} required><option value="">Choose a reason</option><option>Damaged</option><option>Incorrect item</option><option>Missing item</option><option>Misrepresented</option><option>Delivery issue</option><option>Other</option></select></label>
+                <label>Reason<select value={reason} onChange={(event) => setReason(event.target.value)} required><option value="">Choose a reason</option>{caseReasons.map((caseReason) => <option key={caseReason}>{caseReason}</option>)}</select></label>
                 {reason === 'Other' && <label>Explain the reason<textarea value={otherReason} onChange={(event) => setOtherReason(event.target.value)} maxLength={500} required /></label>}
                 <label>Explain what happened<textarea value={description} onChange={(event) => setDescription(event.target.value)} maxLength={5000} minLength={5} rows={4} required /></label>
                 {activeForm === 'return' && <>
-                    <fieldset><legend>Affected items and quantities</legend>{order.items.map((item) => <label key={item.id}>{item.listing?.name ?? 'Order item'} <input type="number" min={0} max={item.quantity} value={selectedItems[item.id] ?? 0} onChange={(event) => setSelectedItems((current) => ({ ...current, [item.id]: Math.max(0, Math.min(item.quantity, Number(event.target.value))) }))} /></label>)}</fieldset>
-                    <label>Resolution requested<select value={returnMethod} onChange={(event) => setReturnMethod(event.target.value as 'REFUND_ONLY' | 'RETURN_AND_REFUND')}><option value="REFUND_ONLY">Refund only</option><option value="RETURN_AND_REFUND">Return livestock and request refund (subject to approval)</option></select></label>
-                    <p className="order-case-policy-note">Requests must be submitted within 7 days after completion. Item amounts are shown to admins for review; shipping/fees and exceptions require admin policy review. No refund is automatic.</p>
+                    <fieldset><legend>Affected livestock and quantities</legend>{order.items.map((item) => <label key={item.id}>{item.listing?.name ?? 'Livestock listing'} ({item.pricing_type === 'PER_KILO' ? 'kg' : 'head'}) <input type="number" min={0} max={item.quantity} value={selectedItems[item.id] ?? 0} onChange={(event) => setSelectedItems((current) => ({ ...current, [item.id]: Math.max(0, Math.min(item.quantity, Number(event.target.value))) }))} /></label>)}</fieldset>
+                    <label>Resolution requested<select value={returnMethod} onChange={(event) => setReturnMethod(event.target.value as 'REFUND_ONLY' | 'RETURN_AND_REFUND')}><option value="REFUND_ONLY">Refund only</option><option value="RETURN_AND_REFUND">Return the livestock and request a refund (subject to approval)</option></select></label>
+                    <p className="order-case-policy-note">Requests must be submitted within 7 days after completion. Livestock amounts are shown to admins for review; shipping/fees and exceptions require admin policy review. No refund is automatic.</p>
                 </>}
                 <MediaPicker label="Optional supporting photos/videos" files={caseMedia} onChange={setCaseMedia} onError={onError} />
                 <footer className="order-case-modal-footer"><button type="button" disabled={saving} onClick={closeForm}>Cancel</button><button type="submit" disabled={saving}>{saving ? 'Submitting…' : activeForm === 'return' ? 'Submit request' : 'Submit complaint'}</button></footer>
@@ -312,13 +322,13 @@ export function OrderCasePanel({ order, onError }: { order: CaseOrder; onError: 
             </section>
         </div>}
         {reviews.map((review, index) => <article className="order-case-review" key={`${review.listing_id}-${index}`}>
-            <div><strong>{order.items.find((item) => item.listing?.id === review.listing_id)?.listing?.name ?? 'Product review'}</strong><span>{'★'.repeat(review.rating)}{'☆'.repeat(5 - review.rating)} · {review.status.replaceAll('_', ' ')}</span></div>
+            <div><strong>{order.items.find((item) => item.listing?.id === review.listing_id)?.listing?.name ?? 'Livestock review'}</strong><span>{'★'.repeat(review.rating)}{'☆'.repeat(5 - review.rating)} · {review.status.replaceAll('_', ' ')}</span></div>
             <p>{review.comment || 'No written comment.'}</p><SavedMedia files={review.media} />
         </article>)}
         <div className="order-case-list">{cases.map((item) => <article className="order-case-card" key={item.id}>
-            <header><strong>{item.case_type === 'RETURN_REFUND' ? 'Return/refund' : 'Complaint'} · #{item.id}</strong><span>{item.status.replaceAll('_', ' ')}{item.escalated_at ? ' · Escalated to admin' : ''}</span></header>
+            <header><strong>{item.case_type === 'RETURN_REFUND' ? 'Return/refund' : 'Complaint'} · {item.case_reference}</strong><span>{item.status.replaceAll('_', ' ')}{item.escalated_at ? ' · Escalated to admin' : ''}</span></header>
             <p><strong>{item.reason}{item.other_reason ? `: ${item.other_reason}` : ''}</strong> — {item.description}</p>
-            {item.requested_amount && <p>Requested item amount: PHP {Number(item.requested_amount).toFixed(2)} · Refund: {item.refund_status.replaceAll('_', ' ')}{item.approved_refund_amount ? ` · Approved PHP ${Number(item.approved_refund_amount).toFixed(2)}` : ''}</p>}
+            {item.requested_amount && <p>Requested livestock amount: PHP {Number(item.requested_amount).toFixed(2)} · Refund: {item.refund_status.replaceAll('_', ' ')}{item.approved_refund_amount ? ` · Approved PHP ${Number(item.approved_refund_amount).toFixed(2)}` : ''}</p>}
             {!!item.requested_items?.length && <ul>{item.requested_items.map((selected) => <li key={`${selected.name}-${selected.quantity}`}>{selected.quantity} × {selected.name} · requested PHP {Number(selected.requested_amount).toFixed(2)}</li>)}</ul>}
             {item.resolution_reason && <p>Resolution: {item.resolution_reason}</p>}
             {item.payout_evidence_url && <a href={item.payout_evidence_url} target="_blank" rel="noreferrer">View COD payout evidence</a>}
@@ -331,6 +341,6 @@ export function OrderCasePanel({ order, onError }: { order: CaseOrder; onError: 
             </div>}
             <small>Seller response due: {item.seller_response_deadline ? new Date(item.seller_response_deadline).toLocaleString() : 'Not set'}</small>
         </article>)}</div>
-        {canSubmit && reviewableItems.length === 0 && !reviews.length && <p className="order-case-policy-note">Every product in this order already has a review.</p>}
+        {canSubmit && reviewableItems.length === 0 && !reviews.length && <p className="order-case-policy-note">Every livestock listing in this order already has a review.</p>}
     </section>;
 }

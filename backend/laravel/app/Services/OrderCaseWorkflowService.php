@@ -37,6 +37,7 @@ class OrderCaseWorkflowService
         $order = $case->order;
         $notification = new OrderCaseUpdatedNotification(
             $case->id,
+            $case->case_reference,
             $case->order_id,
             $order->order_reference,
             $case->case_type,

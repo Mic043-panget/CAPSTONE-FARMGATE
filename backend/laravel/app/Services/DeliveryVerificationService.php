@@ -13,7 +13,10 @@ use Illuminate\Support\Str;
 
 class DeliveryVerificationService
 {
-    public function __construct(private readonly SystemSettingsService $settings) {}
+    public function __construct(
+        private readonly SystemSettingsService $settings,
+        private readonly OrderWorkflowService $orders,
+    ) {}
 
     /**
      * Issue a persistent order QR code to an order participant.
@@ -169,13 +172,24 @@ class DeliveryVerificationService
             if ($purpose === 'pickup' && $order->status === OrderStatus::READY_FOR_PICKUP) {
                 $order->forceFill(['status' => OrderStatus::FULFILLING])->save();
             }
-            $order->statusHistory()->create([
-                'changed_by' => $rider->id,
-                'from_status' => $fromOrderStatus->value,
-                'to_status' => $order->fresh()->status->value,
-                'reason' => strtoupper($purpose).'_QR_VERIFIED at '.number_format((float) $verificationLatitude, 7, '.', '').','.number_format((float) $verificationLongitude, 7, '.', ''),
-                'created_at' => now(),
-            ]);
+            $completedByDelivery = $purpose === 'delivery'
+                && $order->payment_status === 'PAID'
+                && $order->status === OrderStatus::FULFILLING;
+            if ($completedByDelivery) {
+                $this->orders->completeAfterVerifiedDelivery(
+                    $order,
+                    $rider,
+                    'DELIVERY_QR_VERIFIED at '.number_format((float) $verificationLatitude, 7, '.', '').','.number_format((float) $verificationLongitude, 7, '.', '').'; payment was confirmed.',
+                );
+            } else {
+                $order->statusHistory()->create([
+                    'changed_by' => $rider->id,
+                    'from_status' => $fromOrderStatus->value,
+                    'to_status' => $order->fresh()->status->value,
+                    'reason' => strtoupper($purpose).'_QR_VERIFIED at '.number_format((float) $verificationLatitude, 7, '.', '').','.number_format((float) $verificationLongitude, 7, '.', ''),
+                    'created_at' => now(),
+                ]);
+            }
 
             return $locked->load('order.buyer', 'order.seller');
         });

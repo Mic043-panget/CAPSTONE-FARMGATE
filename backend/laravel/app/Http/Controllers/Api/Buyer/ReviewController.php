@@ -50,12 +50,12 @@ class ReviewController extends Controller
         $listingId = $data['listing_id'] ?? ($order->items->count() === 1 ? $order->items->first()->listing_id : null);
         if ($order->items->isNotEmpty()) {
             if ($listingId === null || ! $order->items->contains(fn ($item): bool => (int) $item->listing_id === (int) $listingId)) {
-                throw ValidationException::withMessages(['listing_id' => 'Choose a livestock product included in this order.']);
+                throw ValidationException::withMessages(['listing_id' => 'Choose a livestock listing included in this order.']);
             }
         }
         $duplicateQuery = Review::query()->where('order_id', $order->id)->where('buyer_id', $request->user()->id);
         $listingId === null ? $duplicateQuery->whereNull('listing_id') : $duplicateQuery->where('listing_id', $listingId);
-        abort_if($duplicateQuery->exists(), 422, 'This product in the order has already been reviewed.');
+        abort_if($duplicateQuery->exists(), 422, 'This livestock listing in the order has already been reviewed.');
 
         $data['order_id'] = $order->id;
         $data['listing_id'] = $listingId;
@@ -73,7 +73,7 @@ class ReviewController extends Controller
                     'order_id' => $review->order_id,
                     'actor_id' => $review->buyer_id,
                     'activity_key' => 'REVIEW_SUBMITTED',
-                    'details' => 'Buyer submitted a '.($review->listing?->name ?? 'product').' review with '.$review->rating.' star(s).',
+                    'details' => 'Buyer submitted a review for '.($review->listing?->name ?? 'livestock listing').' with '.$review->rating.' star(s).',
                 ]);
                 foreach ($files as $file) {
                     $path = $file->store("reviews/{$review->id}", 'case_media');
@@ -115,9 +115,9 @@ class ReviewController extends Controller
                 'order_id' => $review->order_id,
                 'actor_id' => $request->user()->id,
                 'activity_key' => 'REVIEW_REPORTED',
-                'details' => 'A buyer reported review #'.$review->id.' for admin moderation.',
+                'details' => 'A buyer reported review '.$review->review_reference.' for admin moderation.',
             ]);
-            User::query()->where('role', Role::ADMIN)->get()->each(fn (User $admin) => $admin->notify(new ReviewModerationNotification($review->id, $review->order_id, 'reported')));
+            User::query()->where('role', Role::ADMIN)->get()->each(fn (User $admin) => $admin->notify(new ReviewModerationNotification($review->id, $review->order_id, $review->review_reference, 'reported')));
         }
 
         return response()->json(['message' => 'The review was reported for admin moderation.'], 201);

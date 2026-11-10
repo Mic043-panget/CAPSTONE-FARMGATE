@@ -112,6 +112,7 @@ class ReportQueryService
         $query->where(function (Builder $builder) use ($type, $search): void {
             if (in_array($type, ['sales', 'transactions'], true)) {
                 $builder->whereRaw('LOWER(order_reference) LIKE ?', [$search])
+                    ->orWhereRaw('LOWER(payment_reference) LIKE ?', [$search])
                     ->orWhereHas('buyer', fn (Builder $user) => $user->whereRaw('LOWER(name) LIKE ?', [$search]))
                     ->orWhereHas('seller', fn (Builder $user) => $user->whereRaw('LOWER(name) LIKE ?', [$search]));
                 if (in_array($type, ['sales', 'transactions'], true)) {
@@ -124,14 +125,13 @@ class ReportQueryService
             } elseif (in_array($type, ['users', 'sellers', 'buyers', 'riders'], true)) {
                 $builder->whereRaw('LOWER(name) LIKE ?', [$search])
                     ->orWhereRaw('LOWER(email) LIKE ?', [$search])
-                    ->orWhereRaw('CAST(id AS CHAR) LIKE ?', [$search])
                     ->orWhereRaw('LOWER(COALESCE(phone_number, \'\')) LIKE ?', [$search])
                     ->orWhereRaw('LOWER(CAST(role AS CHAR)) LIKE ?', [$search]);
             } elseif ($type === 'categories') {
                 $builder->whereRaw('LOWER(name) LIKE ?', [$search])
                     ->orWhereRaw('LOWER(slug) LIKE ?', [$search]);
             } elseif ($type === 'complaints') {
-                $builder->whereRaw('CAST(id AS CHAR) LIKE ?', [$search])
+                $builder->whereRaw('LOWER(case_reference) LIKE ?', [$search])
                     ->orWhereRaw('LOWER(reason) LIKE ?', [$search])
                     ->orWhereRaw('LOWER(description) LIKE ?', [$search])
                     ->orWhereRaw('LOWER(status) LIKE ?', [$search])
@@ -139,7 +139,7 @@ class ReportQueryService
                     ->orWhereHas('opener', fn (Builder $user) => $user->whereRaw('LOWER(name) LIKE ?', [$search]))
                     ->orWhereHas('respondent', fn (Builder $user) => $user->whereRaw('LOWER(name) LIKE ?', [$search]));
             } else {
-                $builder->where('id', 'like', $search)
+                $builder->where('delivery_reference', 'like', $search)
                     ->orWhereHas('rider', fn (Builder $user) => $user->whereRaw('LOWER(name) LIKE ?', [$search]))
                     ->orWhereHas('order', fn (Builder $order) => $order->whereRaw('LOWER(order_reference) LIKE ?', [$search]));
             }
@@ -180,7 +180,7 @@ class ReportQueryService
                 : (string) ((clone $query)->sum('total_amount') ?? '0.00');
             $context['status_distribution'] = $this->groupedCount($query, 'status', 'status');
             if (! empty($filters['listing_id']) || ! empty($filters['category_id'])) {
-                $context['monthly_trend_unavailable'] = 'Monthly totals by individual product or category are not aggregated for this report.';
+                $context['monthly_trend_unavailable'] = 'Monthly totals by individual livestock listing or category are not aggregated for this report.';
             } else {
                 $context['monthly_totals'] = $this->monthlyTotals($query);
             }

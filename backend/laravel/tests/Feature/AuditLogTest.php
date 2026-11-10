@@ -36,6 +36,62 @@ class AuditLogTest extends TestCase
 
         $this->actingAs($buyer)->getJson('/api/admin/audit-logs')->assertForbidden();
         $this->actingAs($admin)->getJson('/api/admin/audit-logs')->assertOk();
+        $this->assertDatabaseHas('audit_logs', [
+            'user_id' => $buyer->id,
+            'action' => 'GET api/admin/audit-logs',
+            'status_code' => 403,
+        ]);
+    }
+
+    public function test_admin_audit_report_generation_is_recorded_without_modifying_existing_events(): void
+    {
+        $admin = User::factory()->create(['role' => Role::ADMIN]);
+        $existing = AuditLog::create([
+            'user_id' => $admin->id,
+            'action' => 'GET api/orders',
+            'method' => 'GET',
+            'route' => 'api/orders',
+            'status_code' => 200,
+            'database_action' => 'NONE',
+            'entity_type' => 'Order',
+            'entity_id' => '214',
+            'description' => 'Read order details.',
+        ]);
+
+        $filters = ['date_from' => '2026-01-01'];
+        $firstReport = $this->actingAs($admin)->postJson('/api/admin/audit-logs/report', [
+            'filters' => $filters,
+        ])->assertOk()
+            ->assertJsonPath('record_count', 1)
+            ->assertJsonPath('audit_logs.0.id', $existing->id);
+
+        $secondReport = $this->actingAs($admin)->postJson('/api/admin/audit-logs/report', [
+            'filters' => $filters,
+        ])->assertOk()
+            ->assertJsonPath('record_count', 1)
+            ->assertJsonPath('audit_logs.0.id', $existing->id);
+
+        $this->postJson('/api/admin/reports/export-audit', [
+            'report_type' => 'analytics',
+            'record_count' => 3,
+            'filters' => ['from' => '2026-01-01'],
+        ])->assertOk()->assertJsonStructure(['generated_at']);
+
+        $this->assertSame('GET api/orders', $existing->fresh()->action);
+        $this->assertDatabaseHas('audit_logs', [
+            'user_id' => $admin->id,
+            'action' => 'admin.audit_report.generated',
+            'entity_type' => 'AuditReport',
+        ]);
+        $this->assertDatabaseHas('audit_logs', [
+            'user_id' => $admin->id,
+            'action' => 'admin.report.exported',
+            'entity_type' => 'ReportExport',
+        ]);
+
+        $this->actingAs(User::factory()->create(['role' => Role::BUYER]))
+            ->postJson('/api/admin/audit-logs/report', ['filters' => []])
+            ->assertForbidden();
     }
 
     public function test_real_settings_update_records_database_action_and_changed_fields(): void

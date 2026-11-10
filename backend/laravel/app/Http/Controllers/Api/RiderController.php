@@ -39,7 +39,8 @@ class RiderController extends Controller
                 DeliveryStatus::SEARCHING_FOR_RIDER->value,
             ])
             ->with([
-                'order:id,order_reference,status,total_amount,delivery_fee,delivery_distance_km,delivery_distance_method,shipping_address,delivery_method,buyer_id,seller_id',
+                'order:id,order_reference,status,total_amount,delivery_fee,delivery_distance_km,delivery_distance_method,shipping_address,delivery_method,buyer_id,seller_id,payment_method,payment_status',
+                'order.codCollection:id,order_id,status,remittance_id,collected_at,expected_amount_cents,collected_amount_cents',
                 'order.buyer:id,name,phone_number',
                 'order.seller:id,name',
             ]);
@@ -49,11 +50,13 @@ class RiderController extends Controller
         }
         if (! empty($filters['search'])) {
             $search = mb_strtolower(trim($filters['search']));
-            $query->whereHas('order', fn ($order) => $order
-                ->whereRaw('LOWER(order_reference) LIKE ?', ['%'.$search.'%'])
-                ->orWhere('id', $search)
-                ->orWhereHas('buyer', fn ($buyer) => $buyer->whereRaw('LOWER(name) LIKE ?', ['%'.$search.'%']))
-                ->orWhereHas('seller', fn ($seller) => $seller->whereRaw('LOWER(name) LIKE ?', ['%'.$search.'%'])));
+            $query->where(function ($builder) use ($search): void {
+                $builder->whereRaw('LOWER(delivery_reference) LIKE ?', ['%'.$search.'%'])
+                    ->orWhereHas('order', fn ($order) => $order
+                        ->whereRaw('LOWER(order_reference) LIKE ?', ['%'.$search.'%'])
+                        ->orWhereHas('buyer', fn ($buyer) => $buyer->whereRaw('LOWER(name) LIKE ?', ['%'.$search.'%']))
+                        ->orWhereHas('seller', fn ($seller) => $seller->whereRaw('LOWER(name) LIKE ?', ['%'.$search.'%'])));
+            });
         }
 
         $deliveries = $query->latest('deliveries.updated_at')
@@ -104,6 +107,7 @@ class RiderController extends Controller
             'vehicle_registration_expires_on' => $profile->vehicle_registration_expires_on?->toDateString(),
             'pending_vehicle_change' => $latestVehicleChange ? [
                 'id' => $latestVehicleChange->id,
+                'vehicle_reference' => $latestVehicleChange->vehicle_reference,
                 'status' => $latestVehicleChange->status,
                 'created_at' => $latestVehicleChange->created_at?->toISOString(),
                 'decision_reason' => $latestVehicleChange->decision_reason,

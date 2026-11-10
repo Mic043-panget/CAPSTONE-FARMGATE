@@ -18,6 +18,7 @@ class StartDirectChatRequest extends FormRequest
     {
         return [
             'recipient_id' => ['required', 'integer', 'min:1', 'exists:users,id'],
+            'listing_id' => ['sometimes', 'integer', 'min:1', 'exists:livestock_listings,id'],
         ];
     }
 }

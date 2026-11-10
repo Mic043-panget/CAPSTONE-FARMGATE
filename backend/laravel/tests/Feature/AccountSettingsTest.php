@@ -31,19 +31,23 @@ class AccountSettingsTest extends TestCase
             ->assertJsonPath('email_verified_at', $user->email_verified_at->toISOString())
             ->assertJsonPath('preferences.order_notifications', true)
             ->assertJsonPath('preferences.chat_notifications', true)
+            ->assertJsonPath('preferences.event_notifications', true)
             ->assertJsonPath('preferences.allow_direct_messages', true);
 
         $this->actingAs($user)->putJson('/api/profile/settings', [
             'order_notifications' => false,
             'chat_notifications' => false,
+            'event_notifications' => false,
             'allow_direct_messages' => false,
         ])->assertOk()
             ->assertJsonPath('preferences.order_notifications', false)
             ->assertJsonPath('preferences.chat_notifications', false)
+            ->assertJsonPath('preferences.event_notifications', false)
             ->assertJsonPath('preferences.allow_direct_messages', false);
 
         $this->assertSame(false, $user->fresh()->account_preferences['order_notifications']);
         $this->assertSame(false, $user->fresh()->account_preferences['chat_notifications']);
+        $this->assertSame(false, $user->fresh()->account_preferences['event_notifications']);
         $this->assertSame(false, $user->fresh()->account_preferences['allow_direct_messages']);
     }
 

@@ -35,8 +35,10 @@ type ListingDetailsProps = {
     canReport?: boolean;
     onBack: () => void;
     onOpenListing: (listingId: number) => void;
+    onOpenSeller: (sellerId: number) => void;
     onAddToCart: (listingId: number, quantity: number) => Promise<boolean | void>;
     onBuyNow: (listingId: number, quantity: number) => Promise<string | null>;
+    onChatWithSeller?: (listingId: number, sellerId: number) => void;
     onError: (message: string) => void;
 };
 
@@ -46,7 +48,7 @@ function listingPrice(listing: Listing): number {
 
 const pesoPrice = new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-export function ListingDetails({ listingId, canPurchase, canReport = false, onBack, onOpenListing, onAddToCart, onBuyNow, onError }: ListingDetailsProps) {
+export function ListingDetails({ listingId, canPurchase, canReport = false, onBack, onOpenListing, onOpenSeller, onAddToCart, onBuyNow, onChatWithSeller, onError }: ListingDetailsProps) {
     const [details, setDetails] = React.useState<ListingDetailsResponse | null>(null);
     const [activeImage, setActiveImage] = React.useState(0);
     const [quantity, setQuantity] = React.useState(1);
@@ -82,7 +84,7 @@ export function ListingDetails({ listingId, canPurchase, canReport = false, onBa
             const added = await onAddToCart(listingId, quantity);
             if (added !== false) setNotice('Added to your cart.');
         } catch (requestError: any) {
-            onError(requestError.userMessage ?? requestError.response?.data?.message ?? 'The item could not be added to your cart.');
+            onError(requestError.userMessage ?? requestError.response?.data?.message ?? 'The livestock listing could not be added to your cart.');
         } finally {
             setBusy(null);
         }
@@ -100,6 +102,18 @@ export function ListingDetails({ listingId, canPurchase, canReport = false, onBa
         } finally {
             setBusy(null);
         }
+    }
+
+    function messageSeller(listing: DetailedListing) {
+        if (onChatWithSeller) {
+            onChatWithSeller(listing.id, listing.seller.id);
+            return;
+        }
+        sessionStorage.setItem('farmgate.chat_listing_context', JSON.stringify({
+            listing_id: listing.id,
+            recipient_id: listing.seller.id,
+        }));
+        window.location.hash = '#chats';
     }
 
     async function reportReview(reviewId: number) {
@@ -134,7 +148,7 @@ export function ListingDetails({ listingId, canPurchase, canReport = false, onBa
                     {listing.images.length > 1 && <div className="product-thumbnails" aria-label="Listing photos">{listing.images.map((image, index) => <button type="button" key={`${image.url}-${index}`} className={activeImage === index ? 'active' : ''} onClick={() => setActiveImage(index)} aria-label={`Show photo ${index + 1}`} aria-pressed={activeImage === index}><img src={image.url} alt="" /></button>)}</div>}
                 </div>
                 <div className="product-information">
-                    <p className="eyebrow">{listing.category.name} / {listing.seller.name}</p>
+                    <p className="eyebrow">{listing.category.name} / <button type="button" className="seller-shop-inline-link" onClick={() => onOpenSeller(listing.seller.id)}>{listing.seller.name} shop</button></p>
                     <h1 id="product-title">{listing.name}</h1>
                     {listing.breed && <p className="product-breed">{listing.breed}{listing.sex ? ` · ${listing.sex.toLowerCase()}` : ''}</p>}
                     <div className="product-rating"><span aria-label={`${ratingAverage} out of 5 stars`}>{'★'.repeat(Math.round(ratingAverage))}{'☆'.repeat(5 - Math.round(ratingAverage))}</span><strong>{ratingAverage.toFixed(1)}</strong><a href="#product-reviews">{reviewCount} {reviewCount === 1 ? 'review' : 'reviews'}</a></div>
@@ -159,6 +173,8 @@ export function ListingDetails({ listingId, canPurchase, canReport = false, onBa
                         {listing.pricing_type === 'PER_KILO' && <p className="product-quantity-hint">Estimated weight per animal is for reference only. Your total uses the kilograms you select: {quantity} kg × {price.toLocaleString()} PHP/kg = {(quantity * price).toLocaleString()} PHP.</p>}
                         <button type="button" className="product-add-button" disabled={busy !== null || listing.quantity < 1} onClick={addToCart}>{busy === 'cart' ? 'Adding...' : canPurchase ? 'Add to cart' : 'Sign in to add to cart'}</button>
                         <button type="button" className="product-buy-button" disabled={busy !== null || listing.quantity < 1} onClick={buyNow}>{busy === 'buy' ? 'Placing order...' : canPurchase ? 'Buy now' : 'Sign in to buy'}</button>
+                        {canPurchase && <button type="button" className="product-add-button" onClick={() => messageSeller(listing)}>Chat about this livestock</button>}
+                        {canPurchase && <small className="listing-chat-hint">Farmgate AI can answer listing questions any time. The seller is notified when a personal reply is needed.</small>}
                     </div>
                     {notice && <p className="product-notice" role="status">{notice}</p>}
                 </div>

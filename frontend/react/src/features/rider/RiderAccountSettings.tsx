@@ -14,6 +14,7 @@ type RiderSettings = {
     vehicle_registration_expires_on: string | null;
     pending_vehicle_change: {
         id: number;
+        vehicle_reference: string;
         status: string;
         created_at: string;
         decision_reason: string | null;
@@ -490,8 +491,8 @@ export function RiderAccountSettings({ user, onUserUpdated, onError }: {
                 </dl>
                 {settings?.pending_vehicle_change && <p className="rider-settings-notice" role="status">
                 {settings.pending_vehicle_change.status === 'PENDING'
-                    ? `Vehicle update #${settings.pending_vehicle_change.id} is awaiting admin review (${new Date(settings.pending_vehicle_change.created_at).toLocaleString()}).`
-                    : `Vehicle update #${settings.pending_vehicle_change.id}: ${settings.pending_vehicle_change.status.replaceAll('_', ' ')}.`}
+                    ? `${settings.pending_vehicle_change.vehicle_reference} is awaiting admin review (${new Date(settings.pending_vehicle_change.created_at).toLocaleString()}).`
+                    : `${settings.pending_vehicle_change.vehicle_reference}: ${settings.pending_vehicle_change.status.replaceAll('_', ' ')}.`}
                 {settings.pending_vehicle_change.decision_reason && <><br />Admin note: {settings.pending_vehicle_change.decision_reason}</>}
                 </p>}
                 <form className="seller-account-form rider-vehicle-change-form" onSubmit={(event) => void requestVehicleChange(event)}>

@@ -18,6 +18,7 @@ use App\Models\SellerProfile;
 use App\Notifications\OrderStatusChangedNotification;
 use App\Services\DeliveryDistanceService;
 use App\Services\OrderReferenceGenerator;
+use App\Services\PaymentProviderReadinessService;
 use App\Services\PromotionPricingService;
 use App\Services\RiderAssignmentService;
 use App\Services\SystemSettingsService;
@@ -139,7 +140,7 @@ class CheckoutController extends Controller
         ]);
     }
 
-    public function store(Request $request, SystemSettingsService $settings, OrderReferenceGenerator $referenceGenerator, PromotionPricingService $promotionPricing, DeliveryDistanceService $deliveryDistanceService): JsonResponse
+    public function store(Request $request, SystemSettingsService $settings, OrderReferenceGenerator $referenceGenerator, PromotionPricingService $promotionPricing, DeliveryDistanceService $deliveryDistanceService, PaymentProviderReadinessService $providers): JsonResponse
     {
         abort_unless($request->user()?->role === Role::BUYER, 403);
 
@@ -226,8 +227,12 @@ class CheckoutController extends Controller
             abort_if(! $cart || $cart->items()->count() === 0, 422, 'Your cart is empty.');
             $items = $this->cartItemsWithSelectedQuantities($cart, $data['items'] ?? null);
         }
-        abort_if($items->count() > $settings->getInt('maximum_items_per_order'), 422, 'This order exceeds the maximum number of items.');
-        abort_if($paymentMethod !== 'COD' && ! filled(config('services.paymongo.secret_key')), 503, 'PayMongo is not configured. Use cash on delivery or contact support.');
+        abort_if($items->count() > $settings->getInt('maximum_items_per_order'), 422, 'This order exceeds the maximum number of livestock listings.');
+        abort_if(
+            $paymentMethod !== 'COD' && ! $providers->paymongo()['test_mode_credentials'],
+            503,
+            'PayMongo test-mode credentials are required. Use cash on delivery or contact support.',
+        );
 
         $orders = DB::transaction(function () use ($request, $cart, $items, $settings, $referenceGenerator, $promotionPricing, $deliveryDistanceService, $deliveryMethod, $paymentMethod, $shippingAddress, $data): Collection {
             $sellerIds = $items->pluck('listing.seller_id')->unique();
@@ -341,7 +346,7 @@ class CheckoutController extends Controller
                     DB::afterCommit(function () use ($order): void {
                         app(RiderAssignmentService::class)->dispatchForOrder($order->id);
                         $seller = $order->seller;
-                        if ($seller?->accountPreferenceEnabled('order_notifications')) {
+                        if ($seller) {
                             $seller->notify(new OrderStatusChangedNotification($order->id, OrderStatus::PENDING_CONFIRMATION, $order->order_reference));
                         }
                     });
@@ -421,6 +426,8 @@ class CheckoutController extends Controller
             try {
                 $response = Http::withBasicAuth($secretKey, '')
                     ->acceptJson()
+                    ->connectTimeout(10)
+                    ->timeout(20)
                     ->post('https://api.paymongo.com/v2/checkout_sessions', [
                         'data' => ['attributes' => [
                             'line_items' => $lineItems,
@@ -441,7 +448,7 @@ class CheckoutController extends Controller
                 abort(502, 'PayMongo could not be reached. Your order was not completed; try again or use cash on delivery.');
             }
             if (! $response->successful() || ! is_string($response->json('data.id')) || ! is_string($response->json('data.attributes.checkout_url'))) {
-                report(new \RuntimeException('PayMongo checkout session could not be created: '.$response->body()));
+                report(new \RuntimeException('PayMongo checkout session request failed with HTTP '.$response->status().'.'));
                 foreach ($orders as $currentOrder) {
                     $this->releaseFailedOnlineOrder($currentOrder);
                 }
@@ -504,7 +511,7 @@ class CheckoutController extends Controller
             $selectedQuantities->count() === $items->count()
                 && $items->every(fn (CartItem $item): bool => $selectedQuantities->has($item->id)),
             422,
-            'Checkout quantities must match the items in your cart.',
+            'Checkout quantities must match the livestock listings in your cart.',
         );
 
         return $items->map(function (CartItem $item) use ($selectedQuantities): CartItem {

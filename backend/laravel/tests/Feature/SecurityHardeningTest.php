@@ -2,10 +2,13 @@
 
 namespace Tests\Feature;
 
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
 class SecurityHardeningTest extends TestCase
 {
+    use RefreshDatabase;
+
     public function test_security_headers_are_present_on_api_responses(): void
     {
         $this->getJson('/api/health')

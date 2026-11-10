@@ -19,6 +19,7 @@ class DirectChatMessageRequest extends FormRequest
         return [
             'message' => ['required', 'string', 'max:2000'],
             'client_message_id' => ['required', 'uuid'],
+            'order_id' => ['sometimes', 'integer', 'min:1'],
         ];
     }
 }

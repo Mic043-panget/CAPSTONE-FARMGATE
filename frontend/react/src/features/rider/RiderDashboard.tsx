@@ -13,10 +13,12 @@ import { DeliveryProofSummary } from '../shared/DeliveryProofSummary';
 import type { NearbyOrder } from './NearbyOrdersMap';
 import { confirmAction } from '../../lib/alerts';
 import type { User } from '../../shared/types';
+import { SystemCalendar } from '../shared/SystemCalendar';
+import { LoadingSkeleton } from '../../shared/components/LoadingSkeleton';
 
 const NearbyOrdersMap = React.lazy(() => import('./NearbyOrdersMap').then((module) => ({ default: module.NearbyOrdersMap })));
 
-type RiderPage = 'dashboard' | 'deliveries' | 'chats' | 'reports' | 'notifications' | 'account';
+type RiderPage = 'dashboard' | 'deliveries' | 'events' | 'chats' | 'reports' | 'notifications' | 'account';
 type RiderDeliveryTab = 'nearby' | 'assigned' | 'scanner' | 'history';
 type RiderSummary = {
     availability: string;
@@ -33,12 +35,13 @@ type RiderSummary = {
 type RiderOffer = NearbyOrder;
 type RiderNotification = {
     id: string;
-    data: { type?: string; order_reference?: string; message?: string; offer_id?: number; has_delivery_proof?: boolean };
+    data: { type?: string; order_reference?: string; delivery_reference?: string; message?: string; offer_id?: number; has_delivery_proof?: boolean };
     read_at: string | null;
     created_at: string;
 };
 type RiderActivity = {
     id: number;
+    delivery_reference?: string | null;
     order_reference: string | null;
     from_status: string | null;
     to_status: string;
@@ -47,6 +50,7 @@ type RiderActivity = {
 };
 type RiderDelivery = {
     id: number;
+    delivery_reference: string;
     status: string;
     has_delivery_proof?: boolean;
     recipient_confirmed?: boolean;
@@ -61,6 +65,9 @@ type RiderDelivery = {
         order_reference: string;
         status: string;
         total_amount: string | number;
+        payment_method?: string | null;
+        payment_status?: string | null;
+        cod_collection?: { status: string; remittance_id: number | null } | null;
         delivery_fee: string | number;
         delivery_distance_km: string | number | null;
         delivery_distance_method: 'OSRM_ROAD_ROUTE' | 'OSRM_BARANGAY_ESTIMATE' | null;
@@ -90,6 +97,7 @@ const riderStatuses = ['RIDER_ACCEPTED', 'PICKUP_PENDING', 'PICKED_UP', 'IN_TRAN
 const navigation: { id: RiderPage; label: string; icon: string }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: '◈' },
     { id: 'deliveries', label: 'Deliveries', icon: '▣' },
+    { id: 'events', label: 'Events', icon: '◷' },
     { id: 'chats', label: 'Chats', icon: '✦' },
     { id: 'reports', label: 'Reports', icon: '▥' },
     { id: 'notifications', label: 'Notifications', icon: '♧' },
@@ -117,6 +125,314 @@ function qrCode(rawValue: string): { purpose: 'pickup' | 'delivery' | 'order'; t
     return { purpose: match[1].toLowerCase() as 'pickup' | 'delivery' | 'order', token: match[2] };
 }
 
+function CodCollectionAction({ delivery, onSaved }: { delivery: RiderDelivery; onSaved: () => void }) {
+    const [busy, setBusy] = React.useState(false);
+    const [message, setMessage] = React.useState('');
+    const [error, setError] = React.useState('');
+    const [amount, setAmount] = React.useState('');
+    const [proof, setProof] = React.useState<File | null>(null);
+    if (delivery.order.payment_method !== 'COD') return null;
+
+    async function collect(event: React.FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+        const parsedAmount = /^(0|[1-9]\d*)(?:\.(\d{1,2}))?$/.exec(amount.trim());
+        const amountCents = parsedAmount
+            ? Number(parsedAmount[1]) * 100 + Number((parsedAmount[2] ?? '').padEnd(2, '0'))
+            : 0;
+        if (!Number.isSafeInteger(amountCents) || amountCents < 1 || !proof) {
+            setError('Enter the cash amount actually received and attach a photo of the handover record.');
+            return;
+        }
+        setBusy(true);
+        setError('');
+        setMessage('');
+        try {
+            const formData = new FormData();
+            formData.append('amount_cents', String(amountCents));
+            formData.append('proof', proof);
+            const response = await api.post<{ message: string }>(`/api/deliveries/${delivery.id}/cod-collection`, formData);
+            setMessage(response.data.message);
+            setAmount('');
+            setProof(null);
+            onSaved();
+        } catch (requestError: any) {
+            setError(requestError.userMessage ?? requestError.response?.data?.message ?? 'COD cash collection could not be recorded.');
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    const collection = delivery.order.cod_collection;
+    return <section className="rider-cod-collection" aria-label="Cash on delivery collection">
+        <h5>Cash on delivery</h5>
+        {collection ? <p role="status">Cash collection recorded · {collection.status === 'NEEDS_REVIEW' ? 'Needs review' : collection.status.replaceAll('_', ' ').toLowerCase()}{collection.remittance_id ? ' · included in a remittance batch' : ''}</p>
+            : delivery.order.payment_status === 'PAID' ? <p role="status">Buyer payment is marked paid.</p>
+            : delivery.status !== 'DELIVERED' ? <p>Record cash after drop-off QR verification.</p>
+                    : <form onSubmit={(event) => void collect(event)} aria-busy={busy}>
+                        <p>Order total: PHP {Number(delivery.order.total_amount).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}. Record what you actually received; Farmgate admin must confirm remittance before the buyer payment is marked paid.</p>
+                        <label>Cash received (PHP)
+                            <input type="number" min="0.01" step="0.01" inputMode="decimal" required value={amount} onChange={(event) => setAmount(event.target.value)} />
+                        </label>
+                        <label>Handover record photo
+                            <input type="file" accept="image/jpeg,image/png,image/webp" required onChange={(event) => setProof(event.target.files?.[0] ?? null)} />
+                        </label>
+                        <button type="submit" className="seller-inline-action" disabled={busy}>{busy ? 'Saving collection…' : 'Record cash received'}</button>
+                    </form>}
+        {message && <p role="status" aria-live="polite">{message}</p>}
+        {error && <p role="alert">{error}</p>}
+    </section>;
+}
+
+type RiderCodCollection = {
+    id: number;
+    expected_amount_cents: number;
+    collected_amount_cents: number;
+    status: string;
+    order?: { order_reference: string };
+};
+type RiderCodReceivingMethod = {
+    id: number;
+    method_type: 'BANK_TRANSFER' | 'BANK_QR' | 'PAYMONGO_QR' | string;
+    label: string;
+    instructions: string | null;
+    bank_name: string | null;
+    account_holder: string | null;
+    account_number: string | null;
+    qr_url: string | null;
+};
+type RiderCodRemittance = {
+    id: number;
+    reference: string;
+    status: string;
+    method: string | null;
+    expected_amount_cents: number;
+    submitted_at: string | null;
+    received_amount_cents: number | null;
+};
+
+function newCodTransferReference(): string {
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    const randomBytes = crypto.getRandomValues(new Uint8Array(8));
+    const suffix = Array.from(randomBytes, (byte) => alphabet[byte % alphabet.length]).join('');
+
+    return `FG-COD-${new Date().getFullYear()}-${suffix}`;
+}
+
+function privateQrHref(rawUrl: string | null): string | null {
+    if (!rawUrl) return null;
+    try {
+        const url = new URL(rawUrl, window.location.origin);
+        if (url.username || url.password) return null;
+        return url.protocol === 'https:' || url.origin === window.location.origin ? url.href : null;
+    } catch {
+        return null;
+    }
+}
+
+function remittanceNextStep(status: string): string {
+    switch (status) {
+        case 'SUBMITTED':
+        case 'PENDING':
+        case 'UNDER_REVIEW':
+            return 'Keep the original handover or transfer record. Wait for Farmgate admin to review and confirm receipt.';
+        case 'NEEDS_REVIEW':
+            return 'Farmgate admin needs to review this remittance. Keep your proof available and follow up with admin if requested.';
+        case 'RECEIVED':
+        case 'CONFIRMED':
+        case 'COMPLETED':
+        case 'RECONCILED':
+            return 'Admin confirmed this remittance. No further action is needed for this batch.';
+        case 'DISPUTED':
+            return 'Admin recorded a discrepancy. Keep your proof and contact Farmgate admin to resolve the amount difference.';
+        case 'REJECTED':
+        case 'FAILED':
+            return 'This remittance was not accepted. Review any admin follow-up and contact Farmgate support before submitting again.';
+        default:
+            return 'Check this remittance status with Farmgate admin if you are unsure what to do next.';
+    }
+}
+
+function RiderRemittancePanel({ onSubmitted }: { onSubmitted: () => void }) {
+    const [collections, setCollections] = React.useState<RiderCodCollection[]>([]);
+    const [methods, setMethods] = React.useState<RiderCodReceivingMethod[]>([]);
+    const [remittances, setRemittances] = React.useState<RiderCodRemittance[]>([]);
+    const [loadingCollections, setLoadingCollections] = React.useState(true);
+    const [loadingHistory, setLoadingHistory] = React.useState(true);
+    const [busy, setBusy] = React.useState(false);
+    const [message, setMessage] = React.useState('');
+    const [error, setError] = React.useState('');
+    const [methodChoice, setMethodChoice] = React.useState('CASH_HANDOVER');
+    const [receiverName, setReceiverName] = React.useState('');
+    const [transactionReference, setTransactionReference] = React.useState(newCodTransferReference);
+    const [proof, setProof] = React.useState<File | null>(null);
+    const busyRef = React.useRef(false);
+    const proofInputRef = React.useRef<HTMLInputElement>(null);
+
+    const selectedMethod = methods.find((method) => String(method.id) === methodChoice);
+    const methodType = selectedMethod?.method_type ?? 'CASH_HANDOVER';
+    const isCashHandover = methodType === 'CASH_HANDOVER';
+    const isElectronic = methodType === 'BANK_TRANSFER' || methodType === 'BANK_QR' || methodType === 'PAYMONGO_QR';
+    const totalCents = collections.reduce((sum, item) => sum + item.collected_amount_cents, 0);
+
+    async function refreshCollections() {
+        setLoadingCollections(true);
+        try {
+            const response = await api.get<{ collections: RiderCodCollection[] }>('/api/riders/cod/collections');
+            setCollections(response.data.collections);
+        } catch (requestError: any) {
+            setError(requestError.userMessage ?? requestError.response?.data?.message ?? 'COD collections could not be loaded.');
+        } finally {
+            setLoadingCollections(false);
+        }
+    }
+
+    async function refreshHistory() {
+        setLoadingHistory(true);
+        try {
+            const [methodsResponse, remittancesResponse] = await Promise.all([
+                api.get<{ methods: RiderCodReceivingMethod[] }>('/api/riders/cod/receiving-methods'),
+                api.get<{ remittances: RiderCodRemittance[] }>('/api/riders/cod/remittances'),
+            ]);
+            const activeMethods = methodsResponse.data.methods.filter((method) =>
+                method.method_type === 'BANK_TRANSFER' || method.method_type === 'BANK_QR' || method.method_type === 'PAYMONGO_QR' || method.method_type === 'CASH_HANDOVER');
+            setMethods(activeMethods);
+            setRemittances(remittancesResponse.data.remittances);
+            setMethodChoice((current) => current === 'CASH_HANDOVER' || activeMethods.some((method) => String(method.id) === current)
+                ? current
+                : 'CASH_HANDOVER');
+        } catch (requestError: any) {
+            setError(requestError.userMessage ?? requestError.response?.data?.message ?? 'COD remittance methods and history could not be loaded.');
+        } finally {
+            setLoadingHistory(false);
+        }
+    }
+
+    async function refresh() {
+        setError('');
+        await Promise.all([refreshCollections(), refreshHistory()]);
+    }
+
+    React.useEffect(() => { void refresh(); }, []);
+
+    async function submit(event: React.FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+        if (busyRef.current) return;
+        if (collections.length === 0 || !methodType || (!isCashHandover && !selectedMethod)) {
+            setError('There are no collected COD funds to remit, or the selected receiving method is no longer available.');
+            return;
+        }
+        if ((isCashHandover && !receiverName.trim()) || (isElectronic && !transactionReference.trim()) || (isElectronic && !proof)) {
+            setError(isCashHandover
+                ? 'Enter the name of the person receiving the cash handover.'
+                : 'Enter the transaction reference and attach transfer or payment proof.');
+            return;
+        }
+        if (proof && !['image/jpeg', 'image/png', 'image/webp'].includes(proof.type)) {
+            setError('Choose a JPEG, PNG, or WebP image for remittance proof.');
+            return;
+        }
+        busyRef.current = true;
+        setBusy(true);
+        setError('');
+        setMessage('');
+        try {
+            const confirmed = await confirmAction({
+                title: 'Submit COD remittance?',
+                text: `This submits ${collections.length} collection(s), totaling PHP ${(totalCents / 100).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}, for admin reconciliation.`,
+                confirmText: 'Submit remittance',
+            });
+            if (!confirmed) return;
+
+            const formData = new FormData();
+            formData.append('method_type', methodType);
+            if (selectedMethod) formData.append('receiving_method_id', String(selectedMethod.id));
+            if (isCashHandover) formData.append('receiver_name', receiverName.trim());
+            if (isElectronic) formData.append('transaction_reference', transactionReference.trim());
+            if (proof) formData.append('proof', proof);
+            const response = await api.post<{ message: string }>('/api/riders/cod/remittances', formData);
+            setMessage(response.data.message);
+            setReceiverName('');
+            setTransactionReference(newCodTransferReference());
+            setProof(null);
+            if (proofInputRef.current) proofInputRef.current.value = '';
+            await refresh();
+            onSubmitted();
+        } catch (requestError: any) {
+            setError(requestError.userMessage ?? requestError.response?.data?.message ?? 'COD remittance could not be submitted.');
+        } finally {
+            busyRef.current = false;
+            setBusy(false);
+        }
+    }
+
+    return <section className="rider-cod-remittance" aria-labelledby="rider-cod-remittance-title">
+        <div className="rider-cod-remittance-heading"><p className="eyebrow">Cash custody</p><h3 id="rider-cod-remittance-title">COD cash to remit</h3></div>
+        {loadingCollections ? <p role="status">Loading collected cash…</p> : collections.length === 0
+            ? <p className="rider-cod-remittance-summary">No collected COD cash is waiting for remittance.</p>
+            : <div className="rider-cod-remittance-collections">
+                <p>{collections.length} order(s) · PHP {(totalCents / 100).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                <ul>{collections.map((item) => <li key={item.id}>{item.order?.order_reference ?? 'Order'} · received PHP {(item.collected_amount_cents / 100).toFixed(2)}{item.status === 'NEEDS_REVIEW' ? ' · Needs review' : ''}</li>)}</ul>
+            </div>}
+        {!loadingHistory && <div className="rider-cod-method-info">
+            <label htmlFor="rider-cod-method">Remittance method</label>
+            <select id="rider-cod-method" value={methodChoice} onChange={(event) => {
+                setMethodChoice(event.target.value);
+                setError('');
+            }} disabled={busy}>
+                <option value="CASH_HANDOVER">Cash handover</option>
+                {methods.some((method) => method.method_type !== 'CASH_HANDOVER')
+                    ? <optgroup label="Bank transfer or QR">
+                        {methods.filter((method) => method.method_type !== 'CASH_HANDOVER').map((method) =>
+                            <option key={method.id} value={String(method.id)}>{method.label}</option>)}
+                    </optgroup>
+                    : <option value="ONLINE_UNAVAILABLE" disabled>Online remittance · not set up</option>}
+            </select>
+            {methods.every((method) => method.method_type === 'CASH_HANDOVER')
+                && <p className="rider-cod-method-note">Ask an admin to add a bank account or online banking QR.</p>}
+            {selectedMethod && <div className="rider-cod-receiving-details">
+                <strong>{selectedMethod.label}</strong>
+                {selectedMethod.bank_name && <span>{selectedMethod.bank_name}</span>}
+                {selectedMethod.account_holder && <span>Account holder: {selectedMethod.account_holder}</span>}
+                {selectedMethod.account_number && <span>Farmgate receiving account: {selectedMethod.account_number}</span>}
+                {selectedMethod.instructions && <p>{selectedMethod.instructions}</p>}
+                {privateQrHref(selectedMethod.qr_url) && <a href={privateQrHref(selectedMethod.qr_url) ?? undefined} target="_blank" rel="noreferrer">Open private receiving QR</a>}
+            </div>}
+        </div>}
+        {loadingHistory && <p role="status">Loading receiving methods…</p>}
+        {!loadingCollections && collections.length > 0 && !loadingHistory && <form className="rider-cod-remittance-form" onSubmit={(event) => void submit(event)} aria-busy={busy}>
+            {isCashHandover
+                ? <label htmlFor="rider-cod-receiver">Cash received by
+                    <input id="rider-cod-receiver" type="text" autoComplete="name" maxLength={120} required value={receiverName} onChange={(event) => setReceiverName(event.target.value)} disabled={busy} />
+                </label>
+                : isElectronic && <label htmlFor="rider-cod-reference">Transaction reference
+                    <input id="rider-cod-reference" type="text" maxLength={120} required value={transactionReference} onChange={(event) => setTransactionReference(event.target.value)} disabled={busy} />
+                    <small>Use this Farmgate reference in your bank transfer description. You can replace it with a bank-provided transaction reference.</small>
+                </label>}
+            <label htmlFor="rider-cod-proof">Remittance proof {isElectronic ? '(required)' : '(optional)'}
+                <input ref={proofInputRef} id="rider-cod-proof" type="file" accept="image/jpeg,image/png,image/webp" required={isElectronic} onChange={(event) => {
+                    setProof(event.target.files?.[0] ?? null);
+                    setError('');
+                }} disabled={busy} />
+            </label>
+            <button className="seller-inline-action" type="submit" disabled={busy || loadingCollections || loadingHistory}>{busy ? 'Submitting…' : 'Submit remittance to admin'}</button>
+        </form>}
+        {message && <p className="rider-cod-feedback" role="status" aria-live="polite">{message}</p>}
+        {error && <p className="rider-cod-feedback rider-cod-feedback-error" role="alert">{error} <button type="button" onClick={() => void refresh()} disabled={busy}>Reload COD details</button></p>}
+        <div className="rider-cod-remittance-history" aria-labelledby="rider-cod-history-title">
+            <h4 id="rider-cod-history-title">Remittance history</h4>
+            {loadingHistory ? <p role="status">Loading remittance history…</p> : remittances.length === 0
+                ? <p>No remittances have been submitted yet.</p>
+                : <ul>{remittances.map((remittance) => <li key={remittance.id}>
+                    <div className="rider-cod-history-heading"><strong>{remittance.reference}</strong><span>{statusLabel(remittance.status)}</span></div>
+                    <p>{remittance.method ? statusLabel(remittance.method) : 'Remittance'} · Expected PHP {(remittance.expected_amount_cents / 100).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {remittance.received_amount_cents !== null && ` · Received PHP ${(remittance.received_amount_cents / 100).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</p>
+                    {remittance.submitted_at && <time dateTime={remittance.submitted_at}>Submitted {new Date(remittance.submitted_at).toLocaleString('en-PH')}</time>}
+                    <p>{remittanceNextStep(remittance.status)}</p>
+                </li>)}</ul>}
+        </div>
+    </section>;
+}
+
 function DeliveryProofCapture({ delivery, onSaved }: { delivery: RiderDelivery; onSaved: () => void }) {
     const [photo, setPhoto] = React.useState<File | null>(null);
     const [previewUrl, setPreviewUrl] = React.useState('');
@@ -127,6 +443,8 @@ function DeliveryProofCapture({ delivery, onSaved }: { delivery: RiderDelivery; 
     const [message, setMessage] = React.useState('');
     const [error, setError] = React.useState('');
     const inputRef = React.useRef<HTMLInputElement>(null);
+    const libraryInputRef = React.useRef<HTMLInputElement>(null);
+    const savingRef = React.useRef(false);
 
     React.useEffect(() => {
         if (!photo) {
@@ -145,12 +463,25 @@ function DeliveryProofCapture({ delivery, onSaved }: { delivery: RiderDelivery; 
         setCapturedAt(file ? new Date().toISOString() : '');
     }
 
+    function openCamera() {
+        if (!inputRef.current) return;
+        inputRef.current.value = '';
+        inputRef.current.click();
+    }
+
+    function openPhotoLibrary() {
+        if (!libraryInputRef.current) return;
+        libraryInputRef.current.value = '';
+        libraryInputRef.current.click();
+    }
+
     async function saveProof(event: React.FormEvent<HTMLFormElement>) {
         event.preventDefault();
-        if (!photo || !recipientName.trim() || !recipientConfirmed || saving) {
-            setError('Capture a delivery photo, enter the recipient name, and confirm receipt before saving.');
+        if (!photo || !recipientName.trim() || !recipientConfirmed || savingRef.current) {
+            setError('Add a photo and confirm receipt.');
             return;
         }
+        savingRef.current = true;
         setSaving(true);
         setError('');
         setMessage('');
@@ -167,36 +498,59 @@ function DeliveryProofCapture({ delivery, onSaved }: { delivery: RiderDelivery; 
             setRecipientConfirmed(false);
             setCapturedAt('');
             if (inputRef.current) inputRef.current.value = '';
+            if (libraryInputRef.current) libraryInputRef.current.value = '';
             onSaved();
         } catch (requestError: any) {
             setError(requestError.userMessage ?? requestError.response?.data?.message ?? 'Delivery proof could not be saved. Check your connection and try again.');
         } finally {
+            savingRef.current = false;
             setSaving(false);
         }
     }
 
     if (!activeStatuses.has(delivery.status) || !['PICKED_UP', 'IN_TRANSIT'].includes(delivery.status)) return null;
-    if (delivery.has_delivery_proof) return <p className="rider-proof-saved" role="status">Delivery photo and recipient confirmation are saved. Scan the same order QR at the buyer location to complete delivery.</p>;
+    if (delivery.has_delivery_proof) return <p className="rider-proof-saved" role="status">Proof saved · Scan the order QR at drop-off.</p>;
 
     return <form className="rider-proof-capture" onSubmit={(event) => void saveProof(event)}>
         <h4>Delivery proof</h4>
-        <p>Capture and save a delivery photo with recipient confirmation before scanning the order QR at drop-off.</p>
         {previewUrl ? <div className="rider-proof-preview">
             <img src={previewUrl} alt="Preview of delivery proof photo" />
-            <div><button type="button" className="seller-inline-action" disabled={saving} onClick={() => {
-                selectPhoto(null);
-                if (inputRef.current) inputRef.current.value = '';
-            }}>Retake photo</button><span>Review the photo before saving.</span></div>
-        </div> : <label className="rider-proof-photo-control">Capture delivery photo
-            <input ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" required onChange={(event) => selectPhoto(event.target.files?.[0] ?? null)} />
-        </label>}
-        <p className="rider-qr-help">If camera access is denied, allow camera permission in your browser settings or choose a saved photo with the same control.</p>
-        <label>Recipient name<input value={recipientName} onChange={(event) => setRecipientName(event.target.value)} required maxLength={120} autoComplete="name" /></label>
-        <label className="rider-proof-confirmation"><input type="checkbox" checked={recipientConfirmed} onChange={(event) => setRecipientConfirmed(event.target.checked)} required />Recipient confirmed they received this order.</label>
+            <div className="rider-proof-photo-actions">
+                <button type="button" className="seller-inline-action" disabled={saving} onClick={openCamera}>Retake photo</button>
+                <button type="button" className="rider-proof-secondary-action" disabled={saving} onClick={openPhotoLibrary}>Choose photo</button>
+            </div>
+        </div> : <div className="rider-proof-photo-actions">
+            <button type="button" className="seller-inline-action rider-proof-camera-button" disabled={saving} onClick={openCamera}>
+                <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 8h4l2-3h6l2 3h4v11H3z" /><circle cx="12" cy="13" r="3.5" /></svg>
+                Take photo
+            </button>
+            <button type="button" className="rider-proof-secondary-action" disabled={saving} onClick={openPhotoLibrary}>Choose photo</button>
+        </div>}
+        <input ref={inputRef} className="rider-proof-file-input" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" tabIndex={-1} aria-hidden="true" onChange={(event) => selectPhoto(event.target.files?.[0] ?? null)} />
+        <input ref={libraryInputRef} className="rider-proof-file-input" type="file" accept="image/jpeg,image/png,image/webp" tabIndex={-1} aria-hidden="true" onChange={(event) => selectPhoto(event.target.files?.[0] ?? null)} />
+        <label className="rider-proof-recipient">Recipient<input value={recipientName} onChange={(event) => setRecipientName(event.target.value)} required maxLength={120} autoComplete="name" /></label>
+        <label className="rider-proof-confirmation"><input type="checkbox" checked={recipientConfirmed} onChange={(event) => setRecipientConfirmed(event.target.checked)} required />Receipt confirmed</label>
         {error && <p className="rider-delivery-error" role="alert">{error}</p>}
         {message && <p className="rider-location-notice" role="status">{message}</p>}
-        <button type="submit" className="seller-inline-action" disabled={saving || !photo || !recipientName.trim() || !recipientConfirmed}>{saving ? 'Saving proof…' : 'Confirm and save proof'}</button>
+        <button type="submit" className="seller-inline-action" disabled={saving || !photo || !recipientName.trim() || !recipientConfirmed}>{saving ? 'Saving…' : 'Save proof'}</button>
     </form>;
+}
+
+function RiderDeliveryTracking({ delivery }: { delivery: RiderDelivery }) {
+    const [expanded, setExpanded] = React.useState(false);
+
+    return <details className="rider-delivery-tracking" onToggle={(event) => setExpanded(event.currentTarget.open)}>
+        <summary>Route &amp; live tracking</summary>
+        {expanded && <DeliveryTrackingPanel
+            deliveryId={delivery.id}
+            sellerName={delivery.order.seller?.name ?? 'Seller'}
+            buyerName={delivery.order.shipping_address?.recipient_name ?? delivery.order.buyer?.name ?? 'Buyer'}
+            sellerLatitude={delivery.pickup_latitude}
+            sellerLongitude={delivery.pickup_longitude}
+            buyerLatitude={delivery.order.shipping_address?.latitude ?? null}
+            buyerLongitude={delivery.order.shipping_address?.longitude ?? null}
+        />}
+    </details>;
 }
 
 function DeliveryVerification({ delivery, onVerified, onError, autoExpand = false }: {
@@ -269,7 +623,7 @@ function DeliveryVerification({ delivery, onVerified, onError, autoExpand = fals
 
     async function submitCode(event: React.FormEvent<HTMLFormElement>) {
         event.preventDefault();
-        if (submitting) return;
+        if (submittedRef.current) return;
         const parsed = qrCode(scanValue);
         if (!parsed) {
             onError('Enter the complete FARMGATE order QR code.');
@@ -310,6 +664,7 @@ function DeliveryVerification({ delivery, onVerified, onError, autoExpand = fals
             setScanValue('');
             setScanning(false);
             setExpanded(false);
+            submittedRef.current = false;
             onVerified();
         } catch (requestError: any) {
             submittedRef.current = false;
@@ -323,7 +678,7 @@ function DeliveryVerification({ delivery, onVerified, onError, autoExpand = fals
     const action = ['RIDER_ACCEPTED', 'PICKUP_PENDING'].includes(delivery.status) ? 'Verify pickup' : 'Verify delivery';
 
     return <div className="rider-verification">
-        <button type="button" className="rider-inline-action" onClick={() => { setScanning(false); setExpanded((open) => !open); }}>{expanded ? 'Close scanner' : action}</button>
+        <button type="button" className="rider-inline-action" disabled={submitting} aria-busy={submitting} onClick={() => { setScanning(false); setExpanded((open) => !open); }}>{expanded ? 'Close scanner' : action}</button>
         {expanded && <form className="rider-qr-form" onSubmit={(event) => void submitCode(event)}>
             <p>{action === 'Verify pickup'
                 ? 'Scan the order QR and allow location access. Pickup must be within the configured distance of the seller pin.'
@@ -334,22 +689,24 @@ function DeliveryVerification({ delivery, onVerified, onError, autoExpand = fals
             <label>QR value<input value={scanValue} onChange={(event) => setScanValue(event.target.value)} autoComplete="off" placeholder="FARMGATE:ORDER:…" /></label>
             {action === 'Verify delivery' && <p className="rider-qr-help">Proof {delivery.has_delivery_proof ? 'is saved' : 'is not saved yet'}; use My Deliveries to capture and save the photo first.</p>}
             <div className="rider-qr-actions">
-                <button type="button" onClick={() => { setScanning((value) => !value); setScanningMessage(''); }}>{scanning ? 'Stop camera' : 'Use camera'}</button>
-                <button type="submit" disabled={submitting || !scanValue.trim()}>{submitting ? 'Verifying…' : action}</button>
+                <button type="button" disabled={submitting} onClick={() => { setScanning((value) => !value); setScanningMessage(''); }}>{scanning ? 'Stop camera' : 'Use camera'}</button>
+                <button type="submit" disabled={submitting || !scanValue.trim()} aria-busy={submitting}>{submitting ? 'Verifying…' : action}</button>
             </div>
         </form>}
     </div>;
 }
 
-export function RiderDashboard({ user, onUserUpdated, onError, onLogout }: {
+function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
     user: User;
     onUserUpdated: (user: User) => void;
     onError: (message: string) => void;
     onLogout: () => void;
 }) {
-    const [page, setPage] = React.useState<RiderPage>('dashboard');
+    const [page, setPage] = React.useState<RiderPage>(() => window.location.hash === '#notifications' ? 'notifications' : 'dashboard');
     const [deliveryTab, setDeliveryTab] = React.useState<RiderDeliveryTab>('nearby');
     const [summary, setSummary] = React.useState<RiderSummary | null>(null);
+    const [summaryLoading, setSummaryLoading] = React.useState(true);
+    const [summaryError, setSummaryError] = React.useState('');
     const [statusCounts, setStatusCounts] = React.useState<Record<string, number>>({});
     const [recentActivity, setRecentActivity] = React.useState<RiderActivity[]>([]);
     const [dashboardFrom, setDashboardFrom] = React.useState('');
@@ -357,11 +714,16 @@ export function RiderDashboard({ user, onUserUpdated, onError, onLogout }: {
     const [dashboardStatus, setDashboardStatus] = React.useState('');
     const [dashboardSearch, setDashboardSearch] = React.useState('');
     const [offers, setOffers] = React.useState<RiderOffer[]>([]);
+    const [offersLoading, setOffersLoading] = React.useState(true);
+    const [offersError, setOffersError] = React.useState('');
     const [riderLocation, setRiderLocation] = React.useState<{ latitude: number; longitude: number; updated_at: string | null } | null>(null);
     const [selectedOfferId, setSelectedOfferId] = React.useState<number | null>(null);
     const [actingOnOfferId, setActingOnOfferId] = React.useState<number | null>(null);
     const [locationUpdating, setLocationUpdating] = React.useState(false);
     const [riderNotifications, setRiderNotifications] = React.useState<RiderNotification[]>([]);
+    const [notificationBulkReadCount, setNotificationBulkReadCount] = React.useState(0);
+    const [notificationActionBusy, setNotificationActionBusy] = React.useState(false);
+    const [notificationActionMessage, setNotificationActionMessage] = React.useState('');
     const [notice, setNotice] = React.useState('');
     const [deliveries, setDeliveries] = React.useState<RiderDelivery[]>([]);
     const [deliveryTotal, setDeliveryTotal] = React.useState(0);
@@ -382,13 +744,13 @@ export function RiderDashboard({ user, onUserUpdated, onError, onLogout }: {
     const [locationNotice, setLocationNotice] = React.useState('');
     const locationWatchRef = React.useRef<number | null>(null);
     const lastLocationPostedRef = React.useRef(0);
+    const offerActionLockRef = React.useRef(false);
     const debouncedSearch = useDebouncedValue(deliverySearch);
     const debouncedDashboardSearch = useDebouncedValue(dashboardSearch);
 
     const refreshSummary = React.useCallback(async (reportFailure: boolean) => {
-        try {
-            const [summaryResponse, offersResponse] = await Promise.all([
-                api.get<{
+        const [summaryResult, offersResult] = await Promise.allSettled([
+            api.get<{
                     summary: RiderSummary;
                     status_counts: Record<string, number>;
                     recent_activity: RiderActivity[];
@@ -400,19 +762,37 @@ export function RiderDashboard({ user, onUserUpdated, onError, onLogout }: {
                         search: debouncedDashboardSearch.trim() || undefined,
                     },
                 }),
-                api.get<{
+            api.get<{
                     offers: RiderOffer[];
                     rider_location: { latitude: number; longitude: number; updated_at: string | null } | null;
                 }>('/api/riders/offers'),
-            ]);
-            setSummary(summaryResponse.data.summary);
-            setStatusCounts(summaryResponse.data.status_counts);
-            setRecentActivity(summaryResponse.data.recent_activity);
-            setOffers(offersResponse.data.offers);
-            setRiderLocation(offersResponse.data.rider_location);
-        } catch {
-            if (reportFailure) onError('Rider dashboard data could not be loaded. Please try again.');
+        ]);
+        const errors: string[] = [];
+
+        if (summaryResult.status === 'fulfilled') {
+            setSummary(summaryResult.value.data.summary);
+            setStatusCounts(summaryResult.value.data.status_counts);
+            setRecentActivity(summaryResult.value.data.recent_activity);
+            setSummaryLoading(false);
+            setSummaryError('');
+        } else {
+            setSummaryLoading(false);
+            setSummaryError('Rider dashboard data could not be loaded.');
+            errors.push('Rider dashboard data could not be loaded.');
         }
+
+        if (offersResult.status === 'fulfilled') {
+            setOffers(offersResult.value.data.offers);
+            setRiderLocation(offersResult.value.data.rider_location);
+            setOffersLoading(false);
+            setOffersError('');
+        } else {
+            setOffersLoading(false);
+            setOffersError('Nearby orders could not be loaded.');
+            errors.push('Nearby orders could not be loaded.');
+        }
+
+        if (reportFailure && errors.length) onError(`${errors.join(' ')} Please try again.`);
     }, [dashboardFrom, dashboardStatus, dashboardTo, debouncedDashboardSearch, onError]);
 
     const refreshNavigationCounts = React.useCallback(async () => {
@@ -421,8 +801,10 @@ export function RiderDashboard({ user, onUserUpdated, onError, onLogout }: {
                 notifications: RiderNotification[];
                 unread_count: number;
                 unread_chat_count: number;
+                bulk_read_count: number;
             }>('/api/notifications');
             setNavigationCounts({ notifications: response.data.unread_count, chats: response.data.unread_chat_count });
+            setNotificationBulkReadCount(response.data.bulk_read_count ?? 0);
             setRiderNotifications(response.data.notifications.filter((notification) => [
                 'rider_offer_available',
                 'rider_assignment_confirmed',
@@ -432,6 +814,25 @@ export function RiderDashboard({ user, onUserUpdated, onError, onLogout }: {
             // The navigation remains usable if badges are temporarily unavailable.
         }
     }, []);
+
+    async function markRiderNotificationsRead(): Promise<void> {
+        if (notificationActionBusy || notificationBulkReadCount === 0) return;
+        setNotificationActionBusy(true);
+        setNotificationActionMessage('');
+        try {
+            const response = await api.post<{ marked_count: number }>('/api/notifications/read');
+            await refreshNavigationCounts();
+            setNotificationActionMessage(response.data.marked_count
+                ? `${response.data.marked_count} informational notification${response.data.marked_count === 1 ? '' : 's'} marked as read. Critical alerts remain unread until opened or acknowledged.`
+                : 'There are no unread informational notifications to mark as read. Critical alerts remain unread until opened or acknowledged.');
+        } catch (requestError) {
+            setNotificationActionMessage(requestError instanceof Error && 'userMessage' in requestError && typeof requestError.userMessage === 'string'
+                ? requestError.userMessage
+                : 'Notifications could not be marked as read. Try again.');
+        } finally {
+            setNotificationActionBusy(false);
+        }
+    }
 
     React.useEffect(() => {
         if (offers.length === 0) {
@@ -522,65 +923,118 @@ export function RiderDashboard({ user, onUserUpdated, onError, onLogout }: {
         if (locationWatchRef.current !== null) navigator.geolocation?.clearWatch(locationWatchRef.current);
     }, []);
 
-    async function acceptOffer(offer: RiderOffer) {
-        if (!await confirmAction({
-            title: 'Accept this delivery?',
-            text: `Order ${offer.delivery.order.order_reference} will be assigned only if it is still available.`,
-            confirmText: 'Accept delivery',
-        })) return;
+    async function showConfirmedAssignment(offer: RiderOffer): Promise<boolean> {
+        const response = await api.get<{ deliveries: Paginated<RiderDelivery> }>('/api/riders/deliveries', {
+            params: { search: offer.delivery.order.order_reference, page: 1, per_page: 10 },
+        });
+        const assigned = response.data.deliveries.data.find((delivery) =>
+            delivery.id === offer.delivery.id
+            && delivery.order.order_reference === offer.delivery.order.order_reference
+            && activeStatuses.has(delivery.status),
+        );
+        if (!assigned) return false;
 
-        setActingOnOfferId(offer.id);
-        setNotice('');
+        setNotice(`Farmgate confirms delivery ${assigned.delivery_reference} is assigned to you.`);
+        setOffers((current) => current.filter((item) => item.id !== offer.id));
+        setDeliverySearch(offer.delivery.order.order_reference);
+        setDeliveryStatus('');
+        setDeliveryPage(1);
+        setDeliveries([assigned]);
+        setDeliveryTotal(1);
+        setDeliveryLastPage(1);
+        setDeliveryError('');
+        setDeliveriesLoading(false);
+        setDeliveryTab('assigned');
+        setPage('deliveries');
+
+        return true;
+    }
+
+    async function acceptOffer(offer: RiderOffer) {
+        if (offerActionLockRef.current) return;
+        offerActionLockRef.current = true;
         try {
+            const confirmed = await confirmAction({
+                title: 'Accept this delivery?',
+                text: `Order ${offer.delivery.order.order_reference} will be assigned only if it is still available.`,
+                confirmText: 'Accept delivery',
+            });
+            if (!confirmed) return;
+
+            setActingOnOfferId(offer.id);
+            setNotice('');
             const response = await api.post<{ message: string; delivery: { id: number; status: string } }>(
                 `/api/riders/offers/${offer.id}/accept`,
             );
-            if (response.data.delivery.status !== 'RIDER_ACCEPTED') {
-                throw new Error('The server did not confirm this delivery assignment.');
+            if (response.data.delivery.id !== offer.delivery.id || response.data.delivery.status !== 'RIDER_ACCEPTED') {
+                throw new Error('Farmgate did not confirm the expected delivery assignment. Refresh My Deliveries before trying again.');
             }
             setNotice(`Delivery for order ${offer.delivery.order.order_reference} is now assigned to you.`);
-            await Promise.all([refreshSummary(false), refreshNavigationCounts()]);
-            refreshDeliveries();
+            setOffers((current) => current.filter((item) => item.id !== offer.id));
+            setDeliverySearch('');
+            setDeliveryStatus('');
+            setDeliveryPage(1);
+            setDeliveries([]);
+            setDeliveryError('');
+            setDeliveriesLoading(true);
             setDeliveryTab('assigned');
             setPage('deliveries');
+            refreshDeliveries();
+            void refreshSummary(false);
+            void refreshNavigationCounts();
         } catch (requestError: any) {
             const serverMessage = requestError.response?.data?.message;
             const message = requestError.response?.status === 409
-                ? (serverMessage ?? 'This delivery is no longer available. Nearby orders have been refreshed.')
-                : requestError.message ?? requestError.userMessage ?? 'The delivery could not be accepted. Nearby orders have been refreshed.';
-            setNotice(message);
-            await Promise.all([refreshSummary(false), refreshNavigationCounts()]);
+                ? (serverMessage ?? 'This delivery is no longer available.')
+                : requestError.userMessage ?? requestError.response?.data?.message ?? requestError.message ?? 'The delivery could not be accepted.';
+            let assignmentConfirmed = false;
+            try {
+                assignmentConfirmed = await showConfirmedAssignment(offer);
+            } catch {
+                assignmentConfirmed = false;
+            }
+            if (!assignmentConfirmed) setNotice(`${message} Farmgate could not confirm an assignment; refresh Nearby Orders before retrying.`);
+            void refreshSummary(false);
+            void refreshNavigationCounts();
         } finally {
             setActingOnOfferId(null);
+            offerActionLockRef.current = false;
         }
     }
 
     async function declineOffer(offer: RiderOffer) {
-        if (!await confirmAction({
-            title: 'Decline this delivery offer?',
-            text: `Order ${offer.delivery.order.order_reference} will be offered to other eligible riders.`,
-            confirmText: 'Decline offer',
-            danger: true,
-        })) return;
-
-        setActingOnOfferId(offer.id);
-        setNotice('');
+        if (offerActionLockRef.current) return;
+        offerActionLockRef.current = true;
         try {
+            const confirmed = await confirmAction({
+                title: 'Decline this delivery offer?',
+                text: `Order ${offer.delivery.order.order_reference} will be offered to other eligible riders.`,
+                confirmText: 'Decline offer',
+                danger: true,
+            });
+            if (!confirmed) return;
+
+            setActingOnOfferId(offer.id);
+            setNotice('');
             const response = await api.post<{ message: string; delivery: { status: string } }>(
                 `/api/riders/offers/${offer.id}/decline`,
             );
             setNotice(response.data.delivery.status === 'WAITING_FOR_RIDER'
                 ? `Offer declined. Order ${offer.delivery.order.order_reference} is awaiting another eligible rider.`
                 : `Offer declined. Other eligible riders were notified for order ${offer.delivery.order.order_reference}.`);
-            await Promise.all([refreshSummary(false), refreshNavigationCounts()]);
+            setOffers((current) => current.filter((item) => item.id !== offer.id));
+            void refreshSummary(false);
+            void refreshNavigationCounts();
         } catch (requestError: any) {
             const serverMessage = requestError.response?.data?.message;
             setNotice(requestError.response?.status === 409
-                ? (serverMessage ?? 'This delivery offer is no longer available. Nearby orders have been refreshed.')
-                : requestError.message ?? requestError.userMessage ?? 'The delivery offer could not be declined.');
-            await Promise.all([refreshSummary(false), refreshNavigationCounts()]);
+                ? (serverMessage ?? 'This delivery offer is no longer available.')
+                : requestError.userMessage ?? requestError.response?.data?.message ?? requestError.message ?? 'The delivery offer could not be declined.');
+            void refreshSummary(false);
+            void refreshNavigationCounts();
         } finally {
             setActingOnOfferId(null);
+            offerActionLockRef.current = false;
         }
     }
 
@@ -672,16 +1126,21 @@ export function RiderDashboard({ user, onUserUpdated, onError, onLogout }: {
         setPage('chats');
     }
 
+    React.useEffect(() => {
+        const handleHashChange = () => {
+            if (window.location.hash === '#notifications') setPage('notifications');
+        };
+        window.addEventListener('hashchange', handleHashChange);
+
+        return () => window.removeEventListener('hashchange', handleHashChange);
+    }, []);
+
     function openRiderDeliveries(search: string | number) {
         setDeliverySearch(String(search));
         setDeliveryStatus('');
         setDeliveryPage(1);
         setDeliveryTab('assigned');
         setPage('deliveries');
-    }
-
-    function openDeliveryNotification(deliveryOrderId: number) {
-        openRiderDeliveries(deliveryOrderId);
     }
 
     async function confirmLogout() {
@@ -727,7 +1186,10 @@ export function RiderDashboard({ user, onUserUpdated, onError, onLogout }: {
                     <label>To date<input type="date" value={dashboardTo} min={dashboardFrom || undefined} onChange={(event) => setDashboardTo(event.target.value)} /></label>
                     <button type="button" onClick={() => { setDashboardSearch(''); setDashboardStatus(''); setDashboardFrom(''); setDashboardTo(''); }}>Clear filters</button>
                 </div>
-                <div className="rider-metric-grid" aria-live="polite">
+                {summaryError && <p className="rider-delivery-error" role="alert">{summaryError} <button type="button" onClick={() => void refreshSummary(true)}>Try again</button></p>}
+                {summaryLoading && !summary ? <div className="rider-metric-grid rider-metric-grid-skeleton" role="status" aria-label="Loading rider dashboard">
+                    {Array.from({ length: 8 }, (_, index) => <article className="rider-metric-skeleton" key={index}><span /><strong /></article>)}
+                </div> : <div className="rider-metric-grid" aria-live="polite">
                     <article><span>Open offers</span><strong>{summary?.offers ?? '—'}</strong></article>
                     <article><span>Accepted assignments</span><strong>{summary?.accepted ?? '—'}</strong></article>
                     <article><span>Active deliveries</span><strong>{summary?.active ?? '—'}</strong></article>
@@ -736,11 +1198,11 @@ export function RiderDashboard({ user, onUserUpdated, onError, onLogout }: {
                     <article><span>Delivered without proof</span><strong>{summary?.delivered_without_proof ?? '—'}</strong></article>
                     <article><span>Cancelled</span><strong>{summary?.cancellations ?? '—'}</strong></article>
                     <article><span>Avg. verified delivery time</span><strong>{summary?.average_delivery_minutes === null || summary?.average_delivery_minutes === undefined ? 'Not enough data' : `${summary.average_delivery_minutes} min`}</strong></article>
-                </div>
+                </div>}
                 <div className="rider-analytics-layout">
                     <section className="rider-analytics-card" aria-labelledby="rider-status-chart-heading">
                         <div className="rider-work-heading"><div><p className="eyebrow">Filtered deliveries</p><h3 id="rider-status-chart-heading">Status breakdown</h3></div><span>{summary?.filtered_deliveries ?? 0} records</span></div>
-                        {Object.keys(statusCounts).length === 0 ? <p className="rider-empty">No delivery activity for these filters.</p>
+                        {summaryLoading && !summary ? <LoadingSkeleton variant="list" count={3} label="Loading delivery status breakdown" /> : Object.keys(statusCounts).length === 0 ? <p className="rider-empty">No delivery activity for these filters.</p>
                             : <div className="rider-status-chart" role="list" aria-label="Delivery counts by status">
                                 {Object.entries(statusCounts).sort(([first], [second]) => first.localeCompare(second)).map(([status, count]) => {
                                     const maximum = Math.max(1, ...Object.values(statusCounts));
@@ -752,9 +1214,9 @@ export function RiderDashboard({ user, onUserUpdated, onError, onLogout }: {
                     </section>
                     <section className="rider-analytics-card" aria-labelledby="rider-recent-activity-heading">
                         <div className="rider-work-heading"><div><p className="eyebrow">Recorded events</p><h3 id="rider-recent-activity-heading">Recent activity</h3></div></div>
-                        {recentActivity.length === 0 ? <p className="rider-empty">No status changes match these filters.</p>
+                        {summaryLoading && !summary ? <LoadingSkeleton variant="list" count={3} label="Loading recent delivery activity" /> : recentActivity.length === 0 ? <p className="rider-empty">No status changes match these filters.</p>
                             : <ol className="rider-activity-list">{recentActivity.map((activity) => <li key={activity.id}>
-                                <span><strong>{activity.order_reference ?? 'Delivery'}</strong> · {statusLabel(activity.to_status)}</span>
+                                <span><strong>{activity.delivery_reference ?? activity.order_reference ?? 'Delivery'}</strong> · {statusLabel(activity.to_status)}</span>
                                 <time>{activity.created_at ? new Date(activity.created_at).toLocaleString() : '—'}</time>
                             </li>)}</ol>}
                     </section>
@@ -787,18 +1249,21 @@ export function RiderDashboard({ user, onUserUpdated, onError, onLogout }: {
                         </div>
                     </div>
                     {locationNotice && <p className="rider-location-notice" role="status">{locationNotice}</p>}
-                    <div className="rider-nearby-columns">
+                    {offersError && <p className="rider-delivery-error" role="alert">{offersError} <button type="button" onClick={() => void refreshSummary(true)}>Try again</button></p>}
+                    <div className="rider-nearby-columns" aria-busy={offersLoading}>
                         <div className="rider-nearby-main">
                             <React.Suspense fallback={<div className="rider-nearby-map rider-map-loading" role="status">Loading map…</div>}>
                                 <NearbyOrdersMap offers={offers} selectedOfferId={selectedOfferId} riderLocation={riderLocation} onSelectOffer={setSelectedOfferId} />
                             </React.Suspense>
                             <p className="rider-map-privacy-note">P = pickup, D = approximate drop-off. Offer-map distances are approximate; checkout distance is the saved road route. Exact buyer details stay hidden until assignment.</p>
-                            {offers.length === 0 ? <p className="rider-offers-empty">No delivery offers right now. Only standard-delivery orders marked Ready for Pickup with confirmed payment and a valid seller pickup location are offered to verified, available riders within the configured distance. Refreshing your location retries eligible expired offers. Accept an offer to add it to My Deliveries.</p>
+                            {offersLoading && offers.length === 0 ? <div className="rider-offer-skeletons" role="status" aria-label="Loading nearby orders">
+                                {Array.from({ length: 3 }, (_, index) => <div className="rider-offer-skeleton" key={index}><span /><span /><span /></div>)}
+                            </div> : offersError && offers.length === 0 ? null : offers.length === 0 ? <p className="rider-offers-empty">No delivery offers right now. Only standard-delivery orders marked Ready for Pickup with confirmed payment and a valid seller pickup location are offered to verified, available riders within the configured distance. Refreshing your location retries eligible expired offers. Accept an offer to add it to My Deliveries.</p>
                                 : <div className="rider-offers-list">{offers.map((offer) => {
                                     const selected = selectedOfferId === offer.id;
                                     return <article className={`rider-offer-card ${selected ? 'is-selected' : ''}`} key={offer.id}>
                                         <button type="button" className="rider-offer-select" aria-pressed={selected} onClick={() => setSelectedOfferId(offer.id)}>
-                                            <span><strong>Order {offer.delivery.order.order_reference}</strong><small>{selected ? 'Selected on map' : 'Show this request on map'}</small></span>
+                                            <span><strong>{offer.delivery.delivery_reference} · Order {offer.delivery.order.order_reference}</strong><small>{selected ? 'Selected on map' : 'Show this request on map'}</small></span>
                                             <span className="rider-offer-distance">{Number(offer.distance_km).toFixed(1)} km direct from rider at offer time</span>
                                         </button>
                                         <p><b>Pickup area:</b> {offer.delivery.pickup_area}</p>
@@ -808,17 +1273,24 @@ export function RiderDashboard({ user, onUserUpdated, onError, onLogout }: {
                                             : `${Number(offer.checkout_distance_km).toFixed(1)} km (${offer.checkout_distance_method === 'OSRM_BARANGAY_ESTIMATE' ? 'barangay-level road distance estimate' : 'OSRM road route'})`}</p>
                                         <p><b>Buyer checkout delivery fee:</b> {offer.checkout_delivery_fee === null ? 'Not available' : `₱${Number(offer.checkout_delivery_fee).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</p>
                                         {offer.expires_at && <p className="rider-offer-expiry">Offer expires {new Date(offer.expires_at).toLocaleString()}</p>}
-                                        <button type="button" disabled={actingOnOfferId !== null} onClick={() => void acceptOffer(offer)}>
-                                            {actingOnOfferId === offer.id ? 'Checking availability…' : 'Accept delivery'}
+                                        <button type="button" disabled={actingOnOfferId !== null} aria-busy={actingOnOfferId === offer.id} onClick={() => void acceptOffer(offer)}>
+                                            {actingOnOfferId === offer.id ? 'Accepting…' : 'Accept delivery'}
                                         </button>
-                                        <button type="button" disabled={actingOnOfferId !== null} onClick={() => void declineOffer(offer)}>
-                                            {actingOnOfferId === offer.id ? 'Updating offer…' : 'Decline offer'}
+                                        <button type="button" disabled={actingOnOfferId !== null} aria-busy={actingOnOfferId === offer.id} onClick={() => void declineOffer(offer)}>
+                                            {actingOnOfferId === offer.id ? 'Updating…' : 'Decline offer'}
                                         </button>
                                     </article>;
                                 })}</div>}
                         </div>
                         <aside className="rider-order-notifications" aria-labelledby="rider-order-notifications-title">
                             <header><div><p className="eyebrow">Updates</p><h3 id="rider-order-notifications-title">Order Notifications</h3></div><NavigationBadge count={navigationCounts.notifications} /></header>
+                            {navigationCounts.notifications > 0 && <div className="rider-notification-bulk-actions">
+                                <button type="button" onClick={() => void markRiderNotificationsRead()} disabled={notificationActionBusy || notificationBulkReadCount === 0} aria-busy={notificationActionBusy}>
+                                    {notificationActionBusy ? 'Marking…' : 'Mark all as read'}
+                                </button>
+                                <p>Critical alerts remain unread until opened or acknowledged.</p>
+                            </div>}
+                            {notificationActionMessage && <p className="rider-notification-action-message" role="status">{notificationActionMessage}</p>}
                             <h4>Nearby orders</h4>
                             {offers.length === 0 ? <p className="rider-notification-empty">No open requests.</p> : offers.slice(0, 3).map((offer) => {
                                 const unread = riderNotifications.some((item) => item.read_at === null
@@ -826,7 +1298,7 @@ export function RiderDashboard({ user, onUserUpdated, onError, onLogout }: {
                                     && item.data.order_reference === offer.delivery.order.order_reference);
                                 return <button type="button" className="rider-order-notification" key={`offer-${offer.id}`} onClick={() => setSelectedOfferId(offer.id)}>
                                     <span className={`rider-notification-dot ${unread ? 'is-unread' : ''}`} aria-label={unread ? 'Unread' : 'Read'} />
-                                    <span><strong>{offer.delivery.order.order_reference}</strong><small>{offer.delivery.order.dropoff_area}</small></span>
+                                    <span><strong>{offer.delivery.delivery_reference} · {offer.delivery.order.order_reference}</strong><small>{offer.delivery.order.dropoff_area}</small></span>
                                     <span className="rider-notification-state">Available</span>
                                 </button>;
                             })}
@@ -836,7 +1308,7 @@ export function RiderDashboard({ user, onUserUpdated, onError, onLogout }: {
                                 : riderNotifications.filter((item) => item.data.type === 'rider_assignment_confirmed').slice(0, 3).map((item) => (
                                     <div className="rider-order-notification" key={item.id}>
                                         <span className={`rider-notification-dot ${item.read_at === null ? 'is-unread' : ''}`} aria-label={item.read_at === null ? 'Unread' : 'Read'} />
-                                        <span><strong>{item.data.order_reference ?? 'Assignment confirmed'}</strong><small>{item.data.message ?? 'Your delivery acceptance is confirmed.'}</small></span>
+                                        <span><strong>{item.data.delivery_reference ?? item.data.order_reference ?? 'Assignment confirmed'}</strong><small>{item.data.message ?? 'Your delivery acceptance is confirmed.'}</small></span>
                                         <time>{new Date(item.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time>
                                     </div>
                                 ))}
@@ -845,28 +1317,36 @@ export function RiderDashboard({ user, onUserUpdated, onError, onLogout }: {
                     </div>
                 </section>}
                 {deliveryTab === 'assigned' && <>
+                    <RiderRemittancePanel key={deliveryRevision} onSubmitted={() => setDeliveryRevision((revision) => revision + 1)} />
                     <div className="rider-delivery-filters" role="search" aria-label="Filter my deliveries">
-                        <label>Search deliveries<input type="search" value={deliverySearch} onChange={(event) => { setDeliverySearch(event.target.value); setDeliveryPage(1); }} placeholder="Order reference, buyer, or seller" /></label>
+                        <label>Search deliveries<input type="search" value={deliverySearch} onChange={(event) => { setDeliverySearch(event.target.value); setDeliveryPage(1); }} placeholder="Delivery or order reference, buyer, or seller" /></label>
                         <label>Delivery status<select value={deliveryStatus} onChange={(event) => { setDeliveryStatus(event.target.value); setDeliveryPage(1); }}><option value="">All statuses</option>{riderStatuses.map((status) => <option key={status} value={status}>{statusLabel(status)}</option>)}</select></label>
                     </div>
                     <p className="rider-delivery-count" aria-live="polite">{deliveryTotal} assigned deliveries</p>
                     {deliveryError && <p className="rider-delivery-error" role="alert">{deliveryError} <button type="button" onClick={() => setDeliveryRevision((revision) => revision + 1)}>Try again</button></p>}
-                    {deliveriesLoading ? <p role="status">Loading deliveries…</p> : deliveries.length === 0 ? <div className="rider-deliveries-empty"><h3>No matching deliveries</h3><p>Accepted assignments appear here. Try a different filter or search.</p></div>
+                    {deliveriesLoading ? <div className="rider-delivery-skeletons" role="status" aria-label="Loading assigned deliveries">
+                        {Array.from({ length: 3 }, (_, index) => <article className="rider-delivery-skeleton" key={index}><span /><span /><span /></article>)}
+                    </div> : deliveries.length === 0 ? <div className="rider-deliveries-empty"><h3>No matching deliveries</h3><p>Accepted assignments appear here. Try a different filter or search.</p></div>
                         : <div className="rider-delivery-groups">{riderStatuses.map((status) => {
                             const group = deliveries.filter((delivery) => delivery.status === status);
                             if (group.length === 0) return null;
                             return <section className="rider-delivery-group" key={status} aria-labelledby={`delivery-status-${status}`}>
                                 <h3 id={`delivery-status-${status}`}>{statusLabel(status)} <span>{group.length}</span></h3>
                                 <div className="rider-delivery-list">{group.map((delivery) => <article className="rider-delivery-card" key={delivery.id}>
-                                    <div className="rider-delivery-card-heading"><div><p className="eyebrow">Order {delivery.order.order_reference}</p><h4>{statusLabel(delivery.status)}</h4></div><strong>₱{Number(delivery.order.total_amount).toLocaleString()}</strong></div>
-                                    {delivery.order.delivery_distance_km !== null && <p>{Number(delivery.order.delivery_distance_km).toFixed(2)} km ({delivery.order.delivery_distance_method === 'OSRM_BARANGAY_ESTIMATE' ? 'barangay-level road distance estimate' : 'OSRM road route'}) · Buyer delivery fee ₱{Number(delivery.order.delivery_fee).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>}
-                                    <div className="rider-delivery-addresses"><p><b>Pickup</b><span>{delivery.pickup_address ?? delivery.order.seller?.name ?? 'Seller location'}</span></p><p><b>Drop-off</b><span>{locationFor(delivery.order)}</span></p><p><b>Buyer</b><span>{delivery.order.shipping_address?.recipient_name ?? delivery.order.buyer?.name ?? 'Buyer'}{delivery.order.buyer?.phone_number ? ` · ${delivery.order.buyer.phone_number}` : ''}</span></p></div>
+                                    <div className="rider-delivery-card-heading"><div><p className="eyebrow" title={`Order ${delivery.order.order_reference}`}>{delivery.delivery_reference}</p><span className={`rider-delivery-status rider-delivery-status--${delivery.status.toLowerCase()}`}>{statusLabel(delivery.status)}</span></div><strong><small>Order total</small>₱{Number(delivery.order.total_amount).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></div>
+                                    {delivery.order.delivery_distance_km !== null && <p className="rider-delivery-route">{Number(delivery.order.delivery_distance_km).toFixed(2)} km · Fee ₱{Number(delivery.order.delivery_fee).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>}
+                                    <div className="rider-delivery-addresses"><p><b>Pickup</b><span title={delivery.pickup_address ?? delivery.order.seller?.name ?? 'Seller location'}>{delivery.pickup_address ?? delivery.order.seller?.name ?? 'Seller location'}</span></p><p><b>Drop-off</b><span title={locationFor(delivery.order)}>{locationFor(delivery.order)}</span></p><p><b>Buyer</b><span title={`${delivery.order.shipping_address?.recipient_name ?? delivery.order.buyer?.name ?? 'Buyer'}${delivery.order.buyer?.phone_number ? ` · ${delivery.order.buyer.phone_number}` : ''}`}>{delivery.order.shipping_address?.recipient_name ?? delivery.order.buyer?.name ?? 'Buyer'}{delivery.order.buyer?.phone_number ? ` · ${delivery.order.buyer.phone_number}` : ''}</span></p></div>
                                     {activeStatuses.has(delivery.status) && <div className="rider-delivery-actions">
                                         <button type="button" className="seller-inline-action" onClick={() => toggleLocationSharing(delivery.id)}>{sharingDeliveryId === delivery.id ? 'Stop sharing location' : 'Share live location'}</button>
                                     </div>}
                                     <DeliveryProofCapture delivery={delivery} onSaved={() => {
                                         refreshDeliveries();
                                         void refreshSummary(false);
+                                    }} />
+                                    <CodCollectionAction delivery={delivery} onSaved={() => {
+                                        refreshDeliveries();
+                                        void refreshSummary(false);
+                                        setDeliveryRevision((revision) => revision + 1);
                                     }} />
                                     {sharingDeliveryId === delivery.id && locationNotice && <p className="rider-location-notice" role="status">{locationNotice}</p>}
                                     {delivery.status === 'DELIVERED' && <DeliveryProofSummary
@@ -877,35 +1357,27 @@ export function RiderDashboard({ user, onUserUpdated, onError, onLogout }: {
                                         capturedAt={delivery.proof_captured_at}
                                         recordedAt={delivery.proof_recorded_at}
                                     />}
-                                    {activeStatuses.has(delivery.status) && <DeliveryTrackingPanel
-                                        deliveryId={delivery.id}
-                                        sellerName={delivery.order.seller?.name ?? 'Seller'}
-                                        buyerName={delivery.order.shipping_address?.recipient_name ?? delivery.order.buyer?.name ?? 'Buyer'}
-                                        sellerLatitude={delivery.pickup_latitude}
-                                        sellerLongitude={delivery.pickup_longitude}
-                                        buyerLatitude={delivery.order.shipping_address?.latitude ?? null}
-                                        buyerLongitude={delivery.order.shipping_address?.longitude ?? null}
-                                    />}
+                                    {activeStatuses.has(delivery.status) && <RiderDeliveryTracking delivery={delivery} />}
                                 </article>)}</div>
                             </section>;
                         })}</div>}
                     {!deliveriesLoading && deliveryTotal > 0 && <div className="rider-delivery-pagination"><span>Page {deliveryPage} of {deliveryLastPage} · {deliveryTotal} deliveries</span>{deliveryLastPage > 1 && <Pagination page={deliveryPage} lastPage={deliveryLastPage} onChange={setDeliveryPage} />}</div>}
                 </>}
                 {deliveryTab === 'scanner' && <section className="rider-qr-scanner" aria-labelledby="rider-qr-scanner-title">
-                    <div className="rider-work-heading"><div><p className="eyebrow">Assigned deliveries only</p><h3 id="rider-qr-scanner-title">QR Scanner</h3><p>Choose an active assignment to verify pickup or delivery.</p></div><button type="button" className="seller-inline-action" onClick={refreshDeliveries}>Refresh assignments</button></div>
+                    <div className="rider-work-heading"><div><p className="eyebrow">Assigned deliveries only</p><h3 id="rider-qr-scanner-title">QR Scanner</h3><p>Choose an active assignment to verify pickup or delivery.</p></div><button type="button" className="seller-inline-action" disabled={scannerLoading} aria-busy={scannerLoading} onClick={refreshDeliveries}>{scannerLoading ? 'Refreshing…' : 'Refresh assignments'}</button></div>
                     {scannerError && <p className="rider-delivery-error" role="alert">{scannerError}</p>}
-                    {scannerLoading ? <p role="status">Loading active assignments…</p>
+                    {scannerLoading ? <LoadingSkeleton variant="list" count={3} label="Loading active assignments" />
                         : scannerDeliveries.length === 0 ? <div className="rider-deliveries-empty"><h4>No active assigned deliveries</h4><p>Accept a delivery first. Nearby, unassigned requests cannot be scanned or verified.</p></div>
                             : <div className="rider-qr-scanner-content">
                                 <label className="rider-scanner-assignment">Assigned delivery
                                     <select value={selectedScannerDeliveryId ?? ''} onChange={(event) => setSelectedScannerDeliveryId(Number(event.target.value))}>
                                         {scannerDeliveries.map((delivery) => <option key={delivery.id} value={delivery.id}>
-                                            {delivery.order.order_reference} · {statusLabel(delivery.status)}
+                                            {delivery.delivery_reference} · {delivery.order.order_reference} · {statusLabel(delivery.status)}
                                         </option>)}
                                     </select>
                                 </label>
                                 {selectedScannerDelivery && <article className="rider-delivery-card">
-                                    <div className="rider-delivery-card-heading"><div><p className="eyebrow">Order {selectedScannerDelivery.order.order_reference}</p><h4>{statusLabel(selectedScannerDelivery.status)}</h4></div></div>
+                                    <div className="rider-delivery-card-heading"><div><p className="eyebrow">{selectedScannerDelivery.delivery_reference} · Order {selectedScannerDelivery.order.order_reference}</p><h4>{statusLabel(selectedScannerDelivery.status)}</h4></div></div>
                                     <DeliveryVerification delivery={selectedScannerDelivery} autoExpand onVerified={() => { refreshDeliveries(); void refreshSummary(false); }} onError={onError} />
                                 </article>}
                             </div>}
@@ -914,9 +1386,42 @@ export function RiderDashboard({ user, onUserUpdated, onError, onLogout }: {
             </section>}
             {page === 'chats' && <AIChatPage role="RIDER" initialConversationId={activeConversationId} onBack={() => setPage('dashboard')} />}
             {page === 'reports' && <ReportPanel role="RIDER" onError={onError} />}
-            {page === 'notifications' && <NotificationsPage role="RIDER" onOpenOrder={openDeliveryNotification} onOpenConversation={openConversation} onNotificationsRead={refreshNavigationCounts} />}
+            {page === 'events' && <SystemCalendar role="RIDER" onError={onError} onOpenDelivery={(_, orderReference) => openRiderDeliveries(orderReference ?? '')} />}
+            {page === 'notifications' && <NotificationsPage role="RIDER" onOpenOrder={(orderId, orderReference) => openRiderDeliveries(orderReference ?? orderId)} onOpenConversation={openConversation} onOpenEvent={(eventId) => { window.history.pushState({}, '', `#calendar/event/${eventId}`); setPage('events'); }} onNotificationsRead={refreshNavigationCounts} />}
             {page === 'account' && <RiderAccountSettings user={user} onUserUpdated={onUserUpdated} onError={onError} />}
             {isChat && <span className="sr-only" aria-live="polite">Rider chats workspace</span>}
         </section>
     </main>;
+}
+
+class RiderDashboardBoundary extends React.Component<{
+    children: React.ReactNode;
+}, { hasError: boolean }> {
+    state = { hasError: false };
+
+    static getDerivedStateFromError(): { hasError: boolean } {
+        return { hasError: true };
+    }
+
+    componentDidCatch(error: Error): void {
+        console.error('Rider workspace rendering failed.', error);
+    }
+
+    render() {
+        if (this.state.hasError) {
+            return <main className="admin-shell seller-shell rider-shell">
+                <section className="admin-content seller-content rider-workspace-fallback" role="alert">
+                    <h1>Rider workspace could not be displayed</h1>
+                    <p>Your assignment remains saved on the server. Try the workspace again; if the issue continues, refresh this page.</p>
+                    <button type="button" onClick={() => this.setState({ hasError: false })}>Try again</button>
+                </section>
+            </main>;
+        }
+
+        return this.props.children;
+    }
+}
+
+export function RiderDashboard(props: React.ComponentProps<typeof RiderDashboardContent>) {
+    return <RiderDashboardBoundary><RiderDashboardContent {...props} /></RiderDashboardBoundary>;
 }

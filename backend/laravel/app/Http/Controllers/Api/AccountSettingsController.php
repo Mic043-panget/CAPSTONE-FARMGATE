@@ -11,6 +11,7 @@ class AccountSettingsController extends Controller
     private const DEFAULT_PREFERENCES = [
         'order_notifications' => true,
         'chat_notifications' => true,
+        'event_notifications' => true,
         'allow_direct_messages' => true,
     ];
 
@@ -24,6 +25,7 @@ class AccountSettingsController extends Controller
         $validated = $request->validate([
             'order_notifications' => ['sometimes', 'boolean'],
             'chat_notifications' => ['sometimes', 'boolean'],
+            'event_notifications' => ['sometimes', 'boolean'],
             'allow_direct_messages' => ['sometimes', 'boolean'],
         ]);
         abort_if($validated === [], 422, 'Choose at least one setting to update.');

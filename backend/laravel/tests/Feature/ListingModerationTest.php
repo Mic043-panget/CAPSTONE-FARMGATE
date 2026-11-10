@@ -26,6 +26,43 @@ class ListingModerationTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_admin_listing_details_include_seller_photos_and_moderation_history(): void
+    {
+        $admin = User::factory()->create(['role' => Role::ADMIN]);
+        $listing = $this->pendingListing();
+        $listing->images()->create(['url' => 'https://farmgate.test/listing.jpg', 'alt_text' => 'Livestock photo']);
+        $listing->moderationAttempts()->create([
+            'seller_id' => $listing->seller_id,
+            'attempt_number' => 1,
+            'status' => 'MANUAL_REVIEW',
+            'reasons' => ['Manual review requested.'],
+        ]);
+
+        $this->actingAs($admin)->getJson('/api/admin/listings/'.$listing->id)
+            ->assertOk()
+            ->assertJsonPath('listing.seller.email', $listing->seller->email)
+            ->assertJsonPath('listing.images.0.alt_text', 'Livestock photo')
+            ->assertJsonPath('listing.moderation_attempts.0.reasons.0', 'Manual review requested.');
+
+        $this->actingAs(User::factory()->create(['role' => Role::BUYER]))
+            ->getJson('/api/admin/listings/'.$listing->id)
+            ->assertForbidden();
+    }
+
+    public function test_seller_can_find_their_listing_by_id_from_a_notification(): void
+    {
+        $listing = $this->pendingListing();
+
+        $this->actingAs($listing->seller)->getJson('/api/seller/listings?q='.$listing->id)
+            ->assertOk()
+            ->assertJsonPath('listings.data.0.id', $listing->id);
+
+        $otherSeller = User::factory()->create(['role' => Role::SELLER]);
+        $this->actingAs($otherSeller)->getJson('/api/seller/listings?q='.$listing->id)
+            ->assertOk()
+            ->assertJsonCount(0, 'listings.data');
+    }
+
     public function test_high_confidence_valid_result_auto_approves_and_is_idempotent(): void
     {
         config(['services.gemini.moderation_confidence_threshold' => 0.9]);

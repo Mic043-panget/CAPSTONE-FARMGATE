@@ -3,7 +3,9 @@
 namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
+use App\Contracts\FarmgateNotification;
 use App\Enums\Role;
+use App\Services\NotificationDispatchService;
 use Database\Factories\UserFactory;
 use Illuminate\Auth\Passwords\CanResetPassword as CanResetPasswordTrait;
 use Illuminate\Contracts\Auth\CanResetPassword;
@@ -23,7 +25,20 @@ use Laravel\Sanctum\HasApiTokens;
 class User extends Authenticatable implements CanResetPassword, MustVerifyEmail
 {
     /** @use HasFactory<UserFactory> */
-    use CanResetPasswordTrait, HasApiTokens, HasFactory, Notifiable, SoftDeletes;
+    use CanResetPasswordTrait, HasApiTokens, HasFactory, Notifiable, SoftDeletes {
+        notify as protected notifyUsingLaravelChannels;
+    }
+
+    public function notify($instance)
+    {
+        if ($instance instanceof FarmgateNotification) {
+            app(NotificationDispatchService::class)->send($this, $instance);
+
+            return;
+        }
+
+        $this->notifyUsingLaravelChannels($instance);
+    }
 
     public function sellerProfile(): HasOne
     {
@@ -45,9 +60,21 @@ class User extends Authenticatable implements CanResetPassword, MustVerifyEmail
         return $this->hasMany(LoginHistory::class);
     }
 
+    public function pushSubscriptions(): HasMany
+    {
+        return $this->hasMany(PushSubscription::class);
+    }
+
     public function auditLogs(): HasMany
     {
         return $this->hasMany(AuditLog::class);
+    }
+
+    public function moderationViolations(): HasMany
+    {
+        return $this->hasMany(AuditLog::class, 'entity_id')
+            ->where('entity_type', self::class)
+            ->where('action', 'admin.user.violation_recorded');
     }
 
     public function livestockListings(): HasMany

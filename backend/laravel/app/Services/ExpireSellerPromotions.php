@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\DB;
 
 class ExpireSellerPromotions
 {
-    public function run(): int
+    public function run(PromotionNotificationService $notifications): int
     {
         $expiredCount = 0;
 
@@ -17,9 +17,9 @@ class ExpireSellerPromotions
             ->where('status', 'ACTIVE')
             ->where('ends_at', '<=', now())
             ->select(['id', 'seller_id'])
-            ->chunkById(100, function ($promotions) use (&$expiredCount): void {
+            ->chunkById(100, function ($promotions) use (&$expiredCount, $notifications): void {
                 foreach ($promotions as $candidate) {
-                    $expired = DB::transaction(function () use ($candidate): bool {
+                    $expired = DB::transaction(function () use ($candidate): ?SellerPromotion {
                         User::query()->whereKey($candidate->seller_id)->lockForUpdate()->first();
                         $promotion = SellerPromotion::query()
                             ->where('seller_id', $candidate->seller_id)
@@ -28,7 +28,7 @@ class ExpireSellerPromotions
                             ->lockForUpdate()
                             ->find($candidate->id);
                         if (! $promotion) {
-                            return false;
+                            return null;
                         }
 
                         $promotion->update(['status' => 'ENDED']);
@@ -47,11 +47,12 @@ class ExpireSellerPromotions
                             'changed_fields' => ['status'],
                         ]);
 
-                        return true;
+                        return $promotion->fresh();
                     });
 
                     if ($expired) {
                         $expiredCount++;
+                        $notifications->notifyBuyers($expired, 'ended');
                     }
                 }
             });

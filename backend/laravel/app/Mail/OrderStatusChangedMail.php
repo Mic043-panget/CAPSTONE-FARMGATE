@@ -18,6 +18,7 @@ class OrderStatusChangedMail extends Mailable
         public string $status,
         public ?string $reason,
         public string $orderUrl,
+        public string $actionLabel = 'View order',
     ) {}
 
     public function envelope(): Envelope
@@ -37,6 +38,7 @@ class OrderStatusChangedMail extends Mailable
                 'status' => str_replace('_', ' ', strtolower($this->status)),
                 'reason' => $this->reason,
                 'orderUrl' => $this->orderUrl,
+                'actionLabel' => $this->actionLabel,
             ],
         );
     }

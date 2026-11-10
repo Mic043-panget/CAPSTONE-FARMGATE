@@ -273,6 +273,26 @@ class DeliveryProofTest extends TestCase
             ->assertJsonPath('deliveries.data.0.has_delivery_proof', true);
     }
 
+    public function test_admin_delivery_list_search_and_details_use_the_stable_public_reference(): void
+    {
+        $actors = $this->dropoff();
+        $delivery = $actors['delivery'];
+        $this->assertMatchesRegularExpression('/^FG-DEL-\d{4}-[A-Z0-9]{6}$/', $delivery->delivery_reference);
+        $admin = User::factory()->create(['role' => Role::ADMIN]);
+
+        $this->actingAs($admin)
+            ->getJson('/api/admin/deliveries?search='.urlencode($delivery->delivery_reference))
+            ->assertOk()
+            ->assertJsonPath('deliveries.data.0.delivery_reference', $delivery->delivery_reference);
+        $this->actingAs($admin)
+            ->getJson('/api/admin/deliveries/'.$delivery->id)
+            ->assertOk()
+            ->assertJsonPath('delivery.delivery_reference', $delivery->delivery_reference);
+        $this->actingAs($actors['buyer'])
+            ->getJson('/api/admin/deliveries/'.$delivery->id)
+            ->assertForbidden();
+    }
+
     /**
      * @return array{buyer: User, seller: User, rider: User, delivery: Delivery, token: string}
      */

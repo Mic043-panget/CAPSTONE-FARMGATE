@@ -1,6 +1,7 @@
 import React from 'react';
 import api from '../../lib/api';
 import { confirmAction, showSuccess } from '../../lib/alerts';
+import { LoadingSkeleton } from '../../shared/components/LoadingSkeleton';
 
 type CartListing = {
     id: number;
@@ -86,7 +87,7 @@ export function BuyerCart({ open, onClose, onCheckout, onCartCountChange, onErro
     }
 
     async function removeItem(item: CartItem) {
-        const confirmed = await confirmAction({ title: 'Remove this item?', text: `${item.listing?.name ?? 'This listing'} will be removed from your cart.`, confirmText: 'Remove', danger: true });
+        const confirmed = await confirmAction({ title: 'Remove this livestock listing?', text: `${item.listing?.name ?? 'This livestock listing'} will be removed from your cart.`, confirmText: 'Remove', danger: true });
         if (!confirmed) return;
         setBusyItemId(item.id);
         setMessage('');
@@ -94,9 +95,9 @@ export function BuyerCart({ open, onClose, onCheckout, onCartCountChange, onErro
             const response = await api.delete<CartResponse>(`/api/cart/items/${item.id}`);
             setCart(response.data);
             onCartCountChange(cartCount(response.data.items));
-            showSuccess('Item removed from cart.');
+            showSuccess('Livestock listing removed from cart.');
         } catch (requestError: any) {
-            const errorMessage = requestError.userMessage ?? requestError.response?.data?.message ?? 'The item could not be removed.';
+            const errorMessage = requestError.userMessage ?? requestError.response?.data?.message ?? 'The livestock listing could not be removed.';
             setMessage(errorMessage);
             onError(errorMessage);
         } finally {
@@ -112,7 +113,7 @@ export function BuyerCart({ open, onClose, onCheckout, onCartCountChange, onErro
         <div className="buyer-cart-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
             <section className="buyer-cart-panel" role="dialog" aria-modal="true" aria-labelledby="buyer-cart-title">
                 <header className="buyer-cart-heading"><div><p className="eyebrow">Buyer basket</p><h2 id="buyer-cart-title">Your cart</h2></div><button className="buyer-cart-close" type="button" aria-label="Close cart" onClick={onClose}>×</button></header>
-                {loading ? <p className="buyer-cart-empty">Loading your cart...</p> : !cart.items.length ? <div className="buyer-cart-empty"><strong>Your cart is empty</strong><p>Open a livestock listing to add an item.</p></div> : <>
+                {loading ? <LoadingSkeleton variant="list" count={3} label="Loading your cart" /> : !cart.items.length ? <div className="buyer-cart-empty"><strong>Your cart is empty</strong><p>Open a livestock listing to add livestock to your cart.</p></div> : <>
                     <div className="buyer-cart-items">{cart.items.map((item) => <article className="buyer-cart-item" key={item.id}>
                         <div className="buyer-cart-image">{item.listing?.images[0] ? <img src={item.listing.images[0].url} alt={item.listing.images[0].alt_text ?? item.listing.name} /> : <span aria-hidden="true">{item.listing?.name.slice(0, 1) ?? '?'}</span>}</div>
                         <div className="buyer-cart-item-info"><p className="eyebrow">{item.listing?.category ?? 'Listing'}</p><h3>{item.listing?.name ?? 'Listing unavailable'}</h3><p>{item.listing?.promotion && item.listing.original_price && <del>{pesoPrice.format(Number(item.listing.original_price))} </del>}<strong>{pesoPrice.format(item.unit_price)}</strong> / {item.listing?.pricing_type === 'PER_KILO' ? 'kg' : 'head'}</p>{item.listing?.promotion && item.listing.original_price && <p className="buyer-cart-promotion-note">{item.listing.promotion.name} · Save {pesoPrice.format(Number(item.listing.original_price) - item.unit_price)} per unit</p>}<div className="buyer-cart-item-actions"><div className="quantity-stepper" aria-label={`${item.listing?.pricing_type === 'PER_KILO' ? 'Kilograms' : 'Number of animals'} for ${item.listing?.name ?? 'listing'}`}><button type="button" aria-label="Decrease quantity" disabled={busyItemId === item.id || item.quantity <= 1} onClick={() => updateQuantity(item, item.quantity - 1)}>−</button><span>{item.quantity} {item.listing?.pricing_type === 'PER_KILO' ? 'kg' : 'head'}</span><button type="button" aria-label="Increase quantity" disabled={busyItemId === item.id || !item.listing || item.quantity >= item.listing.quantity} onClick={() => updateQuantity(item, item.quantity + 1)}>+</button></div><button className="buyer-cart-remove" type="button" disabled={busyItemId === item.id} onClick={() => removeItem(item)}>Remove</button></div></div>

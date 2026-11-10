@@ -2,12 +2,14 @@
 
 namespace App\Notifications;
 
+use App\Contracts\FarmgateNotification;
 use Illuminate\Notifications\Notification;
 
-class OrderCaseUpdatedNotification extends Notification
+class OrderCaseUpdatedNotification extends Notification implements FarmgateNotification
 {
     public function __construct(
         public int $caseId,
+        public string $caseReference,
         public int $orderId,
         public string $orderReference,
         public string $caseType,
@@ -24,6 +26,7 @@ class OrderCaseUpdatedNotification extends Notification
         return [
             'type' => 'order_case_updated',
             'case_id' => $this->caseId,
+            'case_reference' => $this->caseReference,
             'case_type' => $this->caseType,
             'order_id' => $this->orderId,
             'order_reference' => $this->orderReference,

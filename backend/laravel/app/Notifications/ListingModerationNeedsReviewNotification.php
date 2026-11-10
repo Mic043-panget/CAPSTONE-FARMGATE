@@ -2,9 +2,10 @@
 
 namespace App\Notifications;
 
+use App\Contracts\FarmgateNotification;
 use Illuminate\Notifications\Notification;
 
-class ListingModerationNeedsReviewNotification extends Notification
+class ListingModerationNeedsReviewNotification extends Notification implements FarmgateNotification
 {
     /**
      * @param  array<int, string>  $reasons

@@ -119,13 +119,14 @@ class RiderAssignmentService
         $delivery->loadMissing('order', 'offers.rider');
         if ($delivery->status === DeliveryStatus::WAITING_FOR_RIDER) {
             $seller = $delivery->order?->seller;
-            if ($seller && $this->notificationsEnabled($seller)
+            if ($seller && $this->notificationsEnabled()
                 && ! $this->notificationExists($seller, 'rider_assignment_waiting', $delivery->id)) {
                 $seller->notify(new DeliveryAssignmentNotification(
                     'rider_assignment_waiting',
                     $delivery->order_id,
                     $delivery->order->order_reference,
                     $delivery->id,
+                    $delivery->delivery_reference,
                     'No eligible rider is currently available within the assignment distance. Riders must be verified, marked available, and have a recent location; assignment can be retried.',
                 ));
             }
@@ -134,13 +135,14 @@ class RiderAssignmentService
         if (in_array($delivery->status, [DeliveryStatus::RIDER_OFFERED, DeliveryStatus::SEARCHING_FOR_RIDER], true)) {
             foreach ($delivery->offers->where('status', 'OPEN') as $offer) {
                 $rider = $offer->rider;
-                if ($rider && $this->notificationsEnabled($rider)
+                if ($rider && $this->notificationsEnabled()
                     && ! $this->notificationExists($rider, 'rider_offer_available', $delivery->id, $offer->id)) {
                     $rider->notify(new DeliveryAssignmentNotification(
                         'rider_offer_available',
                         $delivery->order_id,
                         $delivery->order->order_reference,
                         $delivery->id,
+                        $delivery->delivery_reference,
                         'A delivery offer is available for review.',
                         $offer->id,
                     ));
@@ -160,13 +162,14 @@ class RiderAssignmentService
         }
 
         foreach ([$order->buyer, $order->seller] as $recipient) {
-            if ($recipient && $this->notificationsEnabled($recipient)
+            if ($recipient && $this->notificationsEnabled()
                 && ! $this->notificationExists($recipient, 'order_rider_assigned', $delivery->id)) {
                 $recipient->notify(new DeliveryAssignmentNotification(
                     'order_rider_assigned',
                     $order->id,
                     $order->order_reference,
                     $delivery->id,
+                    $delivery->delivery_reference,
                     'A rider has accepted the delivery.',
                 ));
             }
@@ -179,7 +182,7 @@ class RiderAssignmentService
         $order = $delivery->order;
         if (! $order || $delivery->rider_id !== $rider->id
             || $delivery->status !== DeliveryStatus::RIDER_ACCEPTED
-            || ! $this->notificationsEnabled($rider)
+            || ! $this->notificationsEnabled()
             || $this->notificationExists($rider, 'rider_assignment_confirmed', $delivery->id)) {
             return;
         }
@@ -189,6 +192,7 @@ class RiderAssignmentService
             $order->id,
             $order->order_reference,
             $delivery->id,
+            $delivery->delivery_reference,
             'Your delivery acceptance is confirmed. Open your delivery queue for the next steps.',
         ));
     }
@@ -198,7 +202,7 @@ class RiderAssignmentService
         $order->loadMissing('seller', 'delivery');
         $delivery = $order->delivery;
         $seller = $order->seller;
-        if (! $delivery || ! $seller || ! $this->notificationsEnabled($seller)
+        if (! $delivery || ! $seller || ! $this->notificationsEnabled()
             || $this->notificationExists($seller, 'rider_assignment_waiting', $delivery->id)) {
             return;
         }
@@ -208,6 +212,7 @@ class RiderAssignmentService
             $order->id,
             $order->order_reference,
             $delivery->id,
+            $delivery->delivery_reference,
             $message,
         ));
     }
@@ -255,11 +260,10 @@ class RiderAssignmentService
         return $this->processAndNotify($deliveryId) ?? Delivery::query()->findOrFail($deliveryId);
     }
 
-    private function notificationsEnabled(User $user): bool
+    private function notificationsEnabled(): bool
     {
         return $this->settings->getBoolean('in_app_notifications_enabled')
-            && $this->settings->getBoolean('order_notifications_enabled')
-            && $user->accountPreferenceEnabled('order_notifications');
+            && $this->settings->getBoolean('order_notifications_enabled');
     }
 
     private function notificationExists(User $user, string $type, int $deliveryId, ?int $offerId = null): bool

@@ -348,13 +348,14 @@ class DeliveryTrackingController extends Controller
         foreach ($recipients as $recipient) {
             if ($settings->getBoolean('in_app_notifications_enabled')
                 && $settings->getBoolean('order_notifications_enabled')
-                && $recipient?->accountPreferenceEnabled('order_notifications')) {
+                && $recipient) {
                 try {
                     $recipient->notify(new DeliveryAssignmentNotification(
                         $proofRecorded ? 'delivery_proof_recorded' : 'order_delivery_status_changed',
                         $updated->order_id,
                         $updated->order->order_reference,
                         $updated->id,
+                        $updated->delivery_reference,
                         $message,
                     ));
                 } catch (Throwable $exception) {

@@ -140,6 +140,7 @@ class DashboardController extends Controller
             ->get(['id', 'delivery_id', 'from_status', 'to_status', 'reason', 'created_at'])
             ->map(fn (DeliveryStatusHistory $history): array => [
                 'id' => $history->id,
+                'delivery_reference' => $history->delivery?->delivery_reference,
                 'order_reference' => $history->delivery?->order?->order_reference,
                 'from_status' => $history->from_status,
                 'to_status' => $history->to_status,
@@ -185,6 +186,7 @@ class DashboardController extends Controller
 
         return [
             'id' => $delivery->id,
+            'delivery_reference' => $delivery->delivery_reference,
             'order_reference' => $delivery->order?->order_reference,
             'status' => $delivery->status->value,
             'pickup_area' => 'Bongabong, Oriental Mindoro',

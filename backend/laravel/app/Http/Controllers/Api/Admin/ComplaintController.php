@@ -23,17 +23,29 @@ class ComplaintController extends Controller
         abort_unless($request->user()?->role === Role::ADMIN, 403);
 
         $query = Complaint::query()->with([
-            'order:id,order_reference,status,total_amount,payment_method,payment_status',
+            'order:id,order_reference,status,total_amount,delivery_fee,payment_method,payment_status',
+            'order.items:id,order_id,listing_id,quantity,total_amount',
+            'order.items.listing:id,name',
             'opener:id,name,email',
             'respondent:id,name,email',
             'statusHistory',
-            'messages',
+            'messages.sender:id,name,role',
             'media',
         ]);
         if ($request->filled('search')) {
-            $search = '%'.trim((string) $request->input('search')).'%';
-            $query->where(function ($builder) use ($search): void {
-                $builder->where('reason', 'like', $search)->orWhere('description', 'like', $search)->orWhere('status', 'like', $search);
+            $searchText = trim((string) $request->input('search'));
+            $search = '%'.$searchText.'%';
+            $query->where(function ($builder) use ($search, $searchText): void {
+                $builder->where('reason', 'like', $search)
+                    ->orWhere('case_reference', 'like', $search)
+                    ->orWhere('description', 'like', $search)
+                    ->orWhere('status', 'like', $search)
+                    ->orWhereHas('order', fn ($order) => $order->where('order_reference', 'like', $search))
+                    ->orWhereHas('opener', fn ($opener) => $opener->where('name', 'like', $search)->orWhere('email', 'like', $search))
+                    ->orWhereHas('respondent', fn ($respondent) => $respondent->where('name', 'like', $search)->orWhere('email', 'like', $search));
+                if (ctype_digit($searchText)) {
+                    $builder->orWhereKey((int) $searchText);
+                }
             });
         }
         if ($request->filled('status')) {
@@ -42,8 +54,14 @@ class ComplaintController extends Controller
         if ($request->filled('case_type')) {
             $query->where('case_type', $request->input('case_type'));
         }
+        if ($request->filled('case_id')) {
+            $data = $request->validate(['case_id' => ['integer', 'min:1']]);
+            $query->whereKey($data['case_id']);
+        }
 
-        $cases = $query->latest()->paginate(15)->withQueryString();
+        $sort = $request->validate(['sort' => ['nullable', 'in:newest,oldest']])['sort'] ?? 'newest';
+        $direction = $sort === 'oldest' ? 'asc' : 'desc';
+        $cases = $query->orderBy('created_at', $direction)->orderBy('id', $direction)->paginate(15)->withQueryString();
         $cases->getCollection()->each(function (Complaint $case) use ($workflow): void {
             $case->setAttribute('evidence_media', $workflow->mediaPayload($case->media));
             $workflow->attachPayoutEvidenceUrl($case);
@@ -83,11 +101,11 @@ class ComplaintController extends Controller
                 'resolved_at' => in_array($status, [ComplaintStatus::RESOLVED, ComplaintStatus::REJECTED], true) ? now() : null,
             ]);
             $locked->statusHistory()->create(['changed_by' => $request->user()->id, 'from_status' => $from, 'to_status' => $status->value, 'reason' => $data['reason']]);
-            $workflow->activity($locked, $request->user()->id, 'CASE_STATUS_CHANGED', 'Admin changed case #'.$locked->id.' to '.$status->value.': '.$data['reason']);
+            $workflow->activity($locked, $request->user()->id, 'CASE_STATUS_CHANGED', 'Admin changed case '.$locked->case_reference.' to '.$status->value.': '.$data['reason']);
 
             return $locked->fresh(['statusHistory', 'order']);
         });
-        $workflow->notifyParticipants($updated, 'Case #'.$updated->id.' was updated to '.$status->value.'.');
+        $workflow->notifyParticipants($updated, 'Case '.$updated->case_reference.' was updated to '.$status->value.'.');
 
         return response()->json(['complaint' => $updated]);
     }

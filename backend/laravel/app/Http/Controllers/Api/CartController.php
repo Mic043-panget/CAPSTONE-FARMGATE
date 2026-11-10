@@ -68,7 +68,7 @@ class CartController extends Controller
         $cart = $item->cart;
 
         return response()->json([
-            'message' => 'Item added to cart.',
+            'message' => 'Livestock listing added to cart.',
             'cart' => $this->payload($cart),
             'item' => $item,
         ]);

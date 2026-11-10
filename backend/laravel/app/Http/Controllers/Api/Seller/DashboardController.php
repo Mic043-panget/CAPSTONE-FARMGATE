@@ -28,6 +28,8 @@ class DashboardController extends Controller
             OrderStatus::READY_FOR_PICKUP->value,
             OrderStatus::FULFILLING->value,
         ]);
+        $ordersNeedingConfirmation = $orders->clone()
+            ->where('status', OrderStatus::PENDING_CONFIRMATION->value);
 
         return response()->json(['summary' => [
             'total_completed_sales' => (string) number_format((float) $completedOrders->sum('total_amount'), 2, '.', ''),
@@ -35,6 +37,7 @@ class DashboardController extends Controller
             'sales_this_month' => (string) number_format((float) $completedOrders->whereMonth('created_at', now()->month)->sum('total_amount'), 2, '.', ''),
             'completed_orders' => $completedOrders->count(),
             'pending_orders' => $pendingOrders->count(),
+            'orders_needing_confirmation' => $ordersNeedingConfirmation->count(),
             'active_listings' => LivestockListing::query()->where('seller_id', $sellerId)->where('status', ListingStatus::ACTIVE->value)->count(),
             'sold_listings' => $completedOrders->count(),
             'interested_buyers' => Interest::query()->whereHas('listing', fn ($query) => $query->where('seller_id', $sellerId))->count(),

@@ -2,6 +2,7 @@ import React from 'react';
 import api from '../../lib/api';
 import type { User } from '../../shared/types';
 import { confirmAction, showError, showSuccess } from '../../lib/alerts';
+import { LoadingSkeleton } from '../../shared/components/LoadingSkeleton';
 
 const LocationMap = React.lazy(() => import('../../shared/components/LocationMap').then((module) => ({ default: module.LocationMap })));
 
@@ -258,8 +259,8 @@ export function CheckoutPage({ user, buyNow, onCancel, onComplete, onError }: Ch
     }
 
     function validateCheckout(): string | null {
-        if (!items.length) return 'There are no items to check out.';
-        if (items.some((item) => !Number.isInteger(item.quantity) || item.quantity < 1 || item.quantity > item.available_quantity)) return 'Choose a valid quantity for every item before continuing.';
+        if (!items.length) return 'There is no livestock in your order.';
+        if (items.some((item) => !Number.isInteger(item.quantity) || item.quantity < 1 || item.quantity > item.available_quantity)) return 'Choose a valid quantity for every livestock listing before continuing.';
         if (!requiredAddress) {
             if (!locationConfirmed || !Number.isFinite(shippingAddress.latitude) || !Number.isFinite(shippingAddress.longitude)) return 'Pin or select your location so the seller-to-buyer route can be shown on your order.';
             return null;
@@ -343,7 +344,7 @@ export function CheckoutPage({ user, buyNow, onCancel, onComplete, onError }: Ch
                 {index < steps.length - 1 && <span className="buyer-checkout-progress-line" />}
             </React.Fragment>)}
         </nav>
-        {loading ? <div className="buyer-checkout-loading">Loading your order...</div> : <div className="buyer-checkout-layout">
+        {loading ? <LoadingSkeleton variant="detail" count={2} label="Loading checkout details" /> : <div className="buyer-checkout-layout">
             <section className="buyer-checkout-main">
                 <div className="buyer-checkout-section">
                     <header><h2>Personal &amp; Shipping Information</h2><p>Enter your details and delivery address</p></header>
@@ -424,8 +425,8 @@ export function CheckoutPage({ user, buyNow, onCancel, onComplete, onError }: Ch
                 </div>
             </section>
             <aside className="buyer-checkout-summary">
-                <p className="eyebrow">Order Summary</p><h2>Review your items and total</h2>
-                <h3>Your Livestock Items</h3>
+                <p className="eyebrow">Order Summary</p><h2>Review your livestock and total</h2>
+                <h3>Your livestock</h3>
                 <div className="buyer-checkout-summary-items">{items.map((item) => <article key={item.listing_id}>
                     <span className="buyer-checkout-item-image">{item.image_url ? <img src={item.image_url} alt="" /> : item.name.slice(0, 1)}</span>
                     <span className="buyer-checkout-item-name"><strong>{item.name}</strong>{item.original_unit_price !== undefined && <small className="checkout-promotion-note">{item.promotion_name} · <del>{peso(item.original_unit_price)}</del> Save {peso(item.original_unit_price - item.unit_price)} per unit</small>}<small>Price: {peso(item.unit_price)} / {item.pricing_type === 'PER_KILO' ? 'kg' : 'head'}</small><label className="buyer-checkout-quantity">Select {item.pricing_type === 'PER_KILO' ? 'kilograms' : 'number of animals'}<span><input type="number" min={1} max={item.available_quantity} step={1} value={quantityDrafts[item.listing_id] ?? (item.quantity > 0 ? String(item.quantity) : '')} onChange={(event) => updateQuantity(item, event.target.value)} onBlur={() => finishQuantityEdit(item)} aria-label={`Select ${item.pricing_type === 'PER_KILO' ? 'kilograms' : 'number of animals'} for ${item.name}`} />{item.pricing_type === 'PER_KILO' ? 'kg' : 'head'}</span></label><small>{item.quantity} × {peso(item.unit_price)} = {peso(item.quantity * item.unit_price)}</small></span>

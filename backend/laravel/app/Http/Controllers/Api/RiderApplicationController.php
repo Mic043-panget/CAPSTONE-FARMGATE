@@ -8,16 +8,19 @@ use App\Models\AuditLog;
 use App\Models\RiderApplication;
 use App\Models\RiderApplicationHistory;
 use App\Models\RiderDocument;
+use App\Models\RiderPolicyPublication;
 use App\Models\RiderProfile;
 use App\Models\RiderVehicleChange;
 use App\Models\User;
 use App\Notifications\RiderApplicationStatusNotification;
+use App\Services\RiderPolicyService;
 use App\Services\SystemSettingsService;
 use App\Support\PhilippinePhoneNumber;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
@@ -27,7 +30,6 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
-use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\Response;
 
 class RiderApplicationController extends Controller
@@ -35,48 +37,196 @@ class RiderApplicationController extends Controller
     private const DOCUMENT_TYPES = [
         'DRIVER_LICENSE',
         'VEHICLE_REGISTRATION',
-        'SELFIE',
         'VEHICLE_PHOTO',
     ];
 
-    public function policy(SystemSettingsService $settings): JsonResponse
+    public function policy(SystemSettingsService $settings, RiderPolicyService $policies): JsonResponse
     {
-        $policy = config('rider-registration');
+        return response()->json($policies->publicStatus($settings));
+    }
+
+    public function adminPolicy(Request $request): JsonResponse
+    {
+        abort_unless($request->user()?->role === Role::ADMIN, 403);
+        $draft = RiderPolicyPublication::query()->where('status', 'DRAFT')->latest('id')->first();
+        $latestPublished = RiderPolicyPublication::query()->where('status', 'PUBLISHED')->latest('id')->first();
+        $policy = $draft ?? $latestPublished;
 
         return response()->json([
-            'policy_version' => $policy['policy_version'],
-            'effective_date' => $policy['effective_date'],
-            'privacy_contact' => $policy['privacy_contact'],
-            'documents' => [
-                'privacy' => $policy['privacy_policy_url'],
-                'terms' => $policy['terms_url'],
-                'safety' => $policy['safety_policy_url'],
-                'draft_package' => route('rider-registration.policy-document'),
-            ],
-            'selfie_collection_enabled' => $policy['selfie_collection_enabled'],
-            'registration_open' => $this->registrationIsOpen($settings),
-            'status_message' => $this->registrationIsOpen($settings)
-                ? null
-                : 'Rider registration is unavailable until Farmgate publishes and adopts the rider privacy, terms, safety, and retention documents.',
+            'policy' => $this->adminPolicyPayload($policy),
+            'has_draft' => $draft !== null,
+            'audit_history' => $this->adminPolicyAuditHistory($policy),
         ]);
     }
 
-    public function policyDocument(): Response|BinaryFileResponse
+    public function saveAdminPolicyDraft(Request $request, RiderPolicyService $policies): JsonResponse
     {
-        $path = config('rider-registration.policy_package_path') ?: base_path('../../../PRIVACY_POLICY.md');
-        abort_unless(is_file($path), 404, 'The rider policy package has not been published.');
+        abort_unless($request->user()?->role === Role::ADMIN, 403);
+        $data = $request->validate([
+            'policy_id' => ['nullable', 'integer', 'exists:rider_policy_publications,id'],
+            'version' => ['nullable', 'string', 'max:40'],
+            'effective_date' => ['nullable', 'date'],
+            'privacy_contact' => ['nullable', 'string', 'max:255'],
+            'privacy_content' => ['nullable', 'string', 'max:50000'],
+            'terms_content' => ['nullable', 'string', 'max:50000'],
+            'safety_content' => ['nullable', 'string', 'max:50000'],
+            'retention_content' => ['nullable', 'string', 'max:50000'],
+            'package_appendix' => ['nullable', 'string', 'max:50000'],
+        ]);
+        $existing = isset($data['policy_id'])
+            ? RiderPolicyPublication::query()->findOrFail($data['policy_id'])
+            : null;
+        abort_if($existing && $existing->status !== 'DRAFT', 409, 'Published policy versions are immutable. Start a new draft version.');
+        if (filled($data['version'] ?? null)) {
+            Validator::make($data, [
+                'version' => ['unique:rider_policy_publications,version'.($existing ? ','.$existing->id : '')],
+            ])->validate();
+        }
 
-        return response()->file($path, [
-            'Content-Type' => 'text/markdown; charset=UTF-8',
-            'Cache-Control' => 'public, max-age=300',
-            'X-Content-Type-Options' => 'nosniff',
+        $policy = DB::transaction(function () use ($request, $data, $existing, $policies): RiderPolicyPublication {
+            $locked = $existing
+                ? RiderPolicyPublication::query()->lockForUpdate()->findOrFail($existing->id)
+                : (new RiderPolicyPublication)->forceFill(['created_by' => $request->user()->id]);
+            abort_if($locked->exists && $locked->status !== 'DRAFT', 409, 'Published policy versions are immutable. Start a new draft version.');
+            $trackedFields = [
+                'version',
+                'effective_date',
+                'privacy_contact',
+                'privacy_content',
+                'terms_content',
+                'safety_content',
+                'retention_content',
+                'package_appendix',
+            ];
+            $before = $locked->exists ? $locked->only($trackedFields) : [];
+            $locked->fill(collect($data)->except('policy_id')->all());
+            $locked->created_by ??= $request->user()->id;
+            $locked->status = 'DRAFT';
+            $locked->approved_by = null;
+            $locked->approved_at = null;
+            $changedFields = collect($trackedFields)
+                ->filter(fn (string $field): bool => ($before[$field] ?? null) !== $locked->{$field})
+                ->values()
+                ->all();
+            $locked->save();
+            AuditLog::create([
+                'user_id' => $request->user()->id,
+                'action' => 'rider.policy.draft_saved',
+                'entity_type' => 'RIDER_POLICY_PUBLICATION',
+                'entity_id' => $locked->id,
+                'method' => $request->method(),
+                'route' => $request->path(),
+                'status_code' => 200,
+                'metadata' => [
+                    'policy_id' => $locked->id,
+                    'version' => $locked->version,
+                    'effective_date' => $locked->effective_date?->toDateString(),
+                    'privacy_contact' => $locked->privacy_contact,
+                    'changed_fields' => $changedFields,
+                    'document_character_counts' => collect(RiderPolicyPublication::REQUIRED_DOCUMENTS)
+                        ->mapWithKeys(fn (string $label, string $field): array => [$field => mb_strlen((string) $locked->{$field})])
+                        ->all(),
+                    'package_appendix_character_count' => mb_strlen((string) $locked->package_appendix),
+                    'missing_documents' => $policies->missingDocuments($locked),
+                ],
+            ]);
+
+            return $locked->fresh();
+        });
+
+        return response()->json([
+            'policy' => $this->adminPolicyPayload($policy),
+            'audit_history' => $this->adminPolicyAuditHistory($policy),
         ]);
     }
 
-    public function register(Request $request, SystemSettingsService $settings): JsonResponse
+    public function approveAdminPolicy(Request $request, RiderPolicyPublication $policy, RiderPolicyService $policies): JsonResponse
+    {
+        abort_unless($request->user()?->role === Role::ADMIN, 403);
+        $request->validate(['approval_confirmed' => ['required', 'accepted']]);
+        $approved = DB::transaction(function () use ($request, $policy, $policies): RiderPolicyPublication {
+            $locked = RiderPolicyPublication::query()->lockForUpdate()->findOrFail($policy->id);
+            abort_unless($locked->status === 'DRAFT', 409, 'Only a draft policy package can be approved.');
+            if (! $policies->isComplete($locked) || ! $policies->hasPublishableEffectiveDate($locked)) {
+                throw ValidationException::withMessages([
+                    'Complete all four policy documents, privacy contact, and a policy effective today or later before approval. Each document must be complete and contain no unresolved placeholders.',
+                ]);
+            }
+
+            $locked->forceFill([
+                'approved_by' => $request->user()->id,
+                'approved_at' => now(),
+            ])->save();
+            AuditLog::create([
+                'user_id' => $request->user()->id,
+                'action' => 'rider.policy.approved',
+                'entity_type' => 'RIDER_POLICY_PUBLICATION',
+                'entity_id' => $locked->id,
+                'method' => $request->method(),
+                'route' => $request->path(),
+                'status_code' => 200,
+                'metadata' => [
+                    'policy_id' => $locked->id,
+                    'version' => $locked->version,
+                    'effective_date' => $locked->effective_date?->toDateString(),
+                    'privacy_contact' => $locked->privacy_contact,
+                ],
+            ]);
+
+            return $locked->fresh();
+        });
+
+        return response()->json(['policy' => $this->adminPolicyPayload($approved)]);
+    }
+
+    public function publishAdminPolicy(Request $request, RiderPolicyPublication $policy, RiderPolicyService $policies): JsonResponse
+    {
+        abort_unless($request->user()?->role === Role::ADMIN, 403);
+        $request->validate(['publish_confirmed' => ['required', 'accepted']]);
+        $published = DB::transaction(function () use ($request, $policy, $policies): RiderPolicyPublication {
+            $locked = RiderPolicyPublication::query()->lockForUpdate()->findOrFail($policy->id);
+            abort_unless($locked->status === 'DRAFT', 409, 'Only a draft policy can be published.');
+            abort_unless($locked->approved_by !== null && $locked->approved_at !== null, 409, 'Approve the saved policy package before publishing it.');
+            if (! $policies->isComplete($locked) || ! $policies->hasPublishableEffectiveDate($locked)) {
+                throw ValidationException::withMessages([
+                    'policy' => 'Complete all four policy documents, privacy contact, and a policy effective today or later before publication. Each document must be complete and contain no unresolved bracketed placeholders.',
+                ]);
+            }
+
+            $locked->forceFill([
+                'status' => 'PUBLISHED',
+                'published_by' => $request->user()->id,
+                'published_at' => now(),
+            ])->save();
+            AuditLog::create([
+                'user_id' => $request->user()->id,
+                'action' => 'rider.policy.published',
+                'entity_type' => 'RIDER_POLICY_PUBLICATION',
+                'entity_id' => $locked->id,
+                'method' => $request->method(),
+                'route' => $request->path(),
+                'status_code' => 200,
+                'metadata' => [
+                    'policy_id' => $locked->id,
+                    'version' => $locked->version,
+                    'effective_date' => $locked->effective_date?->toDateString(),
+                    'approved_by' => $locked->approved_by,
+                    'approved_at' => $locked->approved_at?->toISOString(),
+                    'published_by' => $request->user()->id,
+                ],
+            ]);
+
+            return $locked->fresh();
+        });
+
+        return response()->json(['policy' => $this->adminPolicyPayload($published)]);
+    }
+
+    public function register(Request $request, SystemSettingsService $settings, RiderPolicyService $policies): JsonResponse
     {
         abort_unless($request->user() === null, 403, 'Sign out before creating a rider account.');
-        abort_unless($this->registrationIsOpen($settings), 403, 'Rider registration is unavailable until the rider policy package is adopted and published.');
+        $policy = $policies->active();
+        abort_unless($policy && $this->registrationIsOpen($settings, $policy), 403, 'Rider registration is unavailable until complete rider policies are published, effective, and enabled.');
         $data = $request->validate([
             'name' => ['required', 'string', 'min:2', 'max:120'],
             'date_of_birth' => ['required', 'date', 'before_or_equal:today'],
@@ -84,10 +234,12 @@ class RiderApplicationController extends Controller
             'email' => ['required', 'email', 'max:255', 'unique:users,email'],
             'phone_number' => ['required', 'string', 'max:30'],
             'password' => ['required', 'string', 'min:'.$settings->getInt('minimum_password_length'), 'confirmed'],
-            'policy_version' => ['required', 'string', Rule::in([(string) config('rider-registration.policy_version')])],
+            'policy_version' => ['required', 'string', Rule::in([$policy->version])],
             'privacy_consent' => ['required', 'accepted'],
             'terms_consent' => ['required', 'accepted'],
             'safety_consent' => ['required', 'accepted'],
+            'retention_consent' => ['required', 'accepted'],
+            'optional_updates_consent' => ['nullable', 'boolean'],
         ]);
         $phone = PhilippinePhoneNumber::normalize($data['phone_number']);
         if (! $phone) {
@@ -99,8 +251,17 @@ class RiderApplicationController extends Controller
             'phone_number' => ['unique:users,phone_number'],
         ])->validate();
 
-        $policyVersion = (string) config('rider-registration.policy_version');
-        $user = DB::transaction(function () use ($data, $phone, $policyVersion): User {
+        $user = DB::transaction(function () use ($data, $phone, $policy, $settings, $policies): User {
+            $lockedPolicy = RiderPolicyPublication::query()->lockForUpdate()->findOrFail($policy->id);
+            $currentPolicy = $policies->active();
+            abort_unless($currentPolicy?->id === $lockedPolicy->id
+                && $lockedPolicy->status === 'PUBLISHED'
+                && $lockedPolicy->published_at !== null
+                && $lockedPolicy->effective_date?->lte(today())
+                && $this->registrationIsOpen($settings, $lockedPolicy)
+                && hash_equals($lockedPolicy->version, $data['policy_version']), 403,
+                'The published rider policy version changed or is no longer effective. Reload the policy and try again.');
+            $acceptedAt = now();
             $user = User::create([
                 'name' => trim($data['name']),
                 'email' => strtolower(trim($data['email'])),
@@ -114,19 +275,23 @@ class RiderApplicationController extends Controller
                 'date_of_birth' => $data['date_of_birth'],
                 'residential_address' => trim($data['residential_address']),
                 'status' => 'DRAFT',
-                'privacy_policy_version' => $policyVersion,
-                'privacy_accepted_at' => now(),
-                'terms_version' => $policyVersion,
-                'terms_accepted_at' => now(),
-                'safety_policy_version' => $policyVersion,
-                'safety_policy_accepted_at' => now(),
+                'privacy_policy_version' => $lockedPolicy->version,
+                'privacy_accepted_at' => $acceptedAt,
+                'terms_version' => $lockedPolicy->version,
+                'terms_accepted_at' => $acceptedAt,
+                'safety_policy_version' => $lockedPolicy->version,
+                'safety_policy_accepted_at' => $acceptedAt,
+                'retention_policy_version' => $lockedPolicy->version,
+                'retention_policy_accepted_at' => $acceptedAt,
+                'optional_updates_consent' => (bool) ($data['optional_updates_consent'] ?? false),
+                'optional_updates_consented_at' => ($data['optional_updates_consent'] ?? false) ? $acceptedAt : null,
             ]);
             RiderApplicationHistory::create([
                 'rider_application_id' => $application->id,
                 'actor_id' => $user->id,
                 'to_status' => 'DRAFT',
                 'action' => 'APPLICATION_CREATED',
-                'reason' => 'Applicant accepted the published rider policy package.',
+                'reason' => 'Applicant acknowledged the effective rider policies.',
             ]);
 
             return $user;
@@ -154,11 +319,137 @@ class RiderApplicationController extends Controller
         return response()->json(['application' => $application ? $this->applicantPayload($application) : null]);
     }
 
-    public function submit(Request $request): JsonResponse
+    public function saveDraft(Request $request, RiderPolicyService $policies): JsonResponse
     {
         $user = $request->user();
         abort_unless($user?->role === Role::RIDER, 403);
-        abort_unless($this->riderPolicyIsAdopted(), 403, 'Rider document collection is unavailable until the rider policy package is adopted and published.');
+        abort_unless($policies->active(), 403, 'Rider document collection is unavailable until complete rider policies are published and effective.');
+        $application = RiderApplication::query()->where('user_id', $user->id)->firstOrFail();
+        abort_unless(in_array($application->status, ['DRAFT', 'MORE_INFORMATION_REQUIRED'], true), 409, 'This application cannot be edited in its current status.');
+
+        $data = $request->validate([
+            'name' => ['sometimes', 'nullable', 'string', 'min:2', 'max:120'],
+            'date_of_birth' => ['sometimes', 'nullable', 'date', 'before_or_equal:today'],
+            'residential_address' => ['sometimes', 'nullable', 'string', 'min:8', 'max:1000'],
+            'license_number' => ['sometimes', 'nullable', 'string', 'min:4', 'max:80'],
+            'plate_number' => ['sometimes', 'nullable', 'string', 'min:2', 'max:16', 'regex:/^[A-Za-z0-9][A-Za-z0-9 -]{1,15}$/'],
+            'vehicle_type' => ['sometimes', 'nullable', 'string', 'max:80'],
+            'vehicle_make_model' => ['sometimes', 'nullable', 'string', 'max:120'],
+            'vehicle_color' => ['sometimes', 'nullable', 'string', 'max:60'],
+            'license_expires_on' => ['sometimes', 'nullable', 'date'],
+            'vehicle_registration_expires_on' => ['sometimes', 'nullable', 'date'],
+            'driver_license' => ['sometimes', 'nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:10240'],
+            'vehicle_registration' => ['sometimes', 'nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:10240'],
+            'selfie' => ['prohibited'],
+            'vehicle_photos' => ['sometimes', 'array', 'min:1', 'max:5'],
+            'vehicle_photos.*' => ['file', 'image', 'mimes:jpg,jpeg,png,webp', 'max:10240'],
+        ]);
+
+        $licenseNumber = isset($data['license_number'])
+            ? mb_strtoupper(preg_replace('/\s+/', '', trim($data['license_number'])))
+            : null;
+        $licenseHash = $licenseNumber !== null && $licenseNumber !== ''
+            ? hash_hmac('sha256', $licenseNumber, (string) config('app.key'))
+            : null;
+        if ($licenseHash !== null) {
+            Validator::make(['license_number_hash' => $licenseHash], [
+                'license_number_hash' => [Rule::unique('rider_applications', 'license_number_hash')->ignore($application->id)],
+            ])->validate();
+        }
+
+        $plate = isset($data['plate_number']) && trim($data['plate_number']) !== ''
+            ? mb_strtoupper(trim(preg_replace('/\s+/', ' ', $data['plate_number'])))
+            : null;
+        if ($plate !== null) {
+            $this->assertNoPendingPlateCollision($plate, $user->id);
+        }
+
+        $qualityGroups = [];
+        foreach (['driver_license', 'vehicle_registration'] as $field) {
+            $file = $request->file($field);
+            if ($file && str_starts_with((string) $file->getMimeType(), 'image/')) {
+                $qualityGroups[$field] = [$file];
+            }
+        }
+        if ($request->hasFile('vehicle_photos')) {
+            $qualityGroups['vehicle_photos'] = $request->file('vehicle_photos');
+        }
+        $this->assertImageQuality($qualityGroups);
+
+        $documentFiles = [
+            'DRIVER_LICENSE' => $request->file('driver_license') ? [$request->file('driver_license')] : [],
+            'VEHICLE_REGISTRATION' => $request->file('vehicle_registration') ? [$request->file('vehicle_registration')] : [],
+            'VEHICLE_PHOTO' => $request->file('vehicle_photos') ?? [],
+        ];
+        $paths = [];
+        $pathsToRemove = [];
+        try {
+            $savedApplication = DB::transaction(function () use ($application, $user, $data, $licenseNumber, $licenseHash, $plate, $documentFiles, &$paths, &$pathsToRemove): RiderApplication {
+                $locked = RiderApplication::query()->lockForUpdate()->findOrFail($application->id);
+                abort_unless(in_array($locked->status, ['DRAFT', 'MORE_INFORMATION_REQUIRED'], true), 409, 'This application cannot be edited in its current status.');
+
+                $updates = collect($data)
+                    ->except(['name', 'license_number', 'plate_number', 'driver_license', 'vehicle_registration', 'vehicle_photos', 'selfie'])
+                    ->filter(fn ($value): bool => $value !== null)
+                    ->all();
+                if ($licenseNumber !== null && $licenseNumber !== '') {
+                    $updates['license_number'] = $licenseNumber;
+                    $updates['license_number_hash'] = $licenseHash;
+                }
+                if ($plate !== null) {
+                    $updates['plate_number'] = $plate;
+                }
+                if ($updates !== []) {
+                    $locked->forceFill($updates)->save();
+                }
+
+                $lockedUser = User::query()->lockForUpdate()->findOrFail($user->id);
+                if (isset($data['name']) && $data['name'] !== null) {
+                    $lockedUser->forceFill(['name' => trim($data['name'])])->save();
+                }
+
+                foreach ($documentFiles as $type => $files) {
+                    if ($files === []) {
+                        continue;
+                    }
+                    $oldDocuments = $locked->documents()->where('document_type', $type)->get();
+                    foreach ($oldDocuments as $oldDocument) {
+                        $pathsToRemove[] = $oldDocument->path;
+                        $oldDocument->forceFill(['deleted_at' => now(), 'deleted_by' => $user->id])->save();
+                    }
+                    foreach ($files as $file) {
+                        $paths[] = $this->storeEncryptedDocument($locked, null, $user->id, $type, $file);
+                    }
+                }
+
+                RiderApplicationHistory::create([
+                    'rider_application_id' => $locked->id,
+                    'actor_id' => $user->id,
+                    'from_status' => $locked->status,
+                    'to_status' => $locked->status,
+                    'action' => 'APPLICATION_DRAFT_SAVED',
+                    'reason' => 'Applicant saved draft details and any document changes.',
+                ]);
+
+                return $locked->fresh(['user', 'documents', 'history.actor:id,name']);
+            });
+        } catch (\Throwable $exception) {
+            $this->deleteStoredPaths($paths);
+            throw $exception;
+        }
+        $this->deleteStoredPaths($pathsToRemove);
+
+        return response()->json([
+            'message' => 'Your rider application draft has been saved.',
+            'application' => $this->applicantPayload($savedApplication),
+        ]);
+    }
+
+    public function submit(Request $request, RiderPolicyService $policies): JsonResponse
+    {
+        $user = $request->user();
+        abort_unless($user?->role === Role::RIDER, 403);
+        abort_unless($policies->active(), 403, 'Rider document collection is unavailable until complete rider policies are published and effective.');
         $application = RiderApplication::query()->where('user_id', $user->id)->firstOrFail();
         abort_unless(in_array($application->status, ['DRAFT', 'MORE_INFORMATION_REQUIRED'], true), 409, 'This application cannot be edited in its current status.');
         $existingDocumentTypes = $application->documents()->pluck('document_type')->all();
@@ -176,7 +467,7 @@ class RiderApplicationController extends Controller
             'vehicle_registration_expires_on' => ['required', 'date', 'after:today'],
             'driver_license' => [Rule::requiredIf(! in_array('DRIVER_LICENSE', $existingDocumentTypes, true)), 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:10240'],
             'vehicle_registration' => [Rule::requiredIf(! in_array('VEHICLE_REGISTRATION', $existingDocumentTypes, true)), 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:10240'],
-            'selfie' => [Rule::requiredIf(! in_array('SELFIE', $existingDocumentTypes, true)), 'image', 'mimes:jpg,jpeg,png,webp', 'max:10240'],
+            'selfie' => ['prohibited'],
             'vehicle_photos' => [Rule::requiredIf(! in_array('VEHICLE_PHOTO', $existingDocumentTypes, true)), 'array', 'min:1', 'max:5'],
             'vehicle_photos.*' => ['image', 'mimes:jpg,jpeg,png,webp', 'max:10240'],
         ]);
@@ -197,9 +488,6 @@ class RiderApplicationController extends Controller
                 $qualityGroups[$field] = [$file];
             }
         }
-        if ($request->hasFile('selfie')) {
-            $qualityGroups['selfie'] = [$request->file('selfie')];
-        }
         if ($request->hasFile('vehicle_photos')) {
             $qualityGroups['vehicle_photos'] = $request->file('vehicle_photos');
         }
@@ -208,7 +496,6 @@ class RiderApplicationController extends Controller
         $requiredFiles = [
             'DRIVER_LICENSE' => $request->file('driver_license') ? [$request->file('driver_license')] : [],
             'VEHICLE_REGISTRATION' => $request->file('vehicle_registration') ? [$request->file('vehicle_registration')] : [],
-            'SELFIE' => $request->file('selfie') ? [$request->file('selfie')] : [],
             'VEHICLE_PHOTO' => $request->file('vehicle_photos') ?? [],
         ];
         $paths = [];
@@ -268,19 +555,19 @@ class RiderApplicationController extends Controller
         }
         $this->deleteStoredPaths($pathsToRemove);
 
-        $application->user->notify(new RiderApplicationStatusNotification($application->id, 'SUBMITTED', null));
+        $application->user->notify(new RiderApplicationStatusNotification($application->id, $application->application_reference, 'SUBMITTED', null));
         User::query()->where('role', Role::ADMIN)->each(
-            fn (User $admin) => $admin->notify(new RiderApplicationStatusNotification($application->id, 'SUBMITTED', null)),
+            fn (User $admin) => $admin->notify(new RiderApplicationStatusNotification($application->id, $application->application_reference, 'SUBMITTED', null)),
         );
 
         return response()->json(['application' => $this->applicantPayload($application->fresh(['documents', 'history.actor:id,name']))]);
     }
 
-    public function vehicleChange(Request $request): JsonResponse
+    public function vehicleChange(Request $request, RiderPolicyService $policies): JsonResponse
     {
         $user = $request->user();
         abort_unless($user?->role === Role::RIDER && $user->riderProfile()->where('is_verified', true)->exists(), 403, 'An approved rider account is required to request vehicle changes.');
-        abort_unless($this->riderPolicyIsAdopted(), 403, 'Rider document collection is unavailable until the rider policy package is adopted and published.');
+        abort_unless($policies->active(), 403, 'Rider document collection is unavailable until complete rider policies are published and effective.');
         $data = $request->validate([
             'plate_number' => ['required', 'string', 'min:2', 'max:16', 'regex:/^[A-Za-z0-9][A-Za-z0-9 -]{1,15}$/'],
             'vehicle_type' => ['required', 'string', 'max:80'],
@@ -333,9 +620,9 @@ class RiderApplicationController extends Controller
             $this->deleteStoredPaths($paths);
             throw $exception;
         }
-        $user->notify(new RiderApplicationStatusNotification($change->id, 'VEHICLE_SUBMITTED', null));
+        $user->notify(new RiderApplicationStatusNotification($change->id, $change->vehicle_reference, 'VEHICLE_SUBMITTED', null, true));
         User::query()->where('role', Role::ADMIN)->each(
-            fn (User $admin) => $admin->notify(new RiderApplicationStatusNotification($change->id, 'VEHICLE_SUBMITTED', null)),
+            fn (User $admin) => $admin->notify(new RiderApplicationStatusNotification($change->id, $change->vehicle_reference, 'VEHICLE_SUBMITTED', null, true)),
         );
 
         return response()->json(['vehicle_change' => $change->load('documents')], 201);
@@ -382,7 +669,7 @@ class RiderApplicationController extends Controller
                 'from_status' => $application->status,
                 'to_status' => $application->status,
                 'action' => 'DOCUMENT_DELETED',
-                'reason' => 'Admin deleted rider document #'.$document->id.' ('.$document->document_type.').',
+                'reason' => 'Admin deleted a protected rider document ('.$document->document_type.').',
             ]);
         }
         AuditLog::create([
@@ -405,18 +692,42 @@ class RiderApplicationController extends Controller
             'search' => ['nullable', 'string', 'max:120'],
             'page' => ['nullable', 'integer', 'min:1'],
         ]);
-        $query = RiderApplication::query()->with(['user:id,name,email,phone_number', 'documents', 'history.actor:id,name']);
+        $query = RiderApplication::query()->with('user:id,name,email');
         if (isset($filters['status'])) {
             $query->where('status', $filters['status']);
         }
         if (isset($filters['search'])) {
             $term = '%'.trim($filters['search']).'%';
-            $query->whereHas('user', fn (Builder $users) => $users->where('name', 'like', $term)->orWhere('email', 'like', $term));
+            $query->where(fn (Builder $builder) => $builder
+                ->where('application_reference', 'like', $term)
+                ->orWhereHas('user', fn (Builder $users) => $users->where('name', 'like', $term)->orWhere('email', 'like', $term)));
         }
         $applications = $query->latest()->paginate(15)->withQueryString();
-        $applications->getCollection()->transform(fn (RiderApplication $application): array => $this->adminPayload($application));
+        $applications->getCollection()->transform(fn (RiderApplication $application): array => [
+            'id' => $application->id,
+            'application_reference' => $application->application_reference,
+            'name' => $application->user->name,
+            'email' => $application->user->email,
+            'status' => $application->status,
+            'submitted_at' => $application->submitted_at?->toISOString(),
+        ]);
 
         return response()->json(['applications' => $applications]);
+    }
+
+    public function adminShow(Request $request, RiderApplication $application): JsonResponse
+    {
+        abort_unless($request->user()?->role === Role::ADMIN, 403);
+
+        return response()->json([
+            'application' => $this->adminPayload($application->load([
+                'user:id,name,email,phone_number',
+                'documents',
+                'history.actor:id,name',
+                'vehicleChanges.user:id,name,email,phone_number',
+                'vehicleChanges.documents',
+            ])),
+        ]);
     }
 
     public function adminDecision(Request $request, RiderApplication $application): JsonResponse
@@ -469,7 +780,7 @@ class RiderApplicationController extends Controller
 
             return $locked->fresh(['user', 'documents', 'history.actor:id,name']);
         });
-        $updated->user->notify(new RiderApplicationStatusNotification($updated->id, $updated->status, $updated->decision_reason));
+        $updated->user->notify(new RiderApplicationStatusNotification($updated->id, $updated->application_reference, $updated->status, $updated->decision_reason));
 
         return response()->json(['application' => $this->adminPayload($updated)]);
     }
@@ -477,14 +788,50 @@ class RiderApplicationController extends Controller
     public function adminVehicleChanges(Request $request): JsonResponse
     {
         abort_unless($request->user()?->role === Role::ADMIN, 403);
+        $filters = $request->validate([
+            'search' => ['nullable', 'string', 'max:120'],
+            'status' => ['nullable', Rule::in(['PENDING', 'APPROVED', 'REJECTED', 'MORE_INFORMATION_REQUIRED'])],
+            'page' => ['nullable', 'integer', 'min:1'],
+        ]);
         $changes = RiderVehicleChange::query()
-            ->with(['user:id,name,email,phone_number', 'documents'])
-            ->where('status', 'PENDING')
+            ->with('user:id,name,email')
+            ->when(isset($filters['status']), fn (Builder $query) => $query->where('status', $filters['status']))
+            ->when(isset($filters['search']), function (Builder $query) use ($filters): void {
+                $term = '%'.trim($filters['search']).'%';
+                $query->where(fn (Builder $builder) => $builder
+                    ->where('vehicle_reference', 'like', $term)
+                    ->orWhere('plate_number', 'like', $term)
+                    ->orWhereHas('user', fn (Builder $user) => $user->where('name', 'like', $term)->orWhere('email', 'like', $term)));
+            })
             ->latest()
-            ->paginate(15);
-        $changes->getCollection()->transform(fn (RiderVehicleChange $change): array => $this->vehicleChangePayload($change));
+            ->paginate(15)
+            ->withQueryString();
+        $changes->getCollection()->transform(fn (RiderVehicleChange $change): array => [
+            'id' => $change->id,
+            'vehicle_reference' => $change->vehicle_reference,
+            'user' => ['id' => $change->user->id, 'name' => $change->user->name, 'email' => $change->user->email],
+            'plate_number' => $change->plate_number,
+            'status' => $change->status,
+            'created_at' => $change->created_at?->toISOString(),
+        ]);
 
         return response()->json(['vehicle_changes' => $changes]);
+    }
+
+    public function adminVehicleChangeShow(Request $request, RiderVehicleChange $change): JsonResponse
+    {
+        abort_unless($request->user()?->role === Role::ADMIN, 403);
+
+        $change->load(['user:id,name,email,phone_number', 'documents', 'reviewer:id,name']);
+        $payload = $this->vehicleChangePayload($change);
+        $payload['audit_history'] = AuditLog::query()
+            ->where('entity_type', 'RiderVehicleChange')
+            ->where('entity_id', (string) $change->id)
+            ->with('actor:id,name,role')
+            ->latest()
+            ->get();
+
+        return response()->json(['vehicle_change' => $payload]);
     }
 
     public function adminVehicleDecision(Request $request, RiderVehicleChange $change): JsonResponse
@@ -522,36 +869,85 @@ class RiderApplicationController extends Controller
                 ]);
             }
         });
-        $change->user->notify(new RiderApplicationStatusNotification($change->id, 'VEHICLE_'.$data['status'], $data['reason'] ?? null));
+        $change->user->notify(new RiderApplicationStatusNotification($change->id, $change->vehicle_reference, 'VEHICLE_'.$data['status'], $data['reason'] ?? null, true));
 
         return response()->json(['vehicle_change' => $this->vehicleChangePayload($change->fresh(['user', 'documents']))]);
     }
 
-    private function registrationIsOpen(SystemSettingsService $settings): bool
+    private function registrationIsOpen(SystemSettingsService $settings, RiderPolicyPublication $policy): bool
     {
         return $settings->getBoolean('account_registration_enabled')
             && $settings->getBoolean('rider_registration_enabled')
-            && $this->riderPolicyIsAdopted();
+            && $policy->status === 'PUBLISHED'
+            && $policy->published_at !== null
+            && $policy->effective_date?->lte(today()) === true
+            && app(RiderPolicyService::class)->isComplete($policy);
     }
 
-    private function riderPolicyIsAdopted(): bool
+    private function adminPolicyPayload(?RiderPolicyPublication $policy): ?array
     {
-        $policy = config('rider-registration');
+        if (! $policy) {
+            return null;
+        }
 
-        return filled($policy['policy_version'])
-            && filled($policy['effective_date'])
-            && filled($policy['privacy_contact'])
-            && filled($policy['privacy_policy_url'])
-            && filled($policy['terms_url'])
-            && filled($policy['safety_policy_url'])
-            && $policy['retention_policy_approved']
-            && $policy['selfie_collection_enabled'];
+        $lastSavedAt = AuditLog::query()
+            ->where('entity_type', 'RIDER_POLICY_PUBLICATION')
+            ->where('entity_id', $policy->id)
+            ->where('action', 'rider.policy.draft_saved')
+            ->latest('id')
+            ->value('created_at');
+
+        return [
+            'id' => $policy->id,
+            'version' => $policy->version,
+            'effective_date' => $policy->effective_date?->toDateString(),
+            'privacy_contact' => $policy->privacy_contact,
+            'privacy_content' => $policy->privacy_content ?? '',
+            'terms_content' => $policy->terms_content ?? '',
+            'safety_content' => $policy->safety_content ?? '',
+            'retention_content' => $policy->retention_content ?? '',
+            'package_appendix' => $policy->package_appendix ?? '',
+            'status' => $policy->status,
+            'approved_by' => $policy->approver?->name,
+            'approved_at' => $policy->approved_at?->toISOString(),
+            'published_by' => $policy->publisher?->name,
+            'published_at' => $policy->published_at?->toISOString(),
+            'last_saved_at' => $lastSavedAt
+                ? Carbon::parse($lastSavedAt)->toISOString()
+                : $policy->created_at?->toISOString(),
+            'missing_documents' => app(RiderPolicyService::class)->missingDocuments($policy),
+        ];
+    }
+
+    private function adminPolicyAuditHistory(?RiderPolicyPublication $policy): array
+    {
+        if (! $policy) {
+            return [];
+        }
+
+        return AuditLog::query()
+            ->with('actor:id,name')
+            ->where('entity_type', 'RIDER_POLICY_PUBLICATION')
+            ->where('entity_id', $policy->id)
+            ->latest('id')
+            ->limit(50)
+            ->get()
+            ->map(fn (AuditLog $entry): array => [
+                'action' => $entry->action,
+                'actor' => $entry->actor?->name ?? 'Former administrator',
+                'created_at' => $entry->created_at?->toISOString(),
+                'version' => $entry->metadata['version'] ?? null,
+                'effective_date' => $entry->metadata['effective_date'] ?? null,
+                'changed_fields' => $entry->metadata['changed_fields'] ?? [],
+            ])
+            ->all();
     }
 
     private function applicantPayload(RiderApplication $application): array
     {
         return [
             'id' => $application->id,
+            'application_reference' => $application->application_reference,
             'status' => $application->status,
             'name' => $application->user->name,
             'email' => $application->user->email,
@@ -569,6 +965,14 @@ class RiderApplicationController extends Controller
             'submitted_at' => $application->submitted_at?->toISOString(),
             'privacy_policy_version' => $application->privacy_policy_version,
             'privacy_accepted_at' => $application->privacy_accepted_at?->toISOString(),
+            'terms_version' => $application->terms_version,
+            'terms_accepted_at' => $application->terms_accepted_at?->toISOString(),
+            'safety_policy_version' => $application->safety_policy_version,
+            'safety_policy_accepted_at' => $application->safety_policy_accepted_at?->toISOString(),
+            'retention_policy_version' => $application->retention_policy_version,
+            'retention_policy_accepted_at' => $application->retention_policy_accepted_at?->toISOString(),
+            'optional_updates_consent' => $application->optional_updates_consent,
+            'optional_updates_consented_at' => $application->optional_updates_consented_at?->toISOString(),
             'documents' => $application->documents->map(fn (RiderDocument $document): array => $this->documentPayload($document))->values(),
             'history' => $application->history->map(fn (RiderApplicationHistory $entry): array => [
                 'id' => $entry->id,
@@ -616,6 +1020,7 @@ class RiderApplicationController extends Controller
     {
         return [
             'id' => $change->id,
+            'vehicle_reference' => $change->vehicle_reference,
             'user' => $change->user ? [
                 'id' => $change->user->id,
                 'name' => $change->user->name,
@@ -630,6 +1035,8 @@ class RiderApplicationController extends Controller
             'vehicle_registration_expires_on' => $change->vehicle_registration_expires_on?->toDateString(),
             'status' => $change->status,
             'decision_reason' => $change->decision_reason,
+            'reviewed_at' => $change->reviewed_at?->toISOString(),
+            'reviewer' => $change->reviewer ? ['name' => $change->reviewer->name] : null,
             'documents' => $change->documents->map(fn (RiderDocument $document): array => $this->documentPayload($document))->values(),
             'created_at' => $change->created_at?->toISOString(),
         ];

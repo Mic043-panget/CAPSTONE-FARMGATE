@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { beginRequest, endRequest } from './requestProgress';
 
 const api = axios.create({
     baseURL: import.meta.env.VITE_API_URL || undefined,
@@ -12,6 +13,7 @@ const api = axios.create({
 // Preserve the full CSRF token value instead of splitting on the first equals sign.
 // Some Laravel/XSRF cookies include encoded characters and padding that would be truncated otherwise.
 api.interceptors.request.use((config) => {
+    beginRequest();
     const match = document.cookie.match(/(?:^|;\s*)XSRF-TOKEN=([^;]+)/);
     const rawToken = match?.[1];
 
@@ -20,9 +22,16 @@ api.interceptors.request.use((config) => {
     }
 
     return config;
+}, (error) => {
+    endRequest();
+    return Promise.reject(error);
 });
 
-api.interceptors.response.use(undefined, (error) => {
+api.interceptors.response.use((response) => {
+    endRequest();
+    return response;
+}, (error) => {
+    endRequest();
     const status = error.response?.status;
     const url = error.config?.url || '';
 

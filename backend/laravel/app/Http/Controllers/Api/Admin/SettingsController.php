@@ -9,13 +9,13 @@ use App\Models\SystemSettingHistory;
 use App\Services\SystemSettingsService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Validation\Rule;
 
 class SettingsController extends Controller
 {
     public function show(Request $request, SystemSettingsService $settings): JsonResponse
     {
         $this->admin($request);
+
         return response()->json($this->payload($settings));
     }
 
@@ -23,18 +23,21 @@ class SettingsController extends Controller
     {
         $this->admin($request);
         abort_unless(array_key_exists($key, $settings->definitions()), 404);
+
         return response()->json(['key' => $key, 'value' => $settings->get($key), 'definition' => $settings->definitions()[$key]]);
     }
 
     public function categories(Request $request, SystemSettingsService $settings): JsonResponse
     {
         $this->admin($request);
+
         return response()->json(['categories' => collect($settings->definitions())->groupBy('category')]);
     }
 
     public function history(Request $request): JsonResponse
     {
         $this->admin($request);
+
         return response()->json(['history' => SystemSettingHistory::query()->with('actor:id,name,email')->latest()->paginate(15)]);
     }
 
@@ -42,7 +45,12 @@ class SettingsController extends Controller
     {
         $this->admin($request);
         $data = $request->validate(['settings' => ['required', 'array'], 'reason' => ['nullable', 'string', 'max:255']]);
+        if (array_key_exists('manual_seller_payouts_enabled', $data['settings'])) {
+            $data['reason'] = $settings->sanitizeFinancialReason($data['reason'] ?? null);
+            $request->merge(['reason' => $data['reason']]);
+        }
         $settings->update($data['settings'], $request->user()->id, $data['reason'] ?? null);
+
         return $this->show($request, $settings);
     }
 
@@ -51,13 +59,19 @@ class SettingsController extends Controller
         $this->admin($request);
         abort_unless(array_key_exists($key, $settings->definitions()), 404);
         $data = $request->validate(['value' => ['present'], 'reason' => ['nullable', 'string', 'max:255']]);
+        if ($key === 'manual_seller_payouts_enabled') {
+            $data['reason'] = $settings->sanitizeFinancialReason($data['reason'] ?? null);
+            $request->merge(['reason' => $data['reason']]);
+        }
         $settings->update([$key => $data['value']], $request->user()->id, $data['reason'] ?? null);
+
         return response()->json(['key' => $key, 'value' => $settings->get($key)]);
     }
 
     public function tiers(Request $request): JsonResponse
     {
         $this->admin($request);
+
         return response()->json(['tiers' => DeliveryRateTier::query()->orderBy('min_km')->get()]);
     }
 
@@ -67,6 +81,7 @@ class SettingsController extends Controller
         $data = $this->validatedTier($request);
         $this->assertNoOverlap($data);
         $tier = DeliveryRateTier::create($data);
+
         return response()->json(['tier' => $tier], 201);
     }
 
@@ -76,6 +91,7 @@ class SettingsController extends Controller
         $data = $this->validatedTier($request);
         $this->assertNoOverlap($data, $tier->id);
         $tier->update($data);
+
         return response()->json(['tier' => $tier]);
     }
 
@@ -83,6 +99,7 @@ class SettingsController extends Controller
     {
         $this->admin($request);
         $tier->delete();
+
         return response()->json(['message' => 'Delivery tier deleted.']);
     }
 
@@ -106,7 +123,9 @@ class SettingsController extends Controller
 
     private function assertNoOverlap(array $candidate, ?int $ignoreId = null): void
     {
-        if (($candidate['is_active'] ?? true) !== true) return;
+        if (($candidate['is_active'] ?? true) !== true) {
+            return;
+        }
         $tiers = DeliveryRateTier::query()->where('is_active', true)->when($ignoreId, fn ($query) => $query->whereKeyNot($ignoreId))->get();
         foreach ($tiers as $other) {
             $thisStartsBeforeOtherEnds = $other->max_km === null || (float) $candidate['min_km'] < (float) $other->max_km;

@@ -21,6 +21,10 @@ class ListingController extends Controller
     public function index(Request $request): JsonResponse
     {
         abort_unless($request->user()?->role === Role::ADMIN, 403);
+        $sort = $request->validate([
+            'sort' => ['nullable', Rule::in(['created_at', 'name', 'status', 'quantity'])],
+            'direction' => ['nullable', Rule::in(['asc', 'desc'])],
+        ]);
         $status = $request->input('status');
         $query = LivestockListing::query()
             ->with(['category:id,name', 'seller:id,name,email', 'images', 'latestModerationAttempt'])
@@ -49,7 +53,23 @@ class ListingController extends Controller
             $query->where('category_id', (int) $request->input('category_id'));
         }
 
-        return response()->json(['listings' => $query->latest()->paginate(15)->withQueryString()]);
+        $query->orderBy($sort['sort'] ?? 'created_at', $sort['direction'] ?? 'desc')->orderBy('id');
+
+        return response()->json(['listings' => $query->paginate(15)->withQueryString()]);
+    }
+
+    public function show(Request $request, LivestockListing $listing): JsonResponse
+    {
+        abort_unless($request->user()?->role === Role::ADMIN, 403);
+
+        return response()->json([
+            'listing' => $listing->load([
+                'category:id,name',
+                'seller:id,name,email,phone_number',
+                'images',
+                'moderationAttempts' => fn ($query) => $query->latest('id'),
+            ]),
+        ]);
     }
 
     public function retryModeration(Request $request, LivestockListing $listing): JsonResponse

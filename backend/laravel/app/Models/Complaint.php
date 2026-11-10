@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Str;
 
 class Complaint extends Model
 {
@@ -21,6 +22,22 @@ class Complaint extends Model
         'paymongo_payment_id', 'paymongo_refund_id', 'refund_error', 'payout_reference', 'payout_evidence_path',
         'approved_by', 'refund_approved_at', 'return_received_at', 'refund_completed_at',
     ];
+
+    protected static function booted(): void
+    {
+        static::creating(function (Complaint $complaint): void {
+            if (filled($complaint->case_reference)) {
+                return;
+            }
+
+            $year = $complaint->created_at?->year ?? now()->year;
+            do {
+                $reference = sprintf('FG-CASE-%d-%s', $year, Str::upper(Str::random(5)));
+            } while (static::query()->where('case_reference', $reference)->exists());
+
+            $complaint->case_reference = $reference;
+        });
+    }
 
     protected function casts(): array
     {

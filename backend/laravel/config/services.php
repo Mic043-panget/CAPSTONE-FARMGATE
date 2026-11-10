@@ -3,6 +3,11 @@
 return [
 
     'frontend_url' => env('FRONTEND_URL', 'http://127.0.0.1:5173'),
+    'webpush' => [
+        'public_key' => env('VAPID_PUBLIC_KEY'),
+        'private_key' => env('VAPID_PRIVATE_KEY'),
+        'subject' => env('VAPID_SUBJECT', 'mailto:notifications@farmgate.local'),
+    ],
 
     'google' => [
         'client_id' => env('GOOGLE_CLIENT_ID'),
@@ -12,6 +17,7 @@ return [
     'paymongo' => [
         'secret_key' => env('PAYMONGO_SECRET_KEY'),
         'webhook_secret' => env('PAYMONGO_WEBHOOK_SECRET'),
+        'configuration_verified' => filter_var(env('PAYMONGO_CONFIGURATION_VERIFIED', false), FILTER_VALIDATE_BOOLEAN),
     ],
     'gemini' => [
         'api_key' => env('GEMINI_API_KEY'),

@@ -2,6 +2,7 @@ import React from 'react';
 import api from '../../lib/api';
 import { confirmAction, showError, showSuccess } from '../../lib/alerts';
 import { LocationMap } from '../../shared/components/LocationMap';
+import { LoadingSkeleton } from '../../shared/components/LoadingSkeleton';
 
 type BuyerAddress = {
     id: number;
@@ -230,7 +231,7 @@ export function BuyerAddresses({ onError }: { onError: (message: string) => void
         <header className="buyer-addresses-toolbar"><div><p className="eyebrow">Delivery details</p><h2>Saved addresses</h2></div><button type="button" onClick={openNewAddress}>Add new address</button></header>
         {error && !modalOpen && <p className="buyer-profile-message error" role="alert">{error}</p>}
         {notice && !modalOpen && <p className="buyer-profile-message success" role="status">{notice}</p>}
-        {loading ? <p className="buyer-addresses-loading">Loading addresses...</p> : addresses.length ? <div className="buyer-address-list">{addresses.map((address) => <article className="buyer-address-card" key={address.id}>
+        {loading ? <LoadingSkeleton variant="cards" count={2} label="Loading saved addresses" /> : addresses.length ? <div className="buyer-address-list">{addresses.map((address) => <article className="buyer-address-card" key={address.id}>
             <div className="buyer-address-card-heading"><div><span className="buyer-address-pin" aria-hidden="true">⌖</span><h3>{address.label}</h3>{address.is_default && <span className="buyer-address-default">Default</span>}</div><div className="buyer-address-actions"><button type="button" onClick={() => openEditAddress(address)}>Edit</button><button type="button" className="danger" onClick={() => deleteAddress(address)}>Delete</button></div></div>
             <p className="buyer-address-recipient">{address.recipient_name} <span>{address.phone_number}</span></p>
             <p>{address.street_address}{address.address_line2 ? `, ${address.address_line2}` : ''}{address.barangay ? `, ${address.barangay}` : ''}, {address.city_municipality}, {address.province} {address.postal_code}</p>

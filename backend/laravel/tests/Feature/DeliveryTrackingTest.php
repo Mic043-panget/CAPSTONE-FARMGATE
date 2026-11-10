@@ -123,6 +123,8 @@ class DeliveryTrackingTest extends TestCase
             'seller_id' => $seller->id,
             'status' => OrderStatus::READY_FOR_PICKUP,
             'total_amount' => 220,
+            'payment_method' => 'GCASH',
+            'payment_status' => 'PAID',
             'delivery_method' => 'STANDARD_DELIVERY',
             'shipping_address' => [
                 'latitude' => 14.121,
@@ -153,6 +155,7 @@ class DeliveryTrackingTest extends TestCase
             'latitude' => 14.120,
             'longitude' => 120.440,
         ])->assertOk()->assertJsonPath('delivery.status', DeliveryStatus::PICKED_UP->value);
+        $this->assertSame(OrderStatus::FULFILLING, $order->fresh()->status);
         $this->assertSame(
             $codeResponse->json('code'),
             $this->actingAs($buyer)->postJson('/api/orders/'.$order->id.'/delivery-code')->assertOk()->json('code'),
@@ -184,6 +187,7 @@ class DeliveryTrackingTest extends TestCase
             'latitude' => 14.121,
             'longitude' => 120.441,
         ])->assertOk()->assertJsonPath('delivery.status', DeliveryStatus::DELIVERED->value);
+        $this->assertSame(OrderStatus::COMPLETED, $order->fresh()->status);
         $this->actingAs($rider)->postJson('/api/deliveries/'.$delivery->id.'/delivery-verify', [
             'qr_token' => $qrToken,
             'latitude' => 14.121,
@@ -216,7 +220,7 @@ class DeliveryTrackingTest extends TestCase
         $this->assertStringContainsString('14.1210000,120.4410000', $order->statusHistory()->reorder()->orderByDesc('id')->value('reason'));
         $this->actingAs($seller)->patchJson('/api/orders/'.$order->id.'/status', [
             'status' => OrderStatus::COMPLETED->value,
-        ])->assertOk()->assertJsonPath('order.status', OrderStatus::COMPLETED->value);
+        ])->assertUnprocessable();
         $this->assertSame(DeliveryStatus::DELIVERED, $delivery->fresh()->status);
     }
 

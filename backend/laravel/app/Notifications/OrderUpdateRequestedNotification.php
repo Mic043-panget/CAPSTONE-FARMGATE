@@ -2,9 +2,10 @@
 
 namespace App\Notifications;
 
+use App\Contracts\FarmgateNotification;
 use Illuminate\Notifications\Notification;
 
-class OrderUpdateRequestedNotification extends Notification
+class OrderUpdateRequestedNotification extends Notification implements FarmgateNotification
 {
     public function __construct(
         public int $orderId,

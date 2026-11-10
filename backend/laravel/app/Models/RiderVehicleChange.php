@@ -5,9 +5,29 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Str;
+use LogicException;
 
 class RiderVehicleChange extends Model
 {
+    protected static function booted(): void
+    {
+        static::creating(function (RiderVehicleChange $change): void {
+            if (blank($change->vehicle_reference)) {
+                do {
+                    $reference = sprintf('FG-VEH-%d-%s', now()->year, Str::upper(Str::random(6)));
+                } while (static::query()->where('vehicle_reference', $reference)->exists());
+                $change->vehicle_reference = $reference;
+            }
+        });
+
+        static::updating(function (RiderVehicleChange $change): void {
+            if ($change->isDirty('vehicle_reference')) {
+                throw new LogicException('A vehicle update reference cannot be changed after creation.');
+            }
+        });
+    }
+
     protected $fillable = [
         'user_id', 'plate_number', 'vehicle_type', 'vehicle_make_model', 'vehicle_color',
         'license_expires_on', 'vehicle_registration_expires_on', 'status', 'reviewer_id',

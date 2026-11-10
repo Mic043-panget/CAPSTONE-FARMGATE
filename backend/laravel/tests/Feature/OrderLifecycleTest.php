@@ -9,6 +9,7 @@ use App\Enums\PricingType;
 use App\Enums\Role;
 use App\Models\AuditLog;
 use App\Models\Category;
+use App\Models\CodRemittance;
 use App\Models\Delivery;
 use App\Models\LivestockListing;
 use App\Models\Order;
@@ -17,6 +18,7 @@ use App\Models\RiderProfile;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
@@ -27,6 +29,7 @@ class OrderLifecycleTest extends TestCase
     public function test_checkout_to_qr_verified_delivery_is_role_scoped_and_keeps_states_separate(): void
     {
         Storage::fake('delivery_proofs');
+        Http::fake(['https://router.project-osrm.org/*' => Http::response(['code' => 'Ok', 'routes' => [['distance' => 5000]]])]);
         $buyer = User::factory()->create(['role' => Role::BUYER]);
         $seller = User::factory()->create(['role' => Role::SELLER]);
         $rider = User::factory()->create(['role' => Role::RIDER]);
@@ -35,6 +38,7 @@ class OrderLifecycleTest extends TestCase
         $seller->sellerProfile()->create([
             'latitude' => 12.7771,
             'longitude' => 121.3654,
+            'pickup_location_confirmed' => true,
             'address' => 'Seller pickup point',
         ]);
         RiderProfile::create([
@@ -106,8 +110,8 @@ class OrderLifecycleTest extends TestCase
         $pickupCode = $this->actingAs($seller)->postJson('/api/orders/'.$order->id.'/delivery-code')
             ->assertOk()
             ->json('code');
-        $this->assertMatchesRegularExpression('/^FARMGATE:PICKUP:[A-Za-z0-9]{64}$/', $pickupCode);
-        preg_match('/^FARMGATE:PICKUP:([A-Za-z0-9]{64})$/', $pickupCode, $pickupMatch);
+        $this->assertMatchesRegularExpression('/^FARMGATE:ORDER:[A-Za-z0-9]{64}$/', $pickupCode);
+        preg_match('/^FARMGATE:ORDER:([A-Za-z0-9]{64})$/', $pickupCode, $pickupMatch);
         $this->actingAs($rider)->postJson('/api/deliveries/'.$delivery->id.'/pickup-verify', [
             'qr_token' => $pickupMatch[1],
             'latitude' => 12.7771,
@@ -115,29 +119,48 @@ class OrderLifecycleTest extends TestCase
         ])->assertOk()
             ->assertJsonPath('delivery.status', DeliveryStatus::PICKED_UP->value);
 
-        $this->actingAs($seller)->patchJson('/api/orders/'.$order->id.'/status', [
-            'status' => OrderStatus::FULFILLING->value,
-        ])->assertOk()
-            ->assertJsonPath('order.status', OrderStatus::FULFILLING->value);
+        $this->assertSame(OrderStatus::FULFILLING, $order->fresh()->status);
         $this->assertSame(DeliveryStatus::PICKED_UP, $delivery->fresh()->status);
         $deliveryCode = $this->actingAs($buyer)->postJson('/api/orders/'.$order->id.'/delivery-code')
             ->assertOk()
             ->json('code');
-        $this->assertMatchesRegularExpression('/^FARMGATE:DELIVERY:[A-Za-z0-9]{64}$/', $deliveryCode);
-        preg_match('/^FARMGATE:DELIVERY:([A-Za-z0-9]{64})$/', $deliveryCode, $deliveryMatch);
-        $this->actingAs($rider)->post('/api/deliveries/'.$delivery->id.'/delivery-verify', [
-            'qr_token' => $deliveryMatch[1],
+        $this->assertSame($pickupCode, $deliveryCode);
+        preg_match('/^FARMGATE:ORDER:([A-Za-z0-9]{64})$/', $deliveryCode, $deliveryMatch);
+        $this->actingAs($rider)->post('/api/deliveries/'.$delivery->id.'/proof', [
             'photo' => UploadedFile::fake()->image('delivery.jpg'),
             'recipient_confirmed' => '1',
             'recipient_name' => 'Buyer',
             'captured_at' => now()->toISOString(),
         ])->assertOk()
+            ->assertJsonPath('delivery.status', DeliveryStatus::PICKED_UP->value);
+        $this->actingAs($rider)->postJson('/api/deliveries/'.$delivery->id.'/delivery-verify', [
+            'qr_token' => $deliveryMatch[1],
+            'latitude' => 12.778,
+            'longitude' => 121.366,
+        ])->assertOk()
             ->assertJsonPath('delivery.status', DeliveryStatus::DELIVERED->value);
 
         $this->assertSame(OrderStatus::FULFILLING, $order->fresh()->status);
-        $this->actingAs($seller)->patchJson('/api/orders/'.$order->id.'/status', [
-            'status' => OrderStatus::COMPLETED->value,
-        ])->assertOk()->assertJsonPath('order.status', OrderStatus::COMPLETED->value);
+        $this->assertSame('UNPAID', $order->fresh()->payment_status);
+        $codAmountCents = (int) round((float) $order->fresh()->total_amount * 100);
+        $this->actingAs($rider)->post('/api/deliveries/'.$delivery->id.'/cod-collection', [
+            'amount_cents' => $codAmountCents,
+            'proof' => UploadedFile::fake()->image('cod-handover.png'),
+        ])->assertCreated();
+        $this->assertSame('UNPAID', $order->fresh()->payment_status);
+        $this->actingAs($rider)->postJson('/api/riders/cod/remittances', [
+            'method_type' => 'CASH_HANDOVER',
+            'receiver_name' => 'Farmgate receiving staff',
+        ])->assertCreated();
+        $remittance = CodRemittance::query()->firstOrFail();
+        $admin = User::factory()->create(['role' => Role::ADMIN]);
+        $this->actingAs($admin)->postJson('/api/admin/cod/remittances/'.$remittance->id.'/reconcile', [
+            'received_amount_cents' => $codAmountCents,
+            'verification_confirmed' => true,
+            'reason' => 'Verified the cash handover against the COD batch.',
+        ])->assertOk();
+        $this->assertSame('PAID', $order->fresh()->payment_status);
+        $this->assertSame(OrderStatus::COMPLETED, $order->fresh()->status);
         $this->assertSame(DeliveryStatus::DELIVERED, $delivery->fresh()->status);
 
         $this->actingAs($buyer)->getJson('/api/orders/'.$order->id)->assertOk();

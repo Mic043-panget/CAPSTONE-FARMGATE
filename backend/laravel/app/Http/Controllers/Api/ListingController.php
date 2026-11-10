@@ -194,6 +194,9 @@ class ListingController extends Controller
             $query->where(function ($listingQuery) use ($term): void {
                 $listingQuery->where('name', 'like', "%{$term}%")
                     ->orWhereHas('category', fn ($categoryQuery) => $categoryQuery->where('name', 'like', "%{$term}%"));
+                if (ctype_digit($term)) {
+                    $listingQuery->orWhere('livestock_listings.id', (int) $term);
+                }
             });
         }
 

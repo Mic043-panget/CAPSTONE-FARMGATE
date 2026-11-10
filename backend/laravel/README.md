@@ -62,6 +62,55 @@ Create a webhook in the PayMongo dashboard targeting `https://your-public-backen
 
 After changing `.env`, run `php artisan config:clear` from `backend/laravel`. Make a test checkout from the React app using GCash or card, complete it with PayMongo's test credentials, and verify the order becomes paid after the webhook arrives. Do not use live keys until test checkout and webhook delivery are confirmed. Online payment is unavailable until `PAYMONGO_SECRET_KEY` is configured.
 
+## Hostinger SMTP email delivery
+
+Email delivery stays in `setup_required` until a valid SMTP transport, credentials,
+and sender address are configured. The `.env.example` points to Hostinger's SMTP
+host and the SSL port, but leaves mailbox credentials and sender address blank;
+do not add live Hostinger credentials to source control or configure a real mail
+account for local development. Laravel's mail configuration still defaults to
+the `log` mailer when `MAIL_MAILER` is not set.
+
+In Hostinger hPanel, open the relevant mailbox's email-client/connection settings
+and use the SMTP hostname, port, encryption mode, username, and password shown
+there. The mailbox address is commonly the SMTP username, but use the account's
+actual Hostinger-provided values. Put those values only in the Laravel server's
+environment:
+
+```dotenv
+MAIL_MAILER=smtp
+MAIL_SCHEME=smtps
+MAIL_HOST=smtp.hostinger.com
+MAIL_PORT=465
+MAIL_USERNAME=support@farmgates.site
+MAIL_PASSWORD=0000@Farmgate
+MAIL_FROM_ADDRESS=support@farmgates.site
+MAIL_FROM_NAME=Farmgate
+```
+
+For SSL/TLS on port 465 use `MAIL_SCHEME=smtps`. For STARTTLS on port 587 use
+`MAIL_SCHEME=smtp` with `MAIL_PORT=587`. Confirm the encryption mode and mailbox
+settings in Hostinger hPanel before deploying. `MAIL_FROM_ADDRESS` must be a
+sender address authorized for the configured mailbox/domain. After changing server environment values, clear
+Laravel's cached configuration (`php artisan config:clear`) and restart queue
+workers so they reload it.
+Apply the application's pending migrations (`php artisan migrate --force`) so
+the admin email-test outcome table exists before using the status/test controls.
+
+In the admin workspace, Email delivery reports readiness without revealing
+credentials. An administrator may queue a plain test message only to their own
+verified account email. Delivery status and retry attempts are recorded without
+storing message content or SMTP error text. Run the `notifications` queue worker
+in production, for example `php artisan queue:work --queue=notifications,default`.
+The admin page's refresh action displays the latest test outcome.
+
+For domain authentication, follow Hostinger's current hPanel instructions for
+the sending domain's SPF and DKIM records, then verify the records and domain
+status using Hostinger's tools. If DNS is hosted elsewhere, publish exactly the
+records Hostinger provides at that DNS provider and allow for DNS propagation.
+Do not copy example or guessed SPF/DKIM records: use the values shown for the
+actual domain and mailbox in Hostinger.
+
 ## UniSMS SMS delivery
 
 Configure `UNISMS_API_KEY` and the account-authorized `UNISMS_SENDER_ID` in the

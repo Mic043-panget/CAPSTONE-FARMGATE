@@ -1,8 +1,11 @@
 import React from 'react';
+import { Button, ViewDetailsAction } from '../../shared/components/Button';
 import api from '../../lib/api';
 import type { User } from '../../shared/types';
 import { confirmAction, showError, showSuccess } from '../../lib/alerts';
 import { BuyerAddresses } from './BuyerAddresses';
+import { LoadingSkeleton } from '../../shared/components/LoadingSkeleton';
+import { Pagination } from '../../shared/components/Pagination';
 
 type ProfileSection = 'profile' | 'addresses' | 'password' | 'settings' | 'orders' | 'reviews';
 
@@ -13,6 +16,13 @@ type BuyerOrder = {
     buyer_can_cancel?: boolean;
     buyer_cancellation_blocked_reason?: string;
     total_amount: string;
+    payment_method?: string | null;
+    cod_payment?: {
+        amount_due: string;
+        status: string;
+        collection_status: string | null;
+        remittance_status: string | null;
+    } | null;
     subtotal_amount?: string;
     delivery_fee?: string;
     delivery_method?: string;
@@ -42,26 +52,47 @@ type BuyerOrder = {
         pickup_latitude?: number | null;
         pickup_longitude?: number | null;
     } | null;
-    items: { id: number; quantity: number; listing?: { name: string } | null }[];
+    items: { id: number; quantity: number; listing?: { id?: number; name: string } | null }[];
 };
 
-type OrderFilter = 'ALL' | 'PENDING' | 'PREPARING' | 'SHIPPED' | 'ON_THE_WAY' | 'DELIVERED' | 'COMPLETE' | 'CANCELLED' | 'REVIEWS';
-type AccountPreference = 'order_notifications' | 'chat_notifications' | 'allow_direct_messages';
+type OrderFilter = string;
+type AccountPreference = 'order_notifications' | 'chat_notifications' | 'event_notifications' | 'allow_direct_messages';
 
-const orderFilters: { id: OrderFilter; label: string }[] = [
+const baseOrderFilters: { id: OrderFilter; label: string }[] = [
     { id: 'ALL', label: 'All' },
     { id: 'PENDING', label: 'Pending' },
+    { id: 'CONFIRMED', label: 'Confirmed' },
     { id: 'PREPARING', label: 'Preparing' },
-    { id: 'SHIPPED', label: 'Shipped' },
+    { id: 'READY_FOR_PICKUP', label: 'Ready for Pickup' },
     { id: 'ON_THE_WAY', label: 'On the Way' },
     { id: 'DELIVERED', label: 'Delivered' },
     { id: 'COMPLETE', label: 'Complete' },
     { id: 'CANCELLED', label: 'Cancelled' },
+    { id: 'REJECTED', label: 'Rejected' },
     { id: 'REVIEWS', label: 'Reviews' },
 ];
+const knownOrderStatuses = new Set([
+    'PENDING_CONFIRMATION',
+    'CONFIRMED',
+    'PREPARING',
+    'READY_FOR_PICKUP',
+    'FULFILLING',
+    'COMPLETED',
+    'CANCELLED',
+    'REJECTED',
+]);
+const buyerOrdersPageSize = 5;
+
+function codPaymentStatusLabel(status: string): string {
+    if (status === 'AWAITING_CONFIRMATION') return 'Awaiting Farmgate confirmation';
+    if (status === 'PAID') return 'Paid';
+
+    return 'Not paid';
+}
 
 type BuyerReview = {
     id: number;
+    review_reference: string;
     order_id: number;
     order?: { order_reference: string } | null;
     seller?: { name: string } | null;
@@ -75,7 +106,7 @@ type BuyerReview = {
 
 function BuyerReviewCard({ review }: { review: BuyerReview }) {
     return <article className="buyer-profile-record" key={review.id}>
-        <div><strong>{review.listing?.name ?? `Order ${review.order?.order_reference ?? 'reference unavailable'}`}</strong><span className="buyer-review-stars" aria-label={`${review.rating} out of 5 stars`}>{'★'.repeat(review.rating)}{'☆'.repeat(5 - review.rating)}</span></div>
+        <div><strong>{review.review_reference} · {review.listing?.name ?? `Order ${review.order?.order_reference ?? 'reference unavailable'}`}</strong><span className="buyer-review-stars" aria-label={`${review.rating} out of 5 stars`}>{'★'.repeat(review.rating)}{'☆'.repeat(5 - review.rating)}</span></div>
         <p>{review.comment || 'No written comment.'}</p>
         {review.media?.length ? <div className="case-saved-media">{review.media.map((media) => media.mime_type.startsWith('video/')
             ? <video key={media.id} src={media.url} controls aria-label={media.original_name} />
@@ -124,9 +155,39 @@ function memberSince(value?: string | null): string {
 }
 
 function displayOrderStatus(order: BuyerOrder): string {
-    if (order.delivery?.status === 'DELIVERED') return 'Delivered';
-    if (order.status === 'FULFILLING') return 'On the Way';
-    return order.status.replaceAll('_', ' ');
+    const labels: Record<string, string> = {
+        PENDING_CONFIRMATION: 'Pending confirmation',
+        CONFIRMED: 'Confirmed',
+        PREPARING: 'Preparing',
+        READY_FOR_PICKUP: 'Ready for pickup',
+        FULFILLING: 'On the way',
+        COMPLETED: 'Complete',
+        CANCELLED: 'Cancelled',
+        REJECTED: 'Rejected',
+    };
+    return labels[order.status] ?? `Other status (${order.status.replaceAll('_', ' ')})`;
+}
+
+function hasDeliveryAwaitingOrderCompletion(order: BuyerOrder): boolean {
+    return order.delivery?.status === 'DELIVERED'
+        && !['COMPLETED', 'CANCELLED', 'REJECTED'].includes(order.status);
+}
+
+function orderMatchesFilter(order: BuyerOrder, filter: OrderFilter): boolean {
+    switch (filter) {
+        case 'ALL': return true;
+        case 'PENDING': return order.status === 'PENDING_CONFIRMATION';
+        case 'CONFIRMED': return order.status === 'CONFIRMED';
+        case 'PREPARING': return order.status === 'PREPARING';
+        case 'READY_FOR_PICKUP': return order.status === 'READY_FOR_PICKUP';
+        case 'ON_THE_WAY': return order.status === 'FULFILLING';
+        case 'DELIVERED': return hasDeliveryAwaitingOrderCompletion(order);
+        case 'COMPLETE': return order.status === 'COMPLETED';
+        case 'CANCELLED': return order.status === 'CANCELLED';
+        case 'REJECTED': return order.status === 'REJECTED';
+        case 'REVIEWS': return false;
+        default: return filter.startsWith('STATUS:') && order.status === filter.slice('STATUS:'.length);
+    }
 }
 
 export function BuyerProfile({ user, onUserUpdated, onLogout, onNavigateHome, onOpenOrder }: { user: User; onUserUpdated: (user: User) => void; onLogout: () => void; onNavigateHome: () => void; onOpenOrder: (orderId: number) => void }) {
@@ -143,6 +204,11 @@ export function BuyerProfile({ user, onUserUpdated, onLogout, onNavigateHome, on
     const [orders, setOrders] = React.useState<BuyerOrder[]>([]);
     const [reviews, setReviews] = React.useState<BuyerReview[]>([]);
     const [orderFilter, setOrderFilter] = React.useState<OrderFilter>('ALL');
+    const [orderSearch, setOrderSearch] = React.useState('');
+    const [orderPage, setOrderPage] = React.useState(1);
+    const [reviewPage, setReviewPage] = React.useState(1);
+    const [orderRevision, setOrderRevision] = React.useState(0);
+    const [orderLoadError, setOrderLoadError] = React.useState('');
     const [cancellingOrderId, setCancellingOrderId] = React.useState<number | null>(null);
     const [dataLoading, setDataLoading] = React.useState(false);
     const [saving, setSaving] = React.useState(false);
@@ -153,6 +219,7 @@ export function BuyerProfile({ user, onUserUpdated, onLogout, onNavigateHome, on
     const [accountPreferences, setAccountPreferences] = React.useState<Record<AccountPreference, boolean>>({
         order_notifications: true,
         chat_notifications: true,
+        event_notifications: true,
         allow_direct_messages: true,
     });
     const [photoInput, setPhotoInput] = React.useState<HTMLInputElement | null>(null);
@@ -169,6 +236,7 @@ export function BuyerProfile({ user, onUserUpdated, onLogout, onNavigateHome, on
         if (section !== 'orders' && section !== 'reviews') return undefined;
         let active = true;
         setDataLoading(true);
+        setOrderLoadError('');
         setMessage('');
         setError('');
         const request = section === 'orders'
@@ -183,12 +251,16 @@ export function BuyerProfile({ user, onUserUpdated, onLogout, onNavigateHome, on
             })
             : api.get<{ reviews: BuyerReview[] }>('/api/buyer/reviews').then((response) => { if (active) setReviews(response.data.reviews); });
         request.catch((requestError: any) => {
-            if (active) setError(requestError.userMessage ?? `Your ${section} could not be loaded.`);
+            if (active) {
+                const message = requestError.userMessage ?? `Your ${section} could not be loaded.`;
+                if (section === 'orders') setOrderLoadError(message);
+                else setError(message);
+            }
         }).finally(() => {
             if (active) setDataLoading(false);
         });
         return () => { active = false; };
-    }, [section, user.id]);
+    }, [orderRevision, section, user.id]);
 
     React.useEffect(() => {
         if (section !== 'settings') return undefined;
@@ -419,17 +491,42 @@ export function BuyerProfile({ user, onUserUpdated, onLogout, onNavigateHome, on
     }
 
     const selectedLabel = profileSections.find((item) => item.id === section)?.label ?? 'Profile';
+    const unknownOrderStatuses = [...new Set(orders.map((order) => order.status).filter((status) => !knownOrderStatuses.has(status)))]
+        .sort((left, right) => left.localeCompare(right))
+        .map((status) => ({ id: `STATUS:${status}`, label: `Other: ${status.replaceAll('_', ' ')}` }));
+    const orderFilterOptions = [...baseOrderFilters, ...unknownOrderStatuses];
     const filteredOrders = orders.filter((order) => {
-        if (orderFilter === 'ALL') return true;
-        if (orderFilter === 'PENDING') return ['PENDING_CONFIRMATION', 'CONFIRMED'].includes(order.status);
-        if (orderFilter === 'PREPARING') return order.status === 'PREPARING';
-        if (orderFilter === 'SHIPPED') return order.status === 'READY_FOR_PICKUP';
-        if (orderFilter === 'ON_THE_WAY') return order.status === 'FULFILLING';
-        if (orderFilter === 'DELIVERED') return order.delivery?.status === 'DELIVERED';
-        if (orderFilter === 'COMPLETE') return order.status === 'COMPLETED';
-        if (orderFilter === 'CANCELLED') return ['CANCELLED', 'REJECTED'].includes(order.status);
-        return false;
+        if (!orderMatchesFilter(order, orderFilter)) return false;
+
+        const query = orderSearch.trim().toLocaleLowerCase();
+        return !query || [
+            order.order_reference,
+            order.seller?.name,
+            ...order.items.map((item) => item.listing?.name),
+        ].some((value) => value?.toLocaleLowerCase().includes(query));
     });
+    const filteredReviews = reviews.filter((review) => {
+        const query = orderSearch.trim().toLocaleLowerCase();
+        return !query || [
+            review.review_reference,
+            review.order?.order_reference,
+            review.listing?.name,
+            review.seller?.name,
+            review.status,
+            review.comment,
+        ].some((value) => value?.toLocaleLowerCase().includes(query));
+    });
+    const orderLastPage = Math.max(1, Math.ceil(filteredOrders.length / buyerOrdersPageSize));
+    const safeOrderPage = Math.min(orderPage, orderLastPage);
+    const visibleOrders = filteredOrders.slice((safeOrderPage - 1) * buyerOrdersPageSize, safeOrderPage * buyerOrdersPageSize);
+    const reviewLastPage = Math.max(1, Math.ceil(filteredReviews.length / buyerOrdersPageSize));
+    const safeReviewPage = Math.min(reviewPage, reviewLastPage);
+    const visibleReviews = filteredReviews.slice((safeReviewPage - 1) * buyerOrdersPageSize, safeReviewPage * buyerOrdersPageSize);
+
+    React.useEffect(() => {
+        setOrderPage(1);
+        setReviewPage(1);
+    }, [orderFilter, orderSearch]);
 
     return <section className="buyer-profile-layout" aria-label="Buyer account">
         <aside className="buyer-profile-sidebar">
@@ -517,11 +614,12 @@ export function BuyerProfile({ user, onUserUpdated, onLogout, onNavigateHome, on
                         </div>
                         {!emailVerifiedAt && <p className="buyer-account-settings-help">Open the verification link sent to your email, then refresh this status.</p>}
                     </section>
-                    {accountSettingsLoading ? <p className="buyer-orders-loading">Loading account settings...</p> : <>
+                    {accountSettingsLoading ? <LoadingSkeleton variant="detail" count={2} label="Loading account settings" /> : <>
                         <section className="buyer-account-settings-card" aria-labelledby="notifications-heading">
                             <p className="eyebrow">Notifications</p><h2 id="notifications-heading">Choose what updates you receive</h2>
-                            <label className="buyer-account-setting-toggle"><span><strong>Order updates</strong><small>In-app notifications when your orders change status.</small></span><input type="checkbox" checked={accountPreferences.order_notifications} disabled={savingPreference !== null} onChange={(event) => void updateAccountPreference('order_notifications', event.target.checked)} /></label>
-                            <label className="buyer-account-setting-toggle"><span><strong>New chat messages</strong><small>In-app notifications when someone sends you a direct message.</small></span><input type="checkbox" checked={accountPreferences.chat_notifications} disabled={savingPreference !== null} onChange={(event) => void updateAccountPreference('chat_notifications', event.target.checked)} /></label>
+                            <label className="buyer-account-setting-toggle"><span><strong>Order updates</strong><small>Optional browser alerts for order changes. Required transaction emails and important in-app updates stay on.</small></span><input type="checkbox" checked={accountPreferences.order_notifications} disabled={savingPreference !== null} onChange={(event) => void updateAccountPreference('order_notifications', event.target.checked)} /></label>
+                            <label className="buyer-account-setting-toggle"><span><strong>New chat messages</strong><small>Optional email and browser alerts. In-app messages and attention notices always remain available.</small></span><input type="checkbox" checked={accountPreferences.chat_notifications} disabled={savingPreference !== null} onChange={(event) => void updateAccountPreference('chat_notifications', event.target.checked)} /></label>
+                            <label className="buyer-account-setting-toggle"><span><strong>Event and promotion updates</strong><small>Optional email and browser alerts about Farmgate calendar changes.</small></span><input type="checkbox" checked={accountPreferences.event_notifications} disabled={savingPreference !== null} onChange={(event) => void updateAccountPreference('event_notifications', event.target.checked)} /></label>
                         </section>
                         <section className="buyer-account-settings-card" aria-labelledby="privacy-heading">
                             <p className="eyebrow">Privacy</p><h2 id="privacy-heading">Direct messages</h2>
@@ -532,9 +630,49 @@ export function BuyerProfile({ user, onUserUpdated, onLogout, onNavigateHome, on
 
                 {section === 'orders' && <div className="buyer-order-history">
                     <nav className="buyer-order-filters" aria-label="Filter orders" role="tablist">
-                        {orderFilters.map((filter) => <button type="button" role="tab" aria-selected={orderFilter === filter.id} className={orderFilter === filter.id ? 'active' : ''} key={filter.id} onClick={() => setOrderFilter(filter.id)}>{filter.label}</button>)}
+                        {orderFilterOptions.map((filter) => <button type="button" role="tab" aria-selected={orderFilter === filter.id} className={orderFilter === filter.id ? 'active' : ''} key={filter.id} onClick={() => setOrderFilter(filter.id)}>{filter.label}</button>)}
                     </nav>
-                    {dataLoading ? <p className="buyer-orders-loading">Loading orders...</p> : orderFilter === 'REVIEWS' ? reviews.length ? <div className="buyer-profile-records">{reviews.map((review) => <BuyerReviewCard key={review.id} review={review} />)}</div> : <div className="buyer-orders-empty"><span className="buyer-orders-empty-icon" aria-hidden="true">★</span><h2>No reviews found</h2><p>You haven’t reviewed any completed orders yet.</p></div> : filteredOrders.length ? <div className="buyer-order-list">{filteredOrders.map((order) => <article className="buyer-order-card" key={order.id}><header><div><span className="buyer-order-reference">Order {order.order_reference}</span><time dateTime={order.created_at}>{memberSince(order.created_at)}</time></div><span className={`buyer-order-status status-${displayOrderStatus(order).toLowerCase().replaceAll(' ', '_')}`}>{displayOrderStatus(order)}</span></header><p className="buyer-order-items">{order.items.map((item) => `${item.quantity} × ${item.listing?.name ?? 'Removed listing'}`).join(', ')}</p><footer><span>{order.seller?.name ? `Seller: ${order.seller.name}` : `${order.items.length} ${order.items.length === 1 ? 'item' : 'items'}`}</span><strong>PHP {Number(order.total_amount).toLocaleString()}</strong><button className="buyer-order-details-toggle" type="button" onClick={() => onOpenOrder(order.id)}>View details</button>{order.buyer_can_cancel && <button className="buyer-order-cancel" type="button" onClick={() => void cancelOrder(order)} disabled={cancellingOrderId !== null}>{cancellingOrderId === order.id ? 'Cancelling...' : 'Cancel order'}</button>}</footer>{order.buyer_cancellation_blocked_reason && <p className="buyer-order-cancellation-note">{order.buyer_cancellation_blocked_reason}</p>}</article>)}</div> : <div className="buyer-orders-empty"><svg aria-hidden="true" viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M7 18h34l-3 19H10L7 18Z" /><path d="m7 18 8-10h18l8 10M19 24a5 5 0 0 0 10 0" /></svg><h2>No orders found</h2><p>{orders.length ? 'There are no orders in this status yet.' : 'You haven’t placed any orders yet.'}</p><button type="button" onClick={onNavigateHome}>Start shopping</button></div>}
+                    <div className="buyer-orders-tools">
+                        <label><span className="sr-only">{orderFilter === 'REVIEWS' ? 'Search reviews by reference, order, listing, seller, or text' : 'Search orders by reference, seller, or livestock'}</span><input type="search" value={orderSearch} onChange={(event) => setOrderSearch(event.target.value)} placeholder={orderFilter === 'REVIEWS' ? 'Search reviews, orders, listings, or sellers' : 'Search orders, sellers, or livestock'} /></label>
+                        <p className="buyer-orders-count" aria-live="polite">
+                            {orderFilter === 'REVIEWS'
+                                ? `${filteredReviews.length} ${filteredReviews.length === 1 ? 'review' : 'reviews'}`
+                                : `${filteredOrders.length === 0 ? '0 orders' : `${(safeOrderPage - 1) * buyerOrdersPageSize + 1}–${Math.min(safeOrderPage * buyerOrdersPageSize, filteredOrders.length)} of ${filteredOrders.length} orders`}`}
+                        </p>
+                    </div>
+                    {orderFilter === 'REVIEWS'
+                        ? dataLoading ? <LoadingSkeleton variant="cards" count={3} label="Loading reviews" />
+                            : orderLoadError ? <div className="buyer-orders-error" role="alert"><p>{orderLoadError}</p><button type="button" onClick={() => setOrderRevision((revision) => revision + 1)}>Try again</button></div>
+                                : filteredReviews.length ? <>
+                                    <div className="buyer-profile-records">{visibleReviews.map((review) => <BuyerReviewCard key={review.id} review={review} />)}</div>
+                                    <div className="buyer-order-pagination">
+                                        <span aria-live="polite">Page {safeReviewPage} of {reviewLastPage} · {filteredReviews.length} results</span>
+                                        <Pagination page={safeReviewPage} lastPage={reviewLastPage} onChange={setReviewPage} label="Review pages" />
+                                    </div>
+                                </> : <div className="buyer-orders-empty"><span className="buyer-orders-empty-icon" aria-hidden="true">★</span><h2>No reviews found</h2><p>{orderSearch.trim() ? 'No reviews match your search.' : 'You haven’t reviewed any completed orders yet.'}</p></div>
+                        : <>
+                            {dataLoading ? <LoadingSkeleton variant="cards" count={3} label="Loading orders" />
+                                : orderLoadError ? <div className="buyer-orders-error" role="alert"><p>{orderLoadError}</p><button type="button" onClick={() => setOrderRevision((revision) => revision + 1)}>Try again</button></div>
+                                    : filteredOrders.length ? <>
+                                        <div className="buyer-order-list-scroll" role="region" aria-label="Your filtered orders" tabIndex={0}>
+                                            <div className="buyer-order-list">
+                                                {visibleOrders.map((order) => <article className="buyer-order-card" key={order.id}>
+                                                    <header><div><span className="buyer-order-reference">Order {order.order_reference}</span><time dateTime={order.created_at}>{memberSince(order.created_at)}</time></div><span className={`buyer-order-status status-${displayOrderStatus(order).toLowerCase().replaceAll(' ', '_')}`}>{displayOrderStatus(order)}</span></header>
+                                                    <p className="buyer-order-items">{order.items.map((item) => `${item.quantity} × ${item.listing?.name ?? 'Removed listing'}`).join(', ')}</p>
+                                                    <p className="buyer-order-listing-count">{order.items.length} {order.items.length === 1 ? 'listing' : 'listings'} · total quantity {order.items.reduce((quantity, item) => quantity + item.quantity, 0)}</p>
+                                                    {order.cod_payment && <p className="buyer-order-cod-status">COD · PHP {Number(order.cod_payment.amount_due).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} · {codPaymentStatusLabel(order.cod_payment.status)}</p>}
+                                                    {hasDeliveryAwaitingOrderCompletion(order) && <p className="buyer-order-delivery-status">Delivery status: Delivered</p>}
+                                                    <footer><span>{order.seller?.name ? `Seller: ${order.seller.name}` : `${order.items.length} ${order.items.length === 1 ? 'livestock listing' : 'livestock listings'}`}</span><strong>PHP {Number(order.total_amount).toLocaleString()}</strong><ViewDetailsAction className="buyer-order-details-toggle" contextLabel={`order ${order.order_reference}`} onClick={() => onOpenOrder(order.id)} />{order.buyer_can_cancel && <Button className="buyer-order-cancel" variant="destructive" type="button" onClick={() => void cancelOrder(order)} disabled={cancellingOrderId !== null} loading={cancellingOrderId === order.id} aria-label={`Cancel order ${order.order_reference}`}>{cancellingOrderId === order.id ? 'Cancelling...' : 'Cancel order'}</Button>}</footer>
+                                                    {order.buyer_cancellation_blocked_reason && <p className="buyer-order-cancellation-note">{order.buyer_cancellation_blocked_reason}</p>}
+                                                </article>)}
+                                            </div>
+                                        </div>
+                                        <div className="buyer-order-pagination">
+                                            <span aria-live="polite">Page {safeOrderPage} of {orderLastPage} · {filteredOrders.length} results</span>
+                                            <Pagination page={safeOrderPage} lastPage={orderLastPage} onChange={setOrderPage} label="Order pages" />
+                                        </div>
+                                    </> : <div className="buyer-orders-empty"><svg aria-hidden="true" viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M7 18h34l-3 19H10L7 18Z" /><path d="m7 18 8-10h18l8 10M19 24a5 5 0 0 0 10 0" /></svg><h2>No orders found</h2><p>{orderSearch.trim() ? 'No orders match your search and status filter.' : orders.length ? 'There are no orders in this status yet.' : 'You haven’t placed any orders yet.'}</p>{orders.length === 0 && <button type="button" onClick={onNavigateHome}>Start shopping</button>}</div>}
+                        </>}
                 </div>}
 
                 {section === 'reviews' && <div className="buyer-profile-records">{dataLoading ? <p>Loading reviews...</p> : reviews.length ? reviews.map((review) => <BuyerReviewCard key={review.id} review={review} />) : <div className="buyer-profile-empty"><ProfileMenuIcon name="reviews" /><h2>No reviews yet</h2><p>Reviews you write after completing an order will appear here.</p></div>}</div>}
