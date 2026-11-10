@@ -84,14 +84,15 @@ class ComplaintController extends Controller
             'reason' => ['required', 'string', 'min:3', 'max:2000'],
         ]);
         $status = ComplaintStatus::from($data['status']);
-        abort_if($complaint->status === $status, 422, 'The case already has this status.');
-        if ($complaint->case_type === 'RETURN_REFUND') {
-            abort_if($status === ComplaintStatus::RESOLVED && $complaint->refund_status !== 'PAID', 409, 'A return/refund case can only be resolved after payment is confirmed.');
-            abort_if($status === ComplaintStatus::REJECTED && ! in_array($complaint->refund_status, ['REQUESTED', 'NOT_APPLICABLE', 'FAILED'], true), 409, 'An approved or submitted refund cannot be rejected from the case status control.');
-        }
 
         $updated = DB::transaction(function () use ($complaint, $request, $status, $data, $workflow): Complaint {
             $locked = Complaint::query()->lockForUpdate()->findOrFail($complaint->id);
+            abort_if($locked->status === $status, 422, 'The case already has this status.');
+            if ($locked->case_type === 'RETURN_REFUND') {
+                abort_if($status === ComplaintStatus::RESOLVED && $locked->refund_status !== 'PAID', 409, 'A return/refund case can only be resolved after payment is confirmed.');
+                abort_if($status === ComplaintStatus::REJECTED && ! in_array($locked->refund_status, ['REQUESTED', 'NOT_APPLICABLE', 'FAILED'], true), 409, 'An approved or submitted refund cannot be rejected from the case status control.');
+            }
+
             $from = $locked->status->value;
             $locked->update([
                 'status' => $status,

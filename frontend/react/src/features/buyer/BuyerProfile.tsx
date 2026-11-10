@@ -553,7 +553,7 @@ export function BuyerProfile({ user, onUserUpdated, onLogout, onNavigateHome, on
                     <div className="buyer-profile-fields">
                         {editing ? <form className="buyer-profile-form" onSubmit={saveProfile}>
                             <label>Name<input value={name} onChange={(event) => setName(event.target.value)} maxLength={120} required /></label>
-                            <label>Username<input value={username} onChange={(event) => setUsername(event.target.value)} minLength={3} maxLength={32} pattern="[A-Za-z0-9_-]+" required /></label>
+                            <label>Username<input value={username} onChange={(event) => setUsername(event.target.value)} minLength={3} maxLength={32} pattern="[A-Za-z0-9_\-]+" required /></label>
                             <label>Email<input value={user.email} readOnly /><small>Email address cannot be changed here.</small></label>
                             <label>Phone number<input value={user.phone_number ?? ''} readOnly /><small>Manage and verify your phone number in Account Settings.</small></label>
                             <label>Password<input value="••••••••" readOnly /><small>Use Change Password to update your password.</small></label>

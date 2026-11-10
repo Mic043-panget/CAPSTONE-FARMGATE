@@ -97,7 +97,8 @@ class OrderWorkflowService
             if ($nextStatus === OrderStatus::COMPLETED && $lockedOrder->delivery_method === 'STANDARD_DELIVERY') {
                 $delivery = Delivery::query()->where('order_id', $lockedOrder->id)->lockForUpdate()->first();
                 abort_unless(
-                    $delivery?->status === DeliveryStatus::DELIVERED,
+                    $delivery?->status === DeliveryStatus::DELIVERED
+                        && $delivery->delivery_verified_at !== null,
                     409,
                     'Standard delivery must be QR-verified before the order can be completed.',
                 );
@@ -251,10 +252,18 @@ class OrderWorkflowService
             $lockedOrder = Order::query()->lockForUpdate()->findOrFail($order->id);
             abort_unless(in_array($actor->role, [Role::ADMIN, Role::RIDER], true), 403);
             abort_unless($lockedOrder->status === OrderStatus::FULFILLING, 409, 'Only a fulfilling order can be completed after delivery.');
-            abort_unless($lockedOrder->payment_status === 'PAID', 409, 'The order payment must be confirmed before completion.');
+            abort_unless(
+                $lockedOrder->payment_method === 'COD' || $lockedOrder->payment_status === 'PAID',
+                409,
+                'The online payment must be confirmed before completion.',
+            );
 
             $delivery = Delivery::query()->where('order_id', $lockedOrder->id)->lockForUpdate()->firstOrFail();
-            abort_unless($delivery->status === DeliveryStatus::DELIVERED, 409, 'The delivery must be verified before order completion.');
+            abort_unless(
+                $delivery->status === DeliveryStatus::DELIVERED && $delivery->delivery_verified_at !== null,
+                409,
+                'The delivery must be QR-verified before order completion.',
+            );
             abort_unless($actor->role === Role::ADMIN || $delivery->rider_id === $actor->id, 403);
 
             $fromStatus = $lockedOrder->status;

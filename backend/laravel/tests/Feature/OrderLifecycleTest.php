@@ -140,7 +140,7 @@ class OrderLifecycleTest extends TestCase
         ])->assertOk()
             ->assertJsonPath('delivery.status', DeliveryStatus::DELIVERED->value);
 
-        $this->assertSame(OrderStatus::FULFILLING, $order->fresh()->status);
+        $this->assertSame(OrderStatus::COMPLETED, $order->fresh()->status);
         $this->assertSame('UNPAID', $order->fresh()->payment_status);
         $codAmountCents = (int) round((float) $order->fresh()->total_amount * 100);
         $this->actingAs($rider)->post('/api/deliveries/'.$delivery->id.'/cod-collection', [

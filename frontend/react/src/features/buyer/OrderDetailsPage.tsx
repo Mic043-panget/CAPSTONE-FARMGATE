@@ -242,6 +242,13 @@ export function OrderDetailsPage({ orderId, user, onBack, onChatWithSeller, onOp
             <div className="buyer-order-details-grid">
                 <section><h2>Livestock</h2><ul>{order.items.map((item) => <li key={item.id}><span>{item.quantity} {item.pricing_type === 'PER_KILO' ? 'kg' : 'head'} × {item.listing?.name ?? 'Removed listing'} · PHP {formatAmount(item.unit_price)} each</span><strong>PHP {formatAmount(item.total_amount)}</strong></li>)}</ul></section>
                 <section><h2>Order cost</h2><dl><div><dt>Livestock total</dt><dd>PHP {formatAmount(order.subtotal_amount ?? order.total_amount)}</dd></div><div><dt>Shipping</dt><dd>PHP {formatAmount(order.delivery_fee)}</dd></div>{order.delivery_distance_km !== null && order.delivery_distance_km !== undefined && <div><dt>Delivery distance</dt><dd>{Number(order.delivery_distance_km).toFixed(2)} km · {distanceDescription}</dd></div>}<div className="buyer-order-grand-total"><dt>Total</dt><dd>PHP {formatAmount(order.total_amount)}</dd></div></dl></section>
+                {!order.cod_payment && <section aria-labelledby="buyer-order-payment-title">
+                    <h2 id="buyer-order-payment-title">Payment</h2>
+                    <dl>
+                        <div><dt>Payment method</dt><dd>{paymentMethodLabel(order.payment_method)}</dd></div>
+                        <div><dt>Payment status</dt><dd>{paymentStatusLabel(order.payment_status)}</dd></div>
+                    </dl>
+                </section>}
             </div>
             {order.cod_payment && <section className="buyer-order-cod-payment" aria-labelledby="buyer-order-cod-payment-title">
                 <h2 id="buyer-order-cod-payment-title">Cash on delivery payment</h2>

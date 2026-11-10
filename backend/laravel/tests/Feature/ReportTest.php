@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Enums\DeliveryStatus;
 use App\Enums\ListingStatus;
 use App\Enums\OrderStatus;
 use App\Enums\PricingType;
@@ -19,6 +20,43 @@ use Tests\TestCase;
 class ReportTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_rider_delivery_report_includes_stable_delivery_reference_and_is_scoped(): void
+    {
+        $rider = User::factory()->create(['role' => Role::RIDER]);
+        $otherRider = User::factory()->create(['role' => Role::RIDER]);
+        $buyer = User::factory()->create(['role' => Role::BUYER]);
+        $seller = User::factory()->create(['role' => Role::SELLER]);
+        $order = Order::create([
+            'buyer_id' => $buyer->id,
+            'seller_id' => $seller->id,
+            'status' => OrderStatus::COMPLETED,
+            'total_amount' => 100,
+        ]);
+        $delivery = Delivery::create([
+            'order_id' => $order->id,
+            'rider_id' => $rider->id,
+            'status' => DeliveryStatus::DELIVERED,
+        ]);
+        $otherOrder = Order::create([
+            'buyer_id' => $buyer->id,
+            'seller_id' => $seller->id,
+            'status' => OrderStatus::COMPLETED,
+            'total_amount' => 200,
+        ]);
+        Delivery::create([
+            'order_id' => $otherOrder->id,
+            'rider_id' => $otherRider->id,
+            'status' => DeliveryStatus::DELIVERED,
+        ]);
+
+        $this->actingAs($rider)->getJson('/api/reports/deliveries')
+            ->assertOk()
+            ->assertJsonPath('summary.total', 1)
+            ->assertJsonPath('data.data.0.delivery_reference', $delivery->delivery_reference)
+            ->assertJsonPath('data.data.0.order_reference', $order->order_reference)
+            ->assertJsonMissing(['order_reference' => $otherOrder->order_reference]);
+    }
 
     public function test_seller_sales_report_is_scoped_and_filterable(): void
     {

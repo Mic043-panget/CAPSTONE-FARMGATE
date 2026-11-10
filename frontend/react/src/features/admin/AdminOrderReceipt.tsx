@@ -1,5 +1,5 @@
 import React from 'react';
-import api from '../../lib/api';
+import api, { initializeCsrf } from '../../lib/api';
 import { useAccessibleDialog } from '../../shared/hooks/useAccessibleDialog';
 import { DeliveryProofSummary } from '../shared/DeliveryProofSummary';
 
@@ -21,6 +21,23 @@ type AdminReceiptOrder = {
     payment_method?: string | null;
     payment_status?: string | null;
     delivery_method?: string | null;
+    delivery_reconciliation_required?: boolean;
+    cod_reconciliation_evidence?: {
+        collection_status: string;
+        expected_amount_cents: number;
+        collected_amount_cents?: number | null;
+        collected_at?: string | null;
+        remittance?: {
+            reference: string;
+            status: string;
+            method_type: string;
+            expected_amount_cents: number;
+            received_amount_cents?: number | null;
+            submitted_at?: string | null;
+            reconciled_at?: string | null;
+            history: { action: string; expected_amount_cents: number; received_amount_cents?: number | null; reason?: string | null; created_at: string; actor?: { name: string; role?: string } | null }[];
+        } | null;
+    } | null;
     created_at: string;
     activities?: { id: number; activity_key: string; details: string; created_at: string; actor?: { name: string } | null }[];
     status_history?: { id: number; from_status?: string | null; to_status: string; reason?: string | null; created_at: string; actor?: { name: string } | null }[];
@@ -89,8 +106,18 @@ export function AdminOrderReceipt({ orderId, reference, onError, openInitially =
     const [order, setOrder] = React.useState<AdminReceiptOrder | null>(null);
     const [open, setOpen] = React.useState(false);
     const [loading, setLoading] = React.useState(false);
+    const [correctionReason, setCorrectionReason] = React.useState('');
+    const [evidenceReviewed, setEvidenceReviewed] = React.useState(false);
+    const [savingCorrection, setSavingCorrection] = React.useState(false);
+    const [correctionMessage, setCorrectionMessage] = React.useState('');
     const initialOpenHandled = React.useRef(false);
     const receiptDialogRef = useAccessibleDialog<HTMLElement>(open, () => setOpen(false));
+
+    React.useEffect(() => {
+        setCorrectionReason('');
+        setEvidenceReviewed(false);
+        setCorrectionMessage('');
+    }, [orderId]);
 
     React.useEffect(() => {
         if (!openInitially || initialOpenHandled.current) return;
@@ -121,6 +148,30 @@ export function AdminOrderReceipt({ orderId, reference, onError, openInitially =
         document.body.classList.add('printing-admin-order-receipt');
         window.print();
         document.body.classList.remove('printing-admin-order-receipt');
+    }
+
+    async function correctPrematureCompletion(event: React.FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+        if (!order || !evidenceReviewed || correctionReason.trim().length < 10) return;
+        setSavingCorrection(true);
+        setCorrectionMessage('');
+        try {
+            await initializeCsrf();
+            await api.post(`/api/admin/orders/${order.id}/reconciliation`, {
+                decision: 'restore_to_fulfilling',
+                reason: correctionReason.trim(),
+                evidence_reviewed: true,
+            });
+            const response = await api.get<{ order: AdminReceiptOrder }>(`/api/admin/orders/${order.id}`);
+            setOrder(response.data.order);
+            setCorrectionReason('');
+            setEvidenceReviewed(false);
+            setCorrectionMessage('Correction recorded. Payment status was not changed.');
+        } catch (requestError: any) {
+            onError(requestError.userMessage ?? requestError.response?.data?.message ?? 'The reconciliation correction could not be recorded.');
+        } finally {
+            setSavingCorrection(false);
+        }
     }
 
     const shopName = order?.seller?.seller_profile?.business_name || order?.seller?.name || 'Farmgate Seller';
@@ -178,6 +229,29 @@ export function AdminOrderReceipt({ orderId, reference, onError, openInitially =
                         {!!order.delivery.status_history?.length && <ol>{order.delivery.status_history.map((entry) => <li key={entry.id}><strong>{statusLabel(entry.to_status)}</strong> · {entry.actor?.name ?? 'System'} · {new Date(entry.created_at).toLocaleString()}{entry.reason && <p>{entry.reason}</p>}</li>)}</ol>}
                         {!!order.delivery.proof_corrections?.length && <div><h4>Proof corrections</h4><ul>{order.delivery.proof_corrections.map((entry) => <li key={entry.id}>{entry.corrected_by?.name ?? 'Admin'} · {new Date(entry.created_at).toLocaleString()} · {entry.reason}</li>)}</ul></div>}
                     </> : <p>No rider delivery record exists.</p>}</section>
+                    {order.payment_method === 'COD' && <section className="admin-order-investigation">
+                        <h3>COD collection and remittance evidence</h3>
+                        {order.cod_reconciliation_evidence ? <>
+                            <p><strong>Collection:</strong> {statusLabel(order.cod_reconciliation_evidence.collection_status)} · expected {money(order.cod_reconciliation_evidence.expected_amount_cents / 100)} · collected {order.cod_reconciliation_evidence.collected_amount_cents == null ? 'Not recorded' : money(order.cod_reconciliation_evidence.collected_amount_cents / 100)} · {order.cod_reconciliation_evidence.collected_at ? new Date(order.cod_reconciliation_evidence.collected_at).toLocaleString() : 'No collection timestamp'}</p>
+                            {order.cod_reconciliation_evidence.remittance ? <>
+                                <p><strong>Remittance:</strong> {order.cod_reconciliation_evidence.remittance.reference} · {statusLabel(order.cod_reconciliation_evidence.remittance.status)} · {statusLabel(order.cod_reconciliation_evidence.remittance.method_type)} · expected {money(order.cod_reconciliation_evidence.remittance.expected_amount_cents / 100)} · received {order.cod_reconciliation_evidence.remittance.received_amount_cents == null ? 'Not recorded' : money(order.cod_reconciliation_evidence.remittance.received_amount_cents / 100)}</p>
+                                {!!order.cod_reconciliation_evidence.remittance.history.length && <ol>{order.cod_reconciliation_evidence.remittance.history.map((entry, index) => <li key={`${entry.action}-${entry.created_at}-${index}`}><strong>{statusLabel(entry.action)}</strong> · {entry.actor?.name ?? 'Unknown admin'} · {new Date(entry.created_at).toLocaleString()} · expected {money(entry.expected_amount_cents / 100)} · received {entry.received_amount_cents == null ? 'Not recorded' : money(entry.received_amount_cents / 100)}{entry.reason && <p>{entry.reason}</p>}</li>)}</ol>}
+                            </> : <p>No associated remittance record exists.</p>}
+                        </> : <p>No COD collection record exists. Payment remains {statusLabel(order.payment_status ?? 'unknown')}.</p>}
+                        <p>Delivery completion and payment confirmation are separate. COD is only marked paid after receipt is reconciled.</p>
+                    </section>}
+                    {order.delivery_reconciliation_required && <section className="admin-order-investigation" role="alert">
+                        <h3>Admin review required: completed before verified delivery</h3>
+                        <p>Order {order.order_reference} is marked {statusLabel(order.status)}, but delivery {order.delivery?.delivery_reference ?? 'has no delivery record'} is {statusLabel(order.delivery?.status ?? 'not recorded')} and is not QR-verified. Existing order, delivery, payment, proof, status-history and audit evidence is shown above.</p>
+                        <form onSubmit={(event) => void correctPrematureCompletion(event)}>
+                            <label htmlFor={`reconciliation-reason-${order.id}`}>Reason for restoring the order to Fulfilling</label>
+                            <textarea id={`reconciliation-reason-${order.id}`} value={correctionReason} onChange={(event) => setCorrectionReason(event.target.value)} minLength={10} maxLength={2000} required />
+                            <label><input type="checkbox" checked={evidenceReviewed} onChange={(event) => setEvidenceReviewed(event.target.checked)} required /> I reviewed the order and delivery evidence and authorize this status correction.</label>
+                            <button type="submit" disabled={!evidenceReviewed || correctionReason.trim().length < 10 || savingCorrection}>{savingCorrection ? 'Recording correction…' : 'Restore to Fulfilling'}</button>
+                        </form>
+                        {correctionMessage && <p role="status">{correctionMessage}</p>}
+                        <p>This action preserves the original Completed value in status and audit history. It does not change payment status.</p>
+                    </section>}
                     {!!order.complaints?.length && <section className="admin-order-investigation"><h3>Complaints, returns and refunds</h3>{order.complaints.map((item) => <article key={item.id}>
                         <h4>{item.case_reference} · {statusLabel(item.case_type)} · {statusLabel(item.status)}</h4><p><strong>Reason:</strong> {item.reason} · <strong>Refund status:</strong> {statusLabel(item.refund_status)}</p><p>{item.description}</p>
                         {item.requested_amount && <p>Requested {money(item.requested_amount)} · approved {money(item.approved_refund_amount)} · {item.return_method ? `return ${statusLabel(item.return_method)}` : ''}</p>}

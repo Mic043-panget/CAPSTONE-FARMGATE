@@ -443,7 +443,7 @@ export function RiderAccountSettings({ user, onUserUpdated, onError }: {
                 </div>
                 <form className="seller-account-form rider-profile-form" onSubmit={(event) => void saveProfile(event)}>
                     <label>Full name<input type="text" autoComplete="name" minLength={2} maxLength={120} required value={name} onChange={(event) => setName(event.target.value)} /></label>
-                    <label>Username<input type="text" autoComplete="username" minLength={3} maxLength={32} pattern="[A-Za-z0-9_-]+" required value={username} onChange={(event) => setUsername(event.target.value)} /><small>Letters, numbers, underscores, and hyphens.</small></label>
+                    <label>Username<input type="text" autoComplete="username" minLength={3} maxLength={32} pattern="[A-Za-z0-9_\-]+" required value={username} onChange={(event) => setUsername(event.target.value)} /><small>Letters, numbers, underscores, and hyphens.</small></label>
                     <label>Email address<input type="email" autoComplete="email" maxLength={255} required value={email} onChange={(event) => setEmail(event.target.value)} /></label>
                     <p className="rider-settings-field-note">Email status: {user.email_verified_at ? 'Verified' : 'Not verified'}. Changing your email requires verification.</p>
                     <button className="seller-inline-action" type="submit" disabled={profileBusy}>{profileBusy ? 'Saving profile…' : 'Save profile'}</button>
@@ -497,7 +497,7 @@ export function RiderAccountSettings({ user, onUserUpdated, onError }: {
                 </p>}
                 <form className="seller-account-form rider-vehicle-change-form" onSubmit={(event) => void requestVehicleChange(event)}>
                 <h4>Request a vehicle update or document replacement</h4>
-                <label>Plate number<input autoComplete="off" pattern="[A-Za-z0-9][A-Za-z0-9 -]{1,15}" maxLength={16} required value={vehicleFields.plate_number} onChange={(event) => updateVehicleField('plate_number', event.target.value.toUpperCase())} /></label>
+                <label>Plate number<input autoComplete="off" pattern="[A-Za-z0-9][A-Za-z0-9 \-]{1,15}" maxLength={16} required value={vehicleFields.plate_number} onChange={(event) => updateVehicleField('plate_number', event.target.value.toUpperCase())} /></label>
                 <label>Vehicle type<select required value={vehicleFields.vehicle_type} onChange={(event) => updateVehicleField('vehicle_type', event.target.value)}><option value="">Choose vehicle type</option><option>Motorcycle</option><option>Tricycle</option><option>Car</option><option>Van</option><option>Pickup</option><option>Truck</option><option>Other</option></select></label>
                 <label>Make and model<input maxLength={120} required value={vehicleFields.vehicle_make_model} onChange={(event) => updateVehicleField('vehicle_make_model', event.target.value)} /></label>
                 <label>Color<input maxLength={60} required value={vehicleFields.vehicle_color} onChange={(event) => updateVehicleField('vehicle_color', event.target.value)} /></label>

@@ -83,6 +83,7 @@ class ReportController extends Controller
 
                 return [
                     'id' => $delivery->id,
+                    'delivery_reference' => $delivery->delivery_reference,
                     'order_reference' => $delivery->order?->order_reference,
                     'status' => $delivery->status->value,
                     'pickup_area' => 'Bongabong, Oriental Mindoro',

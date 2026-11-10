@@ -83,7 +83,7 @@ MAIL_SCHEME=smtps
 MAIL_HOST=smtp.hostinger.com
 MAIL_PORT=465
 MAIL_USERNAME=support@farmgates.site
-MAIL_PASSWORD=0000@Farmgate
+MAIL_PASSWORD=your-smtp-password-from-the-secret-manager
 MAIL_FROM_ADDRESS=support@farmgates.site
 MAIL_FROM_NAME=Farmgate
 ```

@@ -7,6 +7,7 @@ use App\Enums\ListingStatus;
 use App\Enums\OrderStatus;
 use App\Enums\PricingType;
 use App\Enums\Role;
+use App\Http\Controllers\Api\Admin\ComplaintController as AdminComplaintController;
 use App\Models\Category;
 use App\Models\Complaint;
 use App\Models\ComplaintMessage;
@@ -17,11 +18,14 @@ use App\Models\OrderStatusHistory;
 use App\Models\User;
 use App\Notifications\OrderCaseUpdatedNotification;
 use App\Services\EscalateOrderCases;
+use App\Services\OrderCaseWorkflowService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
+use Symfony\Component\HttpKernel\Exception\HttpException;
 use Tests\TestCase;
 
 class FeedbackDisputeTest extends TestCase
@@ -131,6 +135,53 @@ class FeedbackDisputeTest extends TestCase
 
         $this->assertDatabaseHas('complaint_status_histories', ['complaint_id' => $complaint->id, 'to_status' => 'RESOLVED', 'changed_by' => $admin->id]);
         $this->actingAs($seller)->getJson('/api/seller/complaints')->assertOk()->assertJsonPath('action_required_total', 0);
+    }
+
+    public function test_stale_admin_rejection_cannot_override_a_return_already_approved_for_refund(): void
+    {
+        $admin = User::factory()->create(['role' => Role::ADMIN]);
+        $buyer = User::factory()->create(['role' => Role::BUYER]);
+        $seller = User::factory()->create(['role' => Role::SELLER]);
+        $complaint = Complaint::create([
+            'order_id' => Order::create([
+                'buyer_id' => $buyer->id,
+                'seller_id' => $seller->id,
+                'status' => OrderStatus::COMPLETED,
+                'total_amount' => 700,
+            ])->id,
+            'opened_by' => $buyer->id,
+            'respondent_id' => $seller->id,
+            'case_type' => 'RETURN_REFUND',
+            'reason' => 'Item was not as described',
+            'description' => 'The returned item needs refund review.',
+            'status' => ComplaintStatus::OPEN,
+            'refund_status' => 'REQUESTED',
+        ]);
+        $staleComplaint = Complaint::query()->findOrFail($complaint->id);
+
+        // Simulate another admin approving the return after this request's route binding.
+        DB::table('complaints')->where('id', $complaint->id)->update([
+            'status' => ComplaintStatus::UNDER_REVIEW->value,
+            'refund_status' => 'AWAITING_RETURN',
+        ]);
+        $request = Request::create('/api/admin/complaints/'.$complaint->id, 'PATCH', [
+            'status' => ComplaintStatus::REJECTED->value,
+            'reason' => 'Reject the refund request.',
+        ]);
+        $request->setUserResolver(fn () => $admin);
+
+        try {
+            app(AdminComplaintController::class)->update($request, $staleComplaint, app(OrderCaseWorkflowService::class));
+            $this->fail('A stale decision must not reject an approved return/refund.');
+        } catch (HttpException $exception) {
+            $this->assertSame(409, $exception->getStatusCode());
+        }
+
+        $this->assertDatabaseHas('complaints', [
+            'id' => $complaint->id,
+            'status' => ComplaintStatus::UNDER_REVIEW->value,
+            'refund_status' => 'AWAITING_RETURN',
+        ]);
     }
 
     public function test_admin_case_queue_search_includes_order_and_party_and_returns_order_items(): void

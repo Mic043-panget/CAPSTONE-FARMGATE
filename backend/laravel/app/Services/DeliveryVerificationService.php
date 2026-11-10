@@ -173,13 +173,12 @@ class DeliveryVerificationService
                 $order->forceFill(['status' => OrderStatus::FULFILLING])->save();
             }
             $completedByDelivery = $purpose === 'delivery'
-                && $order->payment_status === 'PAID'
                 && $order->status === OrderStatus::FULFILLING;
             if ($completedByDelivery) {
                 $this->orders->completeAfterVerifiedDelivery(
                     $order,
                     $rider,
-                    'DELIVERY_QR_VERIFIED at '.number_format((float) $verificationLatitude, 7, '.', '').','.number_format((float) $verificationLongitude, 7, '.', '').'; payment was confirmed.',
+                    'DELIVERY_QR_VERIFIED at '.number_format((float) $verificationLatitude, 7, '.', '').','.number_format((float) $verificationLongitude, 7, '.', ''),
                 );
             } else {
                 $order->statusHistory()->create([

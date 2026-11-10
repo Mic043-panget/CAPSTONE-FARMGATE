@@ -155,6 +155,7 @@ Route::middleware(MaintenanceMode::class)->group(function (): void {
             Route::post('/admin/users/{userId}/reactivate', [UserAccountController::class, 'reactivate'])->whereNumber('userId')->middleware('throttle:10,1');
             Route::get('/admin/orders', [AdminOverviewController::class, 'orders']);
             Route::get('/admin/orders/{order}', [AdminOverviewController::class, 'orderDetails']);
+            Route::post('/admin/orders/{order}/reconciliation', [AdminOverviewController::class, 'correctPrematureCompletion'])->middleware('throttle:10,1');
             Route::get('/admin/deliveries', [AdminOverviewController::class, 'deliveries']);
             Route::get('/admin/deliveries/{delivery}', [AdminOverviewController::class, 'deliveryDetails']);
             Route::get('/admin/cod/remittances', [CodRemittanceController::class, 'adminRemittances']);

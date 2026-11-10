@@ -46,6 +46,28 @@ function reportFieldLabel(field: string): string {
         .replace(/\b\w/g, (character) => character.toUpperCase());
 }
 
+type ReportReferenceSource = {
+    payment_reference?: string | null;
+    case_reference?: string | null;
+    delivery_reference?: string | null;
+    order_reference?: string | null;
+    order?: { order_reference?: string | null } | null;
+    name?: string | null;
+    email?: string | null;
+};
+
+function reportRowReference(row: ReportReferenceSource): string | null {
+    const reference = row.payment_reference
+        ?? row.case_reference
+        ?? row.delivery_reference
+        ?? row.order_reference
+        ?? row.order?.order_reference
+        ?? row.name
+        ?? row.email;
+
+    return typeof reference === 'string' ? reference : null;
+}
+
 function ReportDetailValue({ value, field, timezone }: { value: unknown; field: string; timezone: string }): React.ReactNode {
     if (value === null || value === undefined || value === '') return '—';
     if (Array.isArray(value)) {
@@ -201,9 +223,7 @@ export function ReportPanel({ role, onError, onAnalyze, title, hideTypeSelector 
     }, [onError, reportFrom, reportSearch, debouncedSearch, reportStatus, reportTo, reportType, page, orderStatus, paymentStatus, paymentMethod, userRole, accountStatus, complaintType, resolutionStatus, amountMin, amountMax, reportSort, reportDirection, reportRevision]);
 
     const reportTitle = reportType === 'transactions' ? 'Transactions' : reportType === 'listings' ? 'Livestock listings' : reportType[0].toUpperCase() + reportType.slice(1);
-    const selectedRecordReference = selectedReportRow
-        ? selectedReportRow.payment_reference ?? selectedReportRow.case_reference ?? selectedReportRow.delivery_reference ?? selectedReportRow.order_reference ?? selectedReportRow.order?.order_reference ?? selectedReportRow.name ?? selectedReportRow.id
-        : null;
+    const selectedRecordReference = selectedReportRow ? reportRowReference(selectedReportRow) : null;
 
     const orderStatuses = [
         ['PENDING_CONFIRMATION', 'Pending confirmation'],
@@ -797,11 +817,37 @@ export function ReportPanel({ role, onError, onAnalyze, title, hideTypeSelector 
         {invalidAmountRange && <p className="report-filter-error" role="alert">Maximum amount must be at least the minimum amount.</p>}
         <p className="report-count">{reportLoading ? 'Loading report...' : `${reportTotal} records · ${reportTitle}`}</p>
         {reportType === 'deliveries' && proofSummary && <p className="report-count" role="status">Proof recorded: {proofSummary.with_proof} · Delivered without proof: {proofSummary.delivered_without_proof}</p>}
-        {reportLoading ? <LoadingSkeleton variant="table" count={6} columns={tableColumns().length + 1} label="Loading report data" /> : <div className="report-table-wrap"><table className="report-table"><thead><tr>{tableColumns().map((column) => <th key={column.header} aria-sort={column.sortKey && column.sortKey === reportSort ? reportDirection === 'asc' ? 'ascending' : 'descending' : undefined}>
-            {role === 'RIDER' && column.sortKey
-                ? <button type="button" className="report-sort-button" onClick={() => changeReportSort(column.sortKey!)}>{column.header}{column.sortKey === reportSort ? (reportDirection === 'asc' ? ' ▲' : ' ▼') : ' ↕'}</button>
-                : column.header}
-        </th>)}<th>Details</th></tr></thead><tbody>{reportRows.map((row) => <tr key={row.id}>{tableColumns().map((column) => <td key={column.header}>{column.render(row)}</td>)}<td><ViewDetailsAction className="report-view-action" contextLabel={`report record ${String(row.id)}`} onClick={() => setSelectedReportRow(row)} /></td></tr>)}</tbody></table>{!reportRows.length && <p className="empty-state" role={reportError ? 'alert' : undefined}>{reportError ? <>{reportError} <button type="button" onClick={() => setReportRevision((revision) => revision + 1)}>Try again</button></> : role === 'RIDER' && reportType === 'deliveries' ? 'No deliveries match your filters.' : 'No records match these filters.'}</p>}</div>}
+        {reportLoading
+            ? <LoadingSkeleton variant="table" count={6} columns={tableColumns().length + 1} label="Loading report data" />
+            : (
+                <div className="report-table-wrap">
+                    <table className="report-table">
+                        <thead>
+                            <tr>
+                                {tableColumns().map((column) => <th key={column.header} aria-sort={column.sortKey && column.sortKey === reportSort ? reportDirection === 'asc' ? 'ascending' : 'descending' : undefined}>
+                                    {role === 'RIDER' && column.sortKey
+                                        ? <button type="button" className="report-sort-button" onClick={() => changeReportSort(column.sortKey!)}>{column.header}{column.sortKey === reportSort ? (reportDirection === 'asc' ? ' ▲' : ' ▼') : ' ↕'}</button>
+                                        : column.header}
+                                </th>)}
+                                <th>Details</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {reportRows.map((row) => <tr key={row.id}>
+                                {tableColumns().map((column) => <td key={column.header}>{column.render(row)}</td>)}
+                                <td><ViewDetailsAction className="report-view-action" contextLabel={String(reportRowReference(row) || 'report record')} onClick={() => setSelectedReportRow(row)} /></td>
+                            </tr>)}
+                        </tbody>
+                    </table>
+                    {!reportRows.length && <p className="empty-state" role={reportError ? 'alert' : undefined}>
+                        {reportError
+                            ? <>{reportError} <button type="button" onClick={() => setReportRevision((revision) => revision + 1)}>Try again</button></>
+                            : role === 'RIDER' && reportType === 'deliveries'
+                                ? 'No deliveries match your filters.'
+                                : 'No records match these filters.'}
+                    </p>}
+                </div>
+            )}
         <Pagination page={page} lastPage={Math.ceil(reportTotal / 15)} onChange={setPage} />
         {selectedReportRow && <FarmgateDetailDialog
             eyebrow={`${reportTitle} record`}
@@ -811,7 +857,7 @@ export function ReportPanel({ role, onError, onAnalyze, title, hideTypeSelector 
             className="report-detail-modal"
             contentClassName="report-detail-fields-wrap"
         >
-            <dl className="report-detail-fields">{Object.entries(selectedReportRow).map(([field, value]) => <div key={field}><dt>{reportFieldLabel(field)}</dt><dd><ReportDetailValue value={value} field={field} timezone={reportTimezone} /></dd></div>)}</dl>
+            <dl className="report-detail-fields">{Object.entries(selectedReportRow).filter(([field]) => field !== 'id').map(([field, value]) => <div key={field}><dt>{reportFieldLabel(field)}</dt><dd><ReportDetailValue value={value} field={field} timezone={reportTimezone} /></dd></div>)}</dl>
         </FarmgateDetailDialog>}
     </section>;
 }

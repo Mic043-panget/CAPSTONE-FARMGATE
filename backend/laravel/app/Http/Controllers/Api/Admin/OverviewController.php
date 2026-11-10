@@ -17,6 +17,7 @@ use App\Services\OrderCaseWorkflowService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 
 class OverviewController extends Controller
@@ -141,6 +142,42 @@ class OverviewController extends Controller
             'complaints.messages.media',
             'complaints.media',
         ]);
+        $collection = $order->codCollection()
+            ->with(['remittance.histories.actor:id,name,role'])
+            ->first();
+        $order->setAttribute('cod_reconciliation_evidence', $collection ? [
+            'collection_status' => $collection->status,
+            'expected_amount_cents' => $collection->expected_amount_cents,
+            'collected_amount_cents' => $collection->collected_amount_cents,
+            'collected_at' => $collection->collected_at,
+            'remittance' => $collection->remittance ? [
+                'reference' => $collection->remittance->reference,
+                'status' => $collection->remittance->status,
+                'method_type' => $collection->remittance->method_type,
+                'expected_amount_cents' => $collection->remittance->expected_amount_cents,
+                'received_amount_cents' => $collection->remittance->received_amount_cents,
+                'submitted_at' => $collection->remittance->submitted_at,
+                'reconciled_at' => $collection->remittance->reconciled_at,
+                'history' => $collection->remittance->histories->map(fn ($entry): array => [
+                    'action' => $entry->action,
+                    'expected_amount_cents' => $entry->expected_amount_cents,
+                    'received_amount_cents' => $entry->received_amount_cents,
+                    'reason' => $entry->reason,
+                    'created_at' => $entry->created_at,
+                    'actor' => $entry->actor ? [
+                        'name' => $entry->actor->name,
+                        'role' => $entry->actor->role,
+                    ] : null,
+                ])->values(),
+            ] : null,
+        ] : null);
+        $order->setAttribute(
+            'delivery_reconciliation_required',
+            $order->status === OrderStatus::COMPLETED
+                && $order->delivery_method === 'STANDARD_DELIVERY'
+                && ($order->delivery?->status !== DeliveryStatus::DELIVERED
+                    || $order->delivery?->delivery_verified_at === null),
+        );
         foreach ($order->complaints as $complaint) {
             $complaint->setAttribute('evidence_media', $workflow->mediaPayload($complaint->media));
             $workflow->attachPayoutEvidenceUrl($complaint);
@@ -156,7 +193,7 @@ class OverviewController extends Controller
             ->first());
         $order->setAttribute('audit_history', AuditLog::query()
             ->with('actor:id,name,email,role')
-            ->where('entity_type', Order::class)
+            ->whereIn('entity_type', [Order::class, class_basename(Order::class)])
             ->where('entity_id', (string) $order->id)
             ->latest()
             ->limit(50)
@@ -169,6 +206,46 @@ class OverviewController extends Controller
         );
 
         return response()->json(['order' => $order]);
+    }
+
+    public function correctPrematureCompletion(Request $request, Order $order): JsonResponse
+    {
+        $this->admin($request);
+        $data = $request->validate([
+            'decision' => ['required', Rule::in(['restore_to_fulfilling'])],
+            'reason' => ['required', 'string', 'min:10', 'max:2000'],
+            'evidence_reviewed' => ['required', 'accepted'],
+        ]);
+
+        $corrected = DB::transaction(function () use ($data, $order, $request): Order {
+            $lockedOrder = Order::query()->lockForUpdate()->findOrFail($order->id);
+            abort_unless($lockedOrder->status === OrderStatus::COMPLETED, 409, 'The order is no longer marked completed.');
+            abort_unless($lockedOrder->delivery_method === 'STANDARD_DELIVERY', 409, 'This reconciliation action only applies to standard deliveries.');
+            $delivery = Delivery::query()->where('order_id', $lockedOrder->id)->lockForUpdate()->first();
+            abort_unless(
+                $delivery === null
+                    || $delivery->status !== DeliveryStatus::DELIVERED
+                    || $delivery->delivery_verified_at === null,
+                409,
+                'The delivery is QR-verified; this correction is not applicable.',
+            );
+
+            $fromStatus = $lockedOrder->status;
+            $lockedOrder->forceFill(['status' => OrderStatus::FULFILLING])->save();
+            $lockedOrder->statusHistory()->create([
+                'from_status' => $fromStatus,
+                'to_status' => OrderStatus::FULFILLING,
+                'changed_by' => $request->user()->id,
+                'reason' => 'ADMIN_RECONCILIATION: '.$data['reason'],
+            ]);
+
+            return $lockedOrder->fresh();
+        });
+
+        return response()->json([
+            'message' => 'Order status correction recorded. Payment status was not changed.',
+            'order' => $corrected,
+        ]);
     }
 
     private function applyOrderStatusFilter(Builder $query, string $status): void

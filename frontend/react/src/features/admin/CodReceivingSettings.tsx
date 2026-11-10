@@ -595,7 +595,7 @@ export function CodReceivingSettings({
                             </details>
                         </div> : <p className="payments-inline-empty">The source version is no longer available on this page. Refresh and select the effective version again.</p>;
                     })()}
-                    <label>Version<input required maxLength={40} pattern="[A-Za-z0-9][-A-Za-z0-9._]{0,39}" value={policyVersion} onChange={(event) => setPolicyVersion(event.target.value)} /></label>
+                    <label>Version<input required maxLength={40} pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,39}" value={policyVersion} onChange={(event) => setPolicyVersion(event.target.value)} /></label>
                     <label>Effective date<input required type="date" min={new Date().toISOString().slice(0, 10)} value={policyEffectiveDate} onChange={(event) => setPolicyEffectiveDate(event.target.value)} /></label>
                     {amendmentBasePolicyId !== null && <label>Amendment reason<input required minLength={12} maxLength={500} value={amendmentReason} onChange={(event) => setAmendmentReason(event.target.value)} /></label>}
                     <div className="payments-policy-checklist" role="status">

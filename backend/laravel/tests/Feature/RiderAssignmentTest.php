@@ -525,6 +525,40 @@ class RiderAssignmentTest extends TestCase
         ]);
     }
 
+    public function test_cod_order_can_complete_after_qr_verified_delivery_without_marking_payment_paid(): void
+    {
+        $buyer = User::factory()->create(['role' => Role::BUYER]);
+        $seller = User::factory()->create(['role' => Role::SELLER]);
+        $order = Order::create([
+            'buyer_id' => $buyer->id,
+            'seller_id' => $seller->id,
+            'status' => OrderStatus::FULFILLING,
+            'delivery_method' => 'STANDARD_DELIVERY',
+            'payment_method' => 'COD',
+            'payment_status' => 'UNPAID',
+            'total_amount' => 200,
+        ]);
+        $delivery = Delivery::create([
+            'order_id' => $order->id,
+            'status' => DeliveryStatus::DELIVERED,
+        ]);
+
+        $this->actingAs($seller)->patchJson('/api/orders/'.$order->id.'/status', [
+            'status' => OrderStatus::COMPLETED->value,
+        ])->assertStatus(409)
+            ->assertJsonPath('message', 'Standard delivery must be QR-verified before the order can be completed.');
+        $this->assertSame(OrderStatus::FULFILLING, $order->fresh()->status);
+        $this->assertSame('UNPAID', $order->fresh()->payment_status);
+
+        $delivery->forceFill(['delivery_verified_at' => now()])->save();
+        $this->actingAs($seller)->patchJson('/api/orders/'.$order->id.'/status', [
+            'status' => OrderStatus::COMPLETED->value,
+        ])->assertOk()
+            ->assertJsonPath('order.status', OrderStatus::COMPLETED->value);
+        $this->assertSame('UNPAID', $order->fresh()->payment_status);
+        $this->assertNull($order->fresh()->paid_at);
+    }
+
     public function test_rider_can_accept_offer_and_delivery_moves_to_pickup_pending(): void
     {
         $buyer = User::factory()->create(['role' => Role::BUYER]);
@@ -834,6 +868,7 @@ class RiderAssignmentTest extends TestCase
             'pickup_address' => 'Bongabong',
         ]);
 
+        $this->travelTo(now());
         app(RiderAssignmentService::class)->dispatchForOrder($order->id);
         $offers = RiderOffer::query()->where('delivery_id', $delivery->id)->orderBy('rider_id')->get();
 
