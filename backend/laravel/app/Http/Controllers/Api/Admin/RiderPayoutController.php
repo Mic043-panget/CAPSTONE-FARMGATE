@@ -26,6 +26,7 @@ class RiderPayoutController extends Controller
             ->with([
                 'rider:id,name',
                 'recorder:id,name',
+                'destination:id,destination_type,status',
                 'earning.delivery:id,delivery_reference,order_id',
                 'earning.order:id,order_reference,delivery_fee',
                 'histories.actor:id,name',
@@ -46,7 +47,7 @@ class RiderPayoutController extends Controller
         $this->admin($request);
         $data = $request->validate([
             'external_reference' => ['required', 'string', 'min:4', 'max:100', 'regex:/^[A-Za-z0-9._:-]+$/'],
-            'method' => ['required', 'string', 'max:24'],
+            'method' => ['required', Rule::in(['BANK_TRANSFER', 'GCASH'])],
             'amount_cents' => ['required', 'integer', 'min:1', 'max:999999999999'],
             'paid_at' => ['required', 'date', 'after_or_equal:'.$payout->created_at->toDateString(), 'before_or_equal:today'],
             'reason' => ['required', 'string', 'min:8', 'max:500'],

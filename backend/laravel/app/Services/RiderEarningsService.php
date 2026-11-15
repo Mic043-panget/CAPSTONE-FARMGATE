@@ -8,6 +8,7 @@ use App\Models\Order;
 use App\Models\RiderEarning;
 use App\Models\RiderEarningsSetting;
 use App\Models\RiderPayout;
+use App\Models\RiderPayoutDestination;
 use App\Models\RiderPayoutHistory;
 use LogicException;
 
@@ -57,9 +58,15 @@ class RiderEarningsService
         ]);
 
         if ($amountCents > 0) {
+            $destinationId = RiderPayoutDestination::query()
+                ->where('rider_id', $delivery->rider_id)
+                ->where('is_current', true)
+                ->where('status', 'VERIFIED')
+                ->value('id');
             $payout = RiderPayout::query()->create([
                 'rider_earning_id' => $earning->id,
                 'rider_id' => $delivery->rider_id,
+                'destination_id' => $destinationId,
                 'amount_cents' => $amountCents,
                 'status' => 'PENDING',
             ]);

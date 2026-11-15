@@ -32,6 +32,19 @@ class RiderPayoutService
             $locked = RiderPayout::query()->lockForUpdate()->findOrFail($payout->id);
             abort_unless($locked->status === 'PENDING', 409, 'Only a pending rider payout can be recorded as externally paid.');
             abort_unless($amountCents === $locked->amount_cents, 422, 'The recorded external transfer amount must exactly match the rider payout amount due.');
+            $destination = $locked->destination_id
+                ? $locked->destination()->lockForUpdate()->first()
+                : null;
+            abort_unless(
+                $destination
+                    && $destination->rider_id === $locked->rider_id
+                    && $destination->status === 'VERIFIED'
+                    && $destination->is_current,
+                409,
+                'A verified rider payout destination is required before recording payment.',
+            );
+            $expectedMethod = $destination->destination_type === 'BANK' ? 'BANK_TRANSFER' : 'GCASH';
+            abort_unless($method === $expectedMethod, 422, 'The transfer method must match the verified rider payout destination.');
 
             $referenceHash = hash('sha256', mb_strtolower(trim($externalReference)));
             abort_unless(
@@ -69,7 +82,7 @@ class RiderPayoutService
                 'reason' => $safeReason,
             ]);
 
-            return $locked->fresh(['rider:id,name', 'earning.delivery:id,delivery_reference', 'earning.order:id,order_reference']);
+            return $locked->fresh(['rider:id,name', 'destination', 'earning.delivery:id,delivery_reference', 'earning.order:id,order_reference']);
         });
     }
 

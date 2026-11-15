@@ -15,6 +15,7 @@ use App\Models\RiderProfile;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
@@ -113,20 +114,58 @@ class RiderEarningsTest extends TestCase
             ->assertJsonPath('payouts.total', 1)
             ->assertJsonPath('payouts.data.0.earning.delivery.delivery_reference', $delivery->delivery_reference);
 
+        $payout = $earning->payout;
+        $this->actingAs($admin)->postJson('/api/admin/rider-payouts/'.$payout->id.'/manual-confirm', [
+            'external_reference' => 'FG-RIDER-TRANSFER-1',
+            'method' => 'BANK_TRANSFER',
+            'amount_cents' => 501,
+            'paid_at' => now()->toDateString(),
+            'reason' => 'Verified external transfer.',
+            'externally_completed_confirmed' => true,
+        ])->assertStatus(409);
+
         $this->actingAs($rider)->getJson('/api/rider/earnings')
             ->assertOk()
             ->assertJsonPath('configuration_status', 'CONFIGURED')
             ->assertJsonPath('summary.earned_cents', 501)
             ->assertJsonPath('earnings.data.0.percentage_snapshot', '50.00')
             ->assertJsonPath('earnings.data.0.amount_cents', 501);
+        $this->actingAs($rider)->putJson('/api/rider/payout-destination', [
+            'current_password' => 'password',
+            'destination_type' => 'BANK',
+            'account_holder' => 'Rider Test Account',
+            'bank_name' => 'Sample Bank',
+            'account_number' => '1234567890',
+            'consent_accepted' => true,
+            'consent_version' => 'rider-payout-ops-v1',
+        ])->assertOk()
+            ->assertJsonPath('destination.status', 'PENDING_VERIFICATION')
+            ->assertJsonPath('destination.account_number_masked', '•••• 7890')
+            ->assertJsonMissing(['account_number' => '1234567890']);
+        $destination = DB::table('rider_payout_destinations')->first();
+        $this->assertNotSame('1234567890', $destination->account_number);
+        $buyer = User::factory()->create(['role' => Role::BUYER]);
+        $this->actingAs($buyer)->getJson('/api/admin/rider-payout-destinations')->assertForbidden();
+        $this->actingAs($admin)->getJson('/api/admin/rider-payout-destinations')
+            ->assertOk()
+            ->assertJsonPath('destinations.data.0.account_number_masked', '•••• 7890')
+            ->assertJsonMissing(['account_number' => '1234567890']);
+        $this->actingAs($admin)->postJson('/api/admin/rider-payout-destinations/'.$destination->id.'/verify', [
+            'reason' => 'Account ownership confirmed.',
+        ])->assertOk()
+            ->assertJsonPath('destination.status', 'VERIFIED');
+        $this->assertSame($destination->id, $payout->fresh()->destination_id);
+
         $otherRider = User::factory()->create(['role' => Role::RIDER]);
         RiderProfile::create(['user_id' => $otherRider->id, 'availability' => 'OFFLINE', 'is_verified' => true]);
         $this->actingAs($otherRider)->getJson('/api/rider/earnings')
             ->assertOk()
             ->assertJsonPath('summary.earned_cents', 0)
             ->assertJsonPath('earnings.total', 0);
+        $this->actingAs($otherRider)->getJson('/api/rider/payout-destination')
+            ->assertOk()
+            ->assertJsonPath('destination', null);
 
-        $payout = $earning->payout;
         $this->actingAs($admin)->postJson('/api/admin/rider-payouts/'.$payout->id.'/manual-confirm', [
             'external_reference' => 'FG-RIDER-TRANSFER-1',
             'method' => 'BANK_TRANSFER',
@@ -154,6 +193,20 @@ class RiderEarningsTest extends TestCase
             ->assertOk()
             ->assertJsonPath('payouts.total', 1)
             ->assertJsonPath('payouts.data.0.status', 'PAID');
+
+        $this->actingAs($rider)->putJson('/api/rider/payout-destination', [
+            'current_password' => 'password',
+            'destination_type' => 'GCASH',
+            'account_holder' => 'Rider Test Account',
+            'wallet_number' => '09123456789',
+            'consent_accepted' => true,
+            'consent_version' => 'rider-payout-ops-v1',
+        ])->assertOk()
+            ->assertJsonPath('destination.destination_type', 'GCASH')
+            ->assertJsonPath('destination.status', 'PENDING_VERIFICATION')
+            ->assertJsonPath('destination.wallet_number_masked', '•••• 6789');
+        $this->assertSame('REPLACED', DB::table('rider_payout_destinations')->where('id', $destination->id)->value('status'));
+        $this->assertSame($destination->id, $payout->fresh()->destination_id);
     }
 
     public function test_missing_configuration_does_not_block_delivery_or_create_retroactive_earnings(): void

@@ -3,6 +3,7 @@
 namespace App\Http\Middleware;
 
 use App\Models\AuditLog;
+use App\Models\RiderPayoutDestination;
 use App\Models\SellerPayoutDestination;
 use App\Services\AuditContext;
 use Closure;
@@ -123,7 +124,7 @@ class AuditApiActions
 
         $reason = preg_replace('/(?<!\d)(?:\d[ -]?){7,}\d(?!\d)/u', '[masked digits]', $reason) ?? $reason;
         $destination = $request->route('destination');
-        if ($destination instanceof SellerPayoutDestination) {
+        if ($destination instanceof SellerPayoutDestination || $destination instanceof RiderPayoutDestination) {
             foreach ([$destination->account_holder, $destination->bank_name, $destination->account_number, $destination->wallet_number] as $privateValue) {
                 if (filled($privateValue)) {
                     $reason = str_ireplace((string) $privateValue, '[destination detail redacted]', $reason);

@@ -31,6 +31,7 @@ type Payout = {
     paid_at: string | null;
     created_at: string;
     rider: { id: number; name: string };
+    destination?: { id: number; destination_type: 'BANK' | 'GCASH'; status: string } | null;
     recorder?: { id: number; name: string } | null;
     earning: {
         percentage_snapshot: string;
@@ -39,6 +40,19 @@ type Payout = {
     };
 };
 type Page<T> = { data: T[]; current_page: number; last_page: number; total: number };
+type PayoutDestination = {
+    id: number;
+    destination_type: 'BANK' | 'GCASH';
+    account_holder_masked: string;
+    bank_name_masked: string | null;
+    account_number_masked: string | null;
+    wallet_number_masked: string | null;
+    status: string;
+    is_current: boolean;
+    rider: { id: number; name: string };
+    verified_by_name: string | null;
+    verified_at: string | null;
+};
 type PayoutForm = {
     amount: string;
     method: string;
@@ -69,9 +83,12 @@ export function RiderPayoutOperations({ onError }: { onError: (message: string) 
     const [settingReason, setSettingReason] = React.useState('');
     const [pendingPayouts, setPendingPayouts] = React.useState<Page<Payout> | null>(null);
     const [recordedPayouts, setRecordedPayouts] = React.useState<Page<Payout> | null>(null);
+    const [destinations, setDestinations] = React.useState<Page<PayoutDestination> | null>(null);
     const [pendingPage, setPendingPage] = React.useState(1);
     const [recordedPage, setRecordedPage] = React.useState(1);
+    const [destinationPage, setDestinationPage] = React.useState(1);
     const [payoutForms, setPayoutForms] = React.useState<Record<number, PayoutForm>>({});
+    const [destinationReasons, setDestinationReasons] = React.useState<Record<number, string>>({});
     const [loading, setLoading] = React.useState(true);
     const [saving, setSaving] = React.useState(false);
     const [success, setSuccess] = React.useState('');
@@ -79,10 +96,11 @@ export function RiderPayoutOperations({ onError }: { onError: (message: string) 
     const refresh = React.useCallback(async () => {
         setLoading(true);
         try {
-            const [settingsResponse, pendingResponse, recordedResponse] = await Promise.all([
+            const [settingsResponse, pendingResponse, recordedResponse, destinationsResponse] = await Promise.all([
                 api.get<{ setting: Setting | null; configured: boolean; history: SettingHistory[] }>('/api/admin/rider-earnings/settings'),
                 api.get<{ payouts: Page<Payout> }>('/api/admin/rider-payouts', { params: { group: 'queue', page: pendingPage } }),
                 api.get<{ payouts: Page<Payout> }>('/api/admin/rider-payouts', { params: { group: 'recorded', page: recordedPage } }),
+                api.get<{ destinations: Page<PayoutDestination> }>('/api/admin/rider-payout-destinations', { params: { page: destinationPage } }),
             ]);
             const nextSetting = settingsResponse.data.setting;
             setSetting(nextSetting);
@@ -93,12 +111,13 @@ export function RiderPayoutOperations({ onError }: { onError: (message: string) 
             setCapAmount(nextSetting?.cap_amount ?? '');
             setPendingPayouts(pendingResponse.data.payouts);
             setRecordedPayouts(recordedResponse.data.payouts);
+            setDestinations(destinationsResponse.data.destinations);
         } catch (error: any) {
             onError(error.userMessage ?? error.response?.data?.message ?? 'Rider earnings settings and payouts could not be loaded.');
         } finally {
             setLoading(false);
         }
-    }, [onError, pendingPage, recordedPage]);
+    }, [onError, pendingPage, recordedPage, destinationPage]);
 
     React.useEffect(() => { void refresh(); }, [refresh]);
 
@@ -152,7 +171,7 @@ export function RiderPayoutOperations({ onError }: { onError: (message: string) 
     function updatePayoutForm(payout: Payout, changes: Partial<PayoutForm>) {
         const current = payoutForms[payout.id] ?? {
             amount: (payout.amount_cents / 100).toFixed(2),
-            method: 'BANK_TRANSFER',
+            method: payout.destination?.destination_type === 'GCASH' ? 'GCASH' : 'BANK_TRANSFER',
             externalReference: '',
             paidAt: new Date().toISOString().slice(0, 10),
             reason: '',
@@ -164,9 +183,14 @@ export function RiderPayoutOperations({ onError }: { onError: (message: string) 
     async function confirmPayout(payout: Payout) {
         const form = payoutForms[payout.id];
         const amountCents = parseCents(form?.amount ?? '');
+        if (payout.destination?.status !== 'VERIFIED') {
+            onError('A verified rider payout destination is required before recording payment.');
+            return;
+        }
+        const expectedMethod = payout.destination.destination_type === 'GCASH' ? 'GCASH' : 'BANK_TRANSFER';
         if (amountCents === null
             || amountCents !== payout.amount_cents
-            || !form?.method
+            || form?.method !== expectedMethod
             || form.externalReference.trim().length < 4
             || !form.paidAt
             || form.reason.trim().length < 8
@@ -200,8 +224,35 @@ export function RiderPayoutOperations({ onError }: { onError: (message: string) 
         }
     }
 
+    async function reviewDestination(destination: PayoutDestination, decision: 'verify' | 'reject') {
+        const reason = destinationReasons[destination.id]?.trim() ?? '';
+        if (reason.length < 8) {
+            onError('Enter an audit reason of at least eight characters.');
+            return;
+        }
+        if (!await confirmAction({
+            title: decision === 'verify' ? 'Verify this rider destination?' : 'Reject this rider destination?',
+            text: 'Only masked destination details are shown in Farmgate. This decision is recorded in the audit history.',
+            confirmText: decision === 'verify' ? 'Verify destination' : 'Reject destination',
+        })) return;
+
+        setSaving(true);
+        setSuccess('');
+        try {
+            await api.post(`/api/admin/rider-payout-destinations/${destination.id}/${decision}`, { reason });
+            setDestinationReasons((reasons) => ({ ...reasons, [destination.id]: '' }));
+            setSuccess(decision === 'verify' ? 'Rider payout destination verified.' : 'Rider payout destination rejected.');
+            await refresh();
+        } catch (error: any) {
+            onError(error.userMessage ?? error.response?.data?.message ?? 'The rider payout destination could not be reviewed.');
+        } finally {
+            setSaving(false);
+        }
+    }
+
     const queueRows = pendingPayouts?.data ?? [];
     const recordedRows = recordedPayouts?.data ?? [];
+    const destinationRows = destinations?.data ?? [];
     const isConfigured = settingConfigured;
 
     return <section className="payments-settings-card rider-payout-operations" aria-labelledby="rider-payout-operations-title">
@@ -280,6 +331,36 @@ export function RiderPayoutOperations({ onError }: { onError: (message: string) 
                     </tbody></table></div>}
             </section>
 
+            <section className="rider-payout-subsection" aria-labelledby="rider-payout-destinations-title">
+                <div className="rider-payout-subsection-heading">
+                    <div><h4 id="rider-payout-destinations-title">Rider payout destinations</h4><p>Review and verify bank or GCash details before they can be used for external transfers. Account identifiers remain masked.</p></div>
+                    <span className="rider-payout-count">{destinations?.total ?? 0} destinations</span>
+                </div>
+                {destinationRows.length === 0 ? <div className="payments-empty-state rider-payout-empty-state"><strong>No payout destinations submitted</strong><span>Riders can submit bank or GCash details in Account settings.</span></div> : destinationRows.map((destination) => <article className="rider-payout-record" key={destination.id}>
+                    <div className="rider-payout-record-heading">
+                        <div><p className="eyebrow">Rider destination · {destination.rider.name} · {destination.is_current ? 'Current' : 'Historical'}</p><h5>{destination.destination_type === 'BANK' ? 'Bank transfer' : 'GCash'} · {destination.status.replaceAll('_', ' ')}</h5></div>
+                        <span className={`rider-payout-config-state${destination.status === 'VERIFIED' ? ' is-configured' : ''}`}>{destination.status.replaceAll('_', ' ')}</span>
+                    </div>
+                    <dl className="rider-payout-destination-details">
+                        <div><dt>Account holder</dt><dd>{destination.account_holder_masked}</dd></div>
+                        {destination.destination_type === 'BANK'
+                            ? <><div><dt>Bank</dt><dd>{destination.bank_name_masked}</dd></div><div><dt>Account</dt><dd>{destination.account_number_masked}</dd></div></>
+                            : <div><dt>GCash number</dt><dd>{destination.wallet_number_masked}</dd></div>}
+                        {destination.verified_at && <div><dt>Verified</dt><dd>{new Date(destination.verified_at).toLocaleString()} · {destination.verified_by_name ?? 'Administrator'}</dd></div>}
+                    </dl>
+                    {destination.status === 'PENDING_VERIFICATION' && <div className="rider-payout-destination-review">
+                        <label className="rider-payout-field">Reason for decision
+                            <textarea minLength={8} maxLength={500} required value={destinationReasons[destination.id] ?? ''} onChange={(event) => setDestinationReasons((reasons) => ({ ...reasons, [destination.id]: event.target.value }))} />
+                        </label>
+                        <div className="rider-payout-record-actions">
+                            <button type="button" className="seller-inline-action" disabled={saving} onClick={() => void reviewDestination(destination, 'verify')}>Verify destination</button>
+                            <button type="button" className="seller-inline-action danger" disabled={saving} onClick={() => void reviewDestination(destination, 'reject')}>Reject destination</button>
+                        </div>
+                    </div>}
+                </article>)}
+                {(destinations?.last_page ?? 1) > 1 && <Pagination page={destinations?.current_page ?? 1} lastPage={destinations?.last_page ?? 1} onChange={setDestinationPage} label="Rider payout destinations pages" />}
+            </section>
+
             <section className="rider-payout-subsection" aria-labelledby="rider-payout-queue-title">
                 <div className="rider-payout-subsection-heading">
                     <div><h4 id="rider-payout-queue-title">Pending manual payouts</h4><p>Record a payout only after independently confirming the external transfer is complete.</p></div>
@@ -288,7 +369,7 @@ export function RiderPayoutOperations({ onError }: { onError: (message: string) 
                 {queueRows.length === 0 ? <div className="payments-empty-state rider-payout-empty-state"><strong>No pending payouts</strong><span>Eligible delivery payouts will appear here for reconciliation.</span></div> : queueRows.map((payout) => {
                     const form = payoutForms[payout.id] ?? {
                         amount: (payout.amount_cents / 100).toFixed(2),
-                        method: 'BANK_TRANSFER',
+                        method: payout.destination?.destination_type === 'GCASH' ? 'GCASH' : 'BANK_TRANSFER',
                         externalReference: '',
                         paidAt: new Date().toISOString().slice(0, 10),
                         reason: '',
@@ -299,18 +380,23 @@ export function RiderPayoutOperations({ onError }: { onError: (message: string) 
                             <div><p className="eyebrow">Delivery payout</p><h5>{payout.earning.delivery.delivery_reference}</h5><p>Order {payout.earning.order.order_reference} · {payout.rider.name}</p></div>
                             <strong>{money(payout.amount_cents)}</strong>
                         </div>
+                        <p className="rider-payout-record-rate">Destination: {payout.destination?.status === 'VERIFIED'
+                            ? `${payout.destination.destination_type === 'GCASH' ? 'GCash' : 'Bank transfer'} · verified`
+                            : 'Not verified — payment recording is disabled'}</p>
                         <p className="rider-payout-record-rate">{payout.earning.percentage_snapshot}% of saved delivery fee</p>
                         <div className="rider-payout-payment-fields">
                             <label className="rider-payout-field">Amount (PHP)<input type="number" min="0.01" step="0.01" value={form.amount} onChange={(event) => updatePayoutForm(payout, { amount: event.target.value })} /><small>Must match the payout amount exactly.</small></label>
-                            <label className="rider-payout-field">Method<select value={form.method} onChange={(event) => updatePayoutForm(payout, { method: event.target.value })}>
-                                <option value="BANK_TRANSFER">Bank transfer</option><option value="GCASH">GCash</option><option value="CASH">Cash</option><option value="OTHER">Other</option>
+                            <label className="rider-payout-field">Method<select value={form.method} onChange={(event) => updatePayoutForm(payout, { method: event.target.value })} disabled={payout.destination?.status !== 'VERIFIED'}>
+                                {payout.destination?.destination_type === 'GCASH'
+                                    ? <option value="GCASH">GCash</option>
+                                    : <option value="BANK_TRANSFER">Bank transfer</option>}
                             </select></label>
                             <label className="rider-payout-field">External transfer reference<input value={form.externalReference} onChange={(event) => updatePayoutForm(payout, { externalReference: event.target.value })} /><small>Enter the reference from the external payment provider.</small></label>
                             <label className="rider-payout-field">Transfer date<input type="date" value={form.paidAt} onChange={(event) => updatePayoutForm(payout, { paidAt: event.target.value })} /></label>
                             <label className="rider-payout-field rider-payout-reason-field">Reason<input minLength={8} maxLength={500} value={form.reason} onChange={(event) => updatePayoutForm(payout, { reason: event.target.value })} /></label>
                         </div>
                         <label className="seller-payout-destination-consent rider-payout-confirmation"><input type="checkbox" checked={form.externallyCompleted} onChange={(event) => updatePayoutForm(payout, { externallyCompleted: event.target.checked })} /><span>I independently confirm this transfer was already completed outside Farmgate. Recording it will not send money.</span></label>
-                        <div className="rider-payout-record-actions"><button type="button" className="seller-inline-action" disabled={saving} onClick={() => void confirmPayout(payout)}>Record completed transfer</button></div>
+                        <div className="rider-payout-record-actions"><button type="button" className="seller-inline-action" disabled={saving || payout.destination?.status !== 'VERIFIED'} onClick={() => void confirmPayout(payout)}>Record completed transfer</button></div>
                     </article>;
                 })}
                 {(pendingPayouts?.last_page ?? 1) > 1 && <Pagination page={pendingPayouts?.current_page ?? 1} lastPage={pendingPayouts?.last_page ?? 1} onChange={setPendingPage} label="Pending rider payouts pages" />}

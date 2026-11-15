@@ -3099,6 +3099,12 @@ label { display: grid; gap: 0.45rem; }
 .rider-payout-record-heading p:last-child { color: var(--ink-soft); font-size: 0.78rem; margin: 0.25rem 0 0; }
 .rider-payout-record-heading > strong { color: var(--ink); font-size: 1.1rem; font-variant-numeric: tabular-nums; }
 .rider-payout-record-rate { color: var(--ink-soft); font-size: 0.76rem; margin: -0.5rem 0 0; }
+.rider-payout-destination-details { display: grid; gap: 0.65rem 1rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); margin: 0; }
+.rider-payout-destination-details div { min-width: 0; }
+.rider-payout-destination-details dt { color: var(--ink-soft); font-size: 0.69rem; font-weight: 700; }
+.rider-payout-destination-details dd { font-size: 0.82rem; margin: 0.15rem 0 0; overflow-wrap: anywhere; }
+.rider-payout-destination-review { border-top: 1px solid var(--line); display: grid; gap: 0.75rem; padding-top: 0.8rem; }
+.rider-payout-destination-review textarea { min-height: 4.5rem; resize: vertical; }
 .rider-payout-payment-fields .rider-payout-reason-field { grid-column: auto; }
 .rider-payout-confirmation { align-items: flex-start; background: #fff7ed; border: 1px solid #e8c99e; border-radius: 7px; color: var(--ink); display: flex; font-size: 0.76rem; gap: 0.55rem; line-height: 1.45; padding: 0.7rem 0.8rem; }
 .rider-payout-confirmation input { flex: 0 0 auto; margin: 0.15rem 0 0; }

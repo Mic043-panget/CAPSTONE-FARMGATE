@@ -10,6 +10,8 @@ class RiderEarningsSetting extends Model
 {
     public const SINGLETON_ID = 1;
 
+    public $incrementing = false;
+
     protected $fillable = ['percentage', 'cap_scope', 'cap_amount', 'updated_by', 'change_reason'];
 
     protected function casts(): array
