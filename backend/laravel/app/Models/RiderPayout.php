@@ -21,9 +21,11 @@ class RiderPayout extends Model
         'external_reference_hash',
         'reason',
         'paid_at',
+        'receipt_path',
+        'receipt_mime_type',
     ];
 
-    protected $hidden = ['external_reference', 'external_reference_hash', 'reason'];
+    protected $hidden = ['external_reference', 'external_reference_hash', 'reason', 'receipt_path', 'receipt_mime_type'];
 
     protected function casts(): array
     {

@@ -38,7 +38,8 @@ class RiderEarningsService
         $deliveryFeeCents = $this->decimalToCents((string) ($order->delivery_fee ?? '0.00'));
         $percentageBasisPoints = $this->decimalToCents((string) $setting->percentage);
         $uncappedAmountCents = intdiv(($deliveryFeeCents * $percentageBasisPoints) + 5000, 10000);
-        $capAmountCents = $setting->cap_scope === 'NO_CAP'
+        $capScope = $setting->cap_scope === 'PER_PAYOUT' ? 'PER_DELIVERY' : $setting->cap_scope;
+        $capAmountCents = $capScope === 'NO_CAP'
             ? null
             : $this->decimalToCents((string) $setting->cap_amount);
         $amountCents = $capAmountCents === null
@@ -51,7 +52,7 @@ class RiderEarningsService
             'rider_id' => $delivery->rider_id,
             'delivery_fee_cents' => $deliveryFeeCents,
             'percentage_snapshot' => $setting->percentage,
-            'cap_scope_snapshot' => $setting->cap_scope,
+            'cap_scope_snapshot' => $capScope,
             'cap_amount_snapshot' => $setting->cap_amount,
             'amount_cents' => $amountCents,
             'calculated_at' => $delivery->delivery_verified_at,

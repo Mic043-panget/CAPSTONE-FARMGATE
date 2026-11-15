@@ -55,6 +55,12 @@ class RiderEarningsTest extends TestCase
             'cap_amount' => 0,
             'reason' => 'Approved rider payout policy.',
         ])->assertUnprocessable();
+        $this->actingAs($admin)->putJson('/api/admin/rider-earnings/settings', [
+            'percentage' => 50,
+            'cap_scope' => 'PER_PAYOUT',
+            'cap_amount' => 2,
+            'reason' => 'Legacy payout cap option.',
+        ])->assertUnprocessable();
         $this->assertSame(0, RiderEarningsSetting::query()->count());
 
         $this->actingAs($admin)->putJson('/api/admin/rider-earnings/settings', [
@@ -106,7 +112,12 @@ class RiderEarningsTest extends TestCase
         $this->assertSame(501, $earning->payout?->amount_cents);
         $this->assertNull($earning->payout?->external_reference);
 
-        $this->saveSettings($admin, '100', 'PER_PAYOUT', '2.00');
+        $this->actingAs($admin)->putJson('/api/admin/rider-earnings/settings', [
+            'percentage' => 100,
+            'cap_scope' => 'PER_PAYOUT',
+            'cap_amount' => 2,
+            'reason' => 'Legacy payout cap option.',
+        ])->assertUnprocessable();
         $this->assertSame(501, $earning->fresh()->amount_cents);
 
         $this->actingAs($admin)->getJson('/api/admin/rider-payouts?group=queue')
@@ -122,6 +133,7 @@ class RiderEarningsTest extends TestCase
             'paid_at' => now()->toDateString(),
             'reason' => 'Verified external transfer.',
             'externally_completed_confirmed' => true,
+            'receipt' => UploadedFile::fake()->image('receipt.png'),
         ])->assertStatus(409);
 
         $this->actingAs($rider)->getJson('/api/rider/earnings')
@@ -150,11 +162,18 @@ class RiderEarningsTest extends TestCase
             ->assertOk()
             ->assertJsonPath('destinations.data.0.account_number_masked', '•••• 7890')
             ->assertJsonMissing(['account_number' => '1234567890']);
+        $this->actingAs($admin)->getJson('/api/admin/rider-payout-destinations?search=Rider%20Test&status=PENDING_VERIFICATION')
+            ->assertOk()
+            ->assertJsonPath('destinations.total', 1);
         $this->actingAs($admin)->postJson('/api/admin/rider-payout-destinations/'.$destination->id.'/verify', [
             'reason' => 'Account ownership confirmed.',
         ])->assertOk()
             ->assertJsonPath('destination.status', 'VERIFIED');
         $this->assertSame($destination->id, $payout->fresh()->destination_id);
+        $this->actingAs($admin)->getJson('/api/admin/rider-payout-destinations/'.$destination->id)
+            ->assertOk()
+            ->assertJsonPath('destination.verification_history.0.action', 'VERIFIED')
+            ->assertJsonMissing(['account_number' => '1234567890']);
 
         $otherRider = User::factory()->create(['role' => Role::RIDER]);
         RiderProfile::create(['user_id' => $otherRider->id, 'availability' => 'OFFLINE', 'is_verified' => true]);
@@ -173,6 +192,7 @@ class RiderEarningsTest extends TestCase
             'paid_at' => now()->toDateString(),
             'reason' => 'Verified external transfer.',
             'externally_completed_confirmed' => true,
+            'receipt' => UploadedFile::fake()->image('receipt.png'),
         ])->assertUnprocessable();
         $this->assertSame('PENDING', $payout->fresh()->status);
 
@@ -183,16 +203,36 @@ class RiderEarningsTest extends TestCase
             'paid_at' => now()->toDateString(),
             'reason' => 'Verified external transfer.',
             'externally_completed_confirmed' => true,
+            'receipt' => UploadedFile::fake()->image('receipt.png'),
         ])->assertCreated()
             ->assertJsonPath('payout.status', 'PAID')
-            ->assertJsonPath('payout.amount_cents', 501);
+            ->assertJsonPath('payout.amount_cents', 501)
+            ->assertJsonPath('payout.payout_reference', 'RPO-'.str_pad((string) $payout->id, 8, '0', STR_PAD_LEFT));
 
         $this->assertSame($admin->id, $payout->fresh()->recorded_by);
         $this->assertSame(1, RiderPayout::query()->where('status', 'PAID')->count());
+        $this->assertNotNull($payout->fresh()->receipt_path);
+        Storage::disk('delivery_proofs')->assertExists($payout->fresh()->receipt_path);
         $this->actingAs($admin)->getJson('/api/admin/rider-payouts?group=recorded')
             ->assertOk()
             ->assertJsonPath('payouts.total', 1)
-            ->assertJsonPath('payouts.data.0.status', 'PAID');
+            ->assertJsonPath('payouts.data.0.status', 'PAID')
+            ->assertJsonPath('payouts.data.0.destination_masked.identifier', '•••• 7890')
+            ->assertJsonMissing(['account_number' => '1234567890']);
+        $this->actingAs($admin)->getJson('/api/admin/rider-payouts?group=recorded&search=RPO-'.str_pad((string) $payout->id, 8, '0', STR_PAD_LEFT))
+            ->assertOk()
+            ->assertJsonPath('payouts.total', 1);
+        $this->actingAs($rider)->getJson('/api/rider/earnings')
+            ->assertOk()
+            ->assertJsonPath('earnings.data.0.payout.payout_reference', 'RPO-'.str_pad((string) $payout->id, 8, '0', STR_PAD_LEFT))
+            ->assertJsonPath('earnings.data.0.payout.destination_masked.identifier', '•••• 7890')
+            ->assertJsonPath('earnings.data.0.payout.amount_cents', 501)
+            ->assertJsonStructure(['earnings' => ['data' => [['payout' => ['receipt_url']]]]])
+            ->assertJsonMissing(['account_number' => '1234567890']);
+        $this->actingAs($rider)->get('/api/rider-payouts/'.$payout->id.'/receipt')->assertOk();
+        $this->actingAs($otherRider)->get('/api/rider-payouts/'.$payout->id.'/receipt')->assertForbidden();
+        $this->actingAs($buyer)->get('/api/rider-payouts/'.$payout->id.'/receipt')->assertForbidden();
+        $this->actingAs($admin)->get('/api/rider-payouts/'.$payout->id.'/receipt')->assertOk();
 
         $this->actingAs($rider)->putJson('/api/rider/payout-destination', [
             'current_password' => 'password',
@@ -250,7 +290,7 @@ class RiderEarningsTest extends TestCase
         $this->assertSame(0, RiderEarning::query()->where('delivery_id', $cancelled->id)->count());
     }
 
-    public function test_delivery_and_payout_caps_limit_the_snapshotted_amount(): void
+    public function test_delivery_caps_limit_earnings_and_legacy_payout_caps_are_snapshotted_per_delivery(): void
     {
         $admin = User::factory()->create(['role' => Role::ADMIN]);
         $this->saveSettings($admin, '75', 'PER_DELIVERY', '3.00');
@@ -262,14 +302,20 @@ class RiderEarningsTest extends TestCase
         $this->assertSame(300, $deliveryCapEarning->amount_cents);
         $this->assertSame(300, $deliveryCapEarning->payout?->amount_cents);
 
-        $this->saveSettings($admin, '75', 'PER_PAYOUT', '2.00');
+        $legacySetting = RiderEarningsSetting::query()->firstOrFail();
+        $legacySetting->forceFill([
+            'percentage' => '75.00',
+            'cap_scope' => 'PER_PAYOUT',
+            'cap_amount' => '2.00',
+        ])->save();
         ['rider' => $payoutCapRider, 'delivery' => $payoutCapped, 'token' => $payoutToken] = $this->deliveryWithFee('10.01');
         $this->verifyDelivery($payoutCapRider, $payoutCapped, $payoutToken);
 
         $payoutCapEarning = RiderEarning::query()->where('delivery_id', $payoutCapped->id)->firstOrFail();
-        $this->assertSame('PER_PAYOUT', $payoutCapEarning->cap_scope_snapshot);
+        $this->assertSame('PER_DELIVERY', $payoutCapEarning->cap_scope_snapshot);
         $this->assertSame(200, $payoutCapEarning->amount_cents);
         $this->assertSame(200, $payoutCapEarning->payout?->amount_cents);
+        $this->assertSame('PER_PAYOUT', $legacySetting->fresh()->cap_scope);
     }
 
     private function saveSettings(User $admin, string $percentage, string $capScope, ?string $capAmount = null): void

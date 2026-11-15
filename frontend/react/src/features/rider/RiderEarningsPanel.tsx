@@ -10,7 +10,14 @@ type RiderEarning = {
     calculated_at: string;
     delivery: { delivery_reference: string; status: string; delivery_verified_at: string | null };
     order: { order_reference: string; delivery_fee: string };
-    payout: { amount_cents: number; status: string; paid_at: string | null } | null;
+    payout: {
+        payout_reference: string;
+        amount_cents: number;
+        status: string;
+        paid_at: string | null;
+        destination_masked: { institution: string; identifier: string | null; status: string } | null;
+        receipt_url: string | null;
+    } | null;
 };
 type EarningsPage = { data: RiderEarning[]; current_page: number; last_page: number; total: number };
 type EarningsResponse = {
@@ -58,14 +65,19 @@ export function RiderEarningsPanel() {
                 <article><span>Recorded as paid</span><strong>{money(data.summary.paid_payout_cents)}</strong></article>
             </div>
             {data.earnings.data.length === 0 ? <p className="rider-empty">No verified delivery earnings have been recorded.</p>
-                : <div className="data-table-wrap"><table><thead><tr><th>Order</th><th>Delivery</th><th>Saved delivery fee</th><th>Rate snapshot</th><th>Earned</th><th>Payout</th><th>Verified</th></tr></thead><tbody>
+                : <div className="data-table-wrap"><table><thead><tr><th>Order</th><th>Delivery</th><th>Saved delivery fee</th><th>Rate snapshot</th><th>Earned</th><th>Payout reference</th><th>Payout status</th><th>Amount paid</th><th>Paid date</th><th>Destination</th><th>Receipt</th><th>Verified</th></tr></thead><tbody>
                     {data.earnings.data.map((earning) => <tr key={earning.id}>
                         <td>{earning.order.order_reference}</td>
                         <td>{earning.delivery.delivery_reference}</td>
                         <td>{money(earning.delivery_fee_cents)}</td>
                         <td>{earning.percentage_snapshot}%</td>
                         <td>{money(earning.amount_cents)}</td>
+                        <td>{earning.payout?.payout_reference ?? '—'}</td>
                         <td>{earning.payout?.status ?? 'No payout due'}</td>
+                        <td>{earning.payout ? money(earning.payout.amount_cents) : '—'}</td>
+                        <td>{earning.payout?.paid_at ? new Date(earning.payout.paid_at).toLocaleString() : '—'}</td>
+                        <td>{earning.payout?.destination_masked ? <>{earning.payout.destination_masked.institution}<small>{earning.payout.destination_masked.identifier ?? 'Masked details unavailable'}</small></> : '—'}</td>
+                        <td>{earning.payout?.receipt_url ? <a href={earning.payout.receipt_url} target="_blank" rel="noreferrer">View receipt</a> : earning.payout?.status === 'PAID' ? 'Not available' : '—'}</td>
                         <td>{earning.delivery.delivery_verified_at ? new Date(earning.delivery.delivery_verified_at).toLocaleString() : '—'}</td>
                     </tr>)}
                 </tbody></table></div>}

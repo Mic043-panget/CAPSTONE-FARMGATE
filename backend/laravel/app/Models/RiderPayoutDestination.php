@@ -57,4 +57,27 @@ class RiderPayoutDestination extends Model
     {
         return $this->hasMany(RiderPayoutDestinationHistory::class);
     }
+
+    /**
+     * @return array<string, string|null>
+     */
+    public function maskedSummary(): array
+    {
+        $isBank = $this->destination_type === 'BANK';
+        $identifier = $isBank ? $this->account_number : $this->wallet_number;
+        $normalizedIdentifier = preg_replace('/\\s+/', '', (string) $identifier) ?? '';
+
+        return [
+            'type' => $this->destination_type,
+            'status' => $this->status,
+            'account_holder' => collect(preg_split('/\\s+/', trim((string) $this->account_holder)) ?: [])
+                ->filter()
+                ->map(fn (string $part): string => mb_substr($part, 0, 1).'***')
+                ->implode(' '),
+            'institution' => $isBank
+                ? mb_substr(trim((string) $this->bank_name), 0, 1).'***'
+                : 'GCash',
+            'identifier' => $normalizedIdentifier !== '' ? '•••• '.mb_substr($normalizedIdentifier, -4) : null,
+        ];
+    }
 }

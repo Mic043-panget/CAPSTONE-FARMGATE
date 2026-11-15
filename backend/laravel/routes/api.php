@@ -175,7 +175,9 @@ Route::middleware(MaintenanceMode::class)->group(function (): void {
             Route::put('/admin/rider-earnings/settings', [RiderEarningsSettingsController::class, 'update'])->middleware('throttle:10,1');
             Route::get('/admin/rider-payouts', [RiderPayoutController::class, 'index']);
             Route::post('/admin/rider-payouts/{payout}/manual-confirm', [RiderPayoutController::class, 'confirmManual'])->middleware('throttle:10,1');
+            Route::get('/rider-payouts/{payout}/receipt', [RiderPayoutController::class, 'receipt'])->middleware('throttle:30,1')->name('rider-payouts.receipt');
             Route::get('/admin/rider-payout-destinations', [RiderPayoutDestinationController::class, 'adminIndex']);
+            Route::get('/admin/rider-payout-destinations/{destination}', [RiderPayoutDestinationController::class, 'adminShow']);
             Route::post('/admin/rider-payout-destinations/{destination}/verify', [RiderPayoutDestinationController::class, 'verify'])->middleware('throttle:10,1');
             Route::post('/admin/rider-payout-destinations/{destination}/reject', [RiderPayoutDestinationController::class, 'reject'])->middleware('throttle:10,1');
             Route::get('/admin/seller-payouts', [CodRemittanceController::class, 'adminPayouts']);

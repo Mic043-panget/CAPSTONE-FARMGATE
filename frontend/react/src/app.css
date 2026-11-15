@@ -3113,6 +3113,41 @@ label { display: grid; gap: 0.45rem; }
 .rider-payout-history-table-wrap { max-width: 100%; overflow-x: auto; }
 .rider-payout-history-table-wrap table { min-width: 760px; }
 .rider-payout-operations :is(button, input, select, textarea, a):focus-visible { outline: 3px solid #d38655; outline-offset: 2px; }
+.rider-payout-tab-panel { min-width: 0; padding-top: 1rem; }
+.rider-payout-tab-content { display: grid; gap: 1rem; min-width: 0; }
+.rider-payout-tabs { gap: 0.2rem; }
+.rider-payout-status-pill { background: #edf2eb; border: 1px solid #d5dfd1; border-radius: 999px; color: #435b43; display: inline-flex; font-size: 0.66rem; font-weight: 750; line-height: 1.2; margin: 0.2rem 0.25rem 0.1rem 0; padding: 0.28rem 0.55rem; white-space: nowrap; }
+.rider-payout-status-pill--configured, .rider-payout-status-pill--verified, .rider-payout-status-pill--paid { background: #edf6ec; border-color: #b9d7b6; color: #285d2e; }
+.rider-payout-status-pill--pending-verification, .rider-payout-status-pill--pending, .rider-payout-status-pill--needs-review, .rider-payout-status-pill--not-configured { background: #fff7ed; border-color: #e8c99e; color: #7a4b18; }
+.rider-payout-status-pill--rejected, .rider-payout-status-pill--failed { background: #f8e7e1; border-color: #e7bbb2; color: #842e24; }
+.rider-payout-filter-bar { align-items: end; display: grid; gap: 0.65rem 0.9rem; grid-template-columns: minmax(220px, 2fr) repeat(2, minmax(150px, 1fr)); }
+.rider-payout-filter-bar--recorded { grid-template-columns: minmax(220px, 2fr) repeat(4, minmax(130px, 1fr)); }
+.rider-payout-filter-bar .seller-listing-search { margin: 0; max-width: none; }
+.rider-payout-filter { color: var(--ink-soft); display: grid; font-size: 0.76rem; font-weight: 700; gap: 0.35rem; min-width: 0; }
+.rider-payout-filter select, .rider-payout-filter input { background: var(--panel); border: 1px solid #b8c1b6; border-radius: 6px; color: var(--ink); font: inherit; font-size: 0.82rem; font-weight: 400; min-height: 2.65rem; min-width: 0; padding: 0.55rem 0.65rem; width: 100%; }
+.rider-payout-operations-table { min-width: 900px; }
+.rider-payout-operations-table th, .rider-payout-operations-table td { vertical-align: top; }
+.rider-payout-operations-table td small { display: block; }
+.rider-payout-secondary { color: var(--ink-soft); font-size: 0.7rem; margin-top: 0.2rem; }
+.rider-payout-operations-table .seller-inline-action { border-radius: 5px; cursor: pointer; font: inherit; font-size: 0.75rem; min-height: 2.35rem; padding: 0.5rem 0.7rem; white-space: nowrap; }
+.rider-payout-expanded-row > td { background: #f6f7f2; padding: 0.8rem; }
+.rider-payout-expanded { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; display: grid; gap: 1rem; min-width: 0; padding: clamp(0.75rem, 2vw, 1rem); }
+.rider-payout-expanded .rider-payout-record-heading { border-bottom: 1px solid var(--line); padding-bottom: 0.75rem; }
+.rider-payout-audit-list { border-top: 1px solid var(--line); display: grid; gap: 0.55rem; padding-top: 0.8rem; }
+.rider-payout-audit-list h5, .rider-payout-record-form h5 { font: 600 0.88rem Arial, sans-serif; margin: 0; }
+.rider-payout-audit-list > p, .rider-payout-audit-list li { color: var(--ink-soft); font-size: 0.75rem; line-height: 1.45; }
+.rider-payout-audit-list ol { display: grid; gap: 0.55rem; margin: 0; padding-left: 1.2rem; }
+.rider-payout-audit-list li strong { color: var(--ink); display: block; }
+.rider-payout-audit-list li span { display: block; font-size: 0.68rem; }
+.rider-payout-audit-list li p { margin: 0.2rem 0 0; overflow-wrap: anywhere; }
+.rider-payout-record-form { background: #fafbf8; border: 1px solid var(--line); border-radius: 7px; display: grid; gap: 0.75rem; padding: 0.85rem; }
+.rider-payout-record-form > p { color: var(--ink-soft); font-size: 0.76rem; line-height: 1.45; margin: -0.35rem 0 0; }
+.rider-payout-record-form .rider-payout-payment-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.rider-payout-danger-action { background: #8c382e !important; border-color: #8c382e !important; }
+.rider-payout-danger-action:hover:not(:disabled) { background: #70291f !important; }
+.rider-payout-receipt-link { border-radius: 5px; display: inline-flex; font-size: 0.73rem; min-height: 2rem; padding: 0.4rem 0.6rem; text-decoration: none; white-space: nowrap; }
+.rider-cod-remittance .data-table-wrap { max-width: 100%; overflow-x: auto; }
+.rider-cod-remittance .data-table-wrap table { min-width: 1120px; }
 @media (max-width: 640px) {
     .rider-payout-operations { padding: 0.8rem; }
     .rider-payout-operations-heading { align-items: stretch; }
@@ -3121,6 +3156,9 @@ label { display: grid; gap: 0.45rem; }
     .rider-payout-reason-field, .rider-payout-payment-fields .rider-payout-reason-field { grid-column: 1; }
     .rider-payout-settings-actions > button { width: 100%; }
     .rider-payout-record-heading > strong { font-size: 1rem; }
+    .rider-payout-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
+    .rider-payout-tabs .seller-settings-tab { flex: 0 0 auto; white-space: nowrap; }
+    .rider-payout-filter-bar, .rider-payout-filter-bar--recorded, .rider-payout-record-form .rider-payout-payment-fields { grid-template-columns: minmax(0, 1fr); }
 }
 .admin-order-receipt { margin: auto; }
 .seller-order-decision-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; }

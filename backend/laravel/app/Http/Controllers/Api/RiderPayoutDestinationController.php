@@ -9,6 +9,7 @@ use App\Models\RiderPayoutDestination;
 use App\Models\RiderPayoutDestinationHistory;
 use App\Models\User;
 use App\Notifications\CodWorkflowStatusNotification;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -137,10 +138,31 @@ class RiderPayoutDestinationController extends Controller
     public function adminIndex(Request $request): JsonResponse
     {
         $this->requireAdmin($request);
-        $destinations = RiderPayoutDestination::query()
-            ->with(['rider:id,name', 'verifier:id,name', 'histories.actor:id,name'])
+        $filters = $request->validate([
+            'search' => ['nullable', 'string', 'max:120'],
+            'status' => ['nullable', Rule::in(['PENDING_VERIFICATION', 'VERIFIED', 'REJECTED', 'REPLACED'])],
+            'per_page' => ['nullable', 'integer', 'min:5', 'max:50'],
+        ]);
+        $query = RiderPayoutDestination::query()
+            ->with(['rider:id,name', 'verifier:id,name']);
+        if (filled($filters['status'] ?? null)) {
+            $query->where('status', $filters['status']);
+        }
+        if (filled($filters['search'] ?? null)) {
+            $term = trim($filters['search']);
+            $query->where(function (Builder $search) use ($term): void {
+                $search->whereHas('rider', fn (Builder $rider) => $rider->where('name', 'like', '%'.$term.'%'));
+                if (ctype_digit($term)) {
+                    $search->orWhere('rider_id', (int) $term);
+                }
+                $search->orWhere('destination_type', 'like', '%'.$term.'%')
+                    ->orWhere('status', 'like', '%'.$term.'%');
+            });
+        }
+        $destinations = $query
             ->latest('updated_at')
-            ->paginate(20);
+            ->paginate((int) ($filters['per_page'] ?? 10))
+            ->withQueryString();
 
         $destinations->getCollection()->transform(fn (RiderPayoutDestination $destination): array => [
             ...$this->maskedDestination($destination),
@@ -149,15 +171,36 @@ class RiderPayoutDestinationController extends Controller
                 'name' => $destination->rider?->name,
             ],
             'verified_by_name' => $destination->verifier?->name,
-            'verification_history' => $destination->histories->map(fn (RiderPayoutDestinationHistory $history): array => [
-                'action' => $history->action,
-                'actor' => $history->actor?->name,
-                'reason' => $history->reason,
-                'created_at' => $history->created_at?->toISOString(),
-            ])->all(),
         ]);
 
         return response()->json(['destinations' => $destinations])
+            ->header('Cache-Control', 'private, no-store');
+    }
+
+    public function adminShow(Request $request, RiderPayoutDestination $destination): JsonResponse
+    {
+        $this->requireAdmin($request);
+        $destination->load(['rider:id,name', 'verifier:id,name', 'histories.actor:id,name']);
+
+        return response()->json([
+            'destination' => [
+                ...$this->maskedDestination($destination),
+                'rider' => [
+                    'id' => $destination->rider_id,
+                    'name' => $destination->rider?->name,
+                ],
+                'verified_by_name' => $destination->verifier?->name,
+                'verification_history' => $destination->histories
+                    ->sortByDesc('created_at')
+                    ->values()
+                    ->map(fn (RiderPayoutDestinationHistory $history): array => [
+                        'action' => $history->action,
+                        'actor' => $history->actor?->name,
+                        'reason' => $history->reason,
+                        'created_at' => $history->created_at?->toISOString(),
+                ])->all(),
+            ],
+        ])
             ->header('Cache-Control', 'private, no-store');
     }
 

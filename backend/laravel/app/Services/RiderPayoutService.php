@@ -22,9 +22,11 @@ class RiderPayoutService
         string $method,
         string $reason,
         string $paidDate,
+        string $receiptPath,
+        string $receiptMimeType,
         int $amountCents,
     ): RiderPayout {
-        return DB::transaction(function () use ($payout, $admin, $externalReference, $method, $reason, $paidDate, $amountCents): RiderPayout {
+        return DB::transaction(function () use ($payout, $admin, $externalReference, $method, $reason, $paidDate, $receiptPath, $receiptMimeType, $amountCents): RiderPayout {
             abort_unless($admin->role === Role::ADMIN, 403);
             $config = RiderEarningsSetting::query()->lockForUpdate()->find(RiderEarningsSetting::SINGLETON_ID);
             abort_unless($config?->isConfigured(), 503, 'Rider earnings and cap settings must be explicitly configured before payouts can be recorded.');
@@ -62,6 +64,8 @@ class RiderPayoutService
                 'external_reference_hash' => $referenceHash,
                 'reason' => $safeReason,
                 'paid_at' => Carbon::parse($paidDate)->startOfDay(),
+                'receipt_path' => $receiptPath,
+                'receipt_mime_type' => $receiptMimeType,
             ]);
             try {
                 $locked->save();
