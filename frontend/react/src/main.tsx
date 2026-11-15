@@ -64,6 +64,21 @@ function BuyerNavigationIcon({ name }: { name: BuyerTab }) {
     return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
 }
 
+type MarketplaceIconName = 'livestock' | 'categories' | 'top' | 'promotion' | 'new' | 'fresh';
+
+function MarketplaceNavIcon({ name }: { name: MarketplaceIconName }) {
+    const paths: Record<MarketplaceIconName, React.ReactNode> = {
+        livestock: <><path d="M5 8 3 6v5l3 2m13-5 2-2v5l-3 2M6 9c0-2 2-3 6-3s6 1 6 3v6a5 5 0 0 1-5 5h-2a5 5 0 0 1-5-5z" /><path d="m8 6-1-3m9 3 1-3M9 12h.01M15 12h.01M10 16h4" /></>,
+        categories: <><rect x="4" y="4" width="7" height="7" rx="1" /><rect x="13" y="4" width="7" height="7" rx="1" /><rect x="4" y="13" width="7" height="7" rx="1" /><rect x="13" y="13" width="7" height="7" rx="1" /></>,
+        top: <path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3 6.4 20.2l1.1-6.2L3 9.6l6.2-.9L12 3Z" />,
+        promotion: <><path d="M4 5h7l9 9-6 6-10-10V5Z" /><circle cx="8" cy="9" r="1" /></>,
+        new: <><rect x="4" y="3" width="16" height="18" rx="2" /><path d="M8 3V2m8 1V2M8 9h8m-8 4h3m5 1v6m-3-3h6" /></>,
+        fresh: <><path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z" /><path d="m19 15 .8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8Z" /></>,
+    };
+
+    return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
+}
+
 function marketplaceViewFromHash(hash: string): MarketplaceView {
     if (hash === '#top-products') return 'top';
     if (hash === '#new-products') return 'newest';
@@ -1032,10 +1047,10 @@ function FarmgateApp() {
                         : '';
                     return <button type="button" key={item.id} className={buyerTab === item.id ? 'active' : ''} aria-current={buyerTab === item.id ? 'page' : undefined} aria-label={badgeLabel ? `${item.label}, ${badgeLabel}` : item.label} title={badgeLabel ? `${item.label}, ${badgeLabel}` : item.label} onClick={() => navigateBuyerTab(item.id)}><BuyerNavigationIcon name={item.id} /><span className="buyer-nav-label">{item.label}</span><NavigationBadge count={badgeCount} /></button>;
                 })}</nav> : <nav className="quick-promo-nav" aria-label="Marketplace shortcuts">
-                    <a href="#top-products" onClick={(event) => openMarketplaceView(event, 'top')}><span className="quick-promo-icon" aria-hidden="true">✦</span><span>Top Livestock</span></a>
-                    <a href="#promotions" onClick={(event) => openMarketplaceView(event, 'promotions')}><span className="quick-promo-icon" aria-hidden="true">%</span><span>Promotions</span></a>
-                    <a href="#new-products" onClick={(event) => openMarketplaceView(event, 'newest')}><span className="quick-promo-icon" aria-hidden="true">+</span><span>New Livestock Listings</span></a>
-                    <a href="#new-products" onClick={(event) => openMarketplaceView(event, 'newest')}><span className="quick-promo-icon" aria-hidden="true">✳</span><span>Fresh Arrivals</span></a>
+                    <a href="#top-products" onClick={(event) => openMarketplaceView(event, 'top')}><span className="quick-promo-icon"><MarketplaceNavIcon name="top" /></span><span>Top Livestock</span></a>
+                    <a href="#promotions" onClick={(event) => openMarketplaceView(event, 'promotions')}><span className="quick-promo-icon"><MarketplaceNavIcon name="promotion" /></span><span>Promotions</span></a>
+                    <a href="#new-products" onClick={(event) => openMarketplaceView(event, 'newest')}><span className="quick-promo-icon"><MarketplaceNavIcon name="new" /></span><span>New Livestock Listings</span></a>
+                    <a href="#new-products" onClick={(event) => openMarketplaceView(event, 'newest')}><span className="quick-promo-icon"><MarketplaceNavIcon name="fresh" /></span><span>Fresh Arrivals</span></a>
                 </nav>}
             </header>
             {user?.role === 'BUYER' && <BuyerCart open={cartOpen} onClose={() => setCartOpen(false)} onCheckout={() => { setCheckoutBuyNow(null); setCartOpen(false); setCheckoutOpen(true); }} onCartCountChange={setCartCount} onError={reportError} />}
@@ -1075,10 +1090,10 @@ function FarmgateApp() {
                     </div>
                 </section>
                 <nav className="marketplace-shortcuts" aria-label="Marketplace quick access">
-                    <a href="#marketplace" onClick={openMarketplace}><span className="marketplace-shortcut-icon" aria-hidden="true">🐄</span><span>Livestock<small>Explore</small></span></a>
-                    <a href="#marketplace" onClick={openCategories}><span className="marketplace-shortcut-icon" aria-hidden="true">🌾</span><span>Categories<small>Browse</small></span></a>
-                    <a href="#top-products" onClick={(event) => openMarketplaceView(event, 'top')}><span className="marketplace-shortcut-icon" aria-hidden="true">🔥</span><span>Top Livestock<small>Popular</small></span></a>
-                    <a href="#new-products" onClick={(event) => openMarketplaceView(event, 'newest')}><span className="marketplace-shortcut-icon" aria-hidden="true">🆕</span><span>New Livestock Listings<small>Latest</small></span></a>
+                    <a href="#marketplace" onClick={openMarketplace}><span className="marketplace-shortcut-icon"><MarketplaceNavIcon name="livestock" /></span><span>Livestock<small>Explore</small></span></a>
+                    <a href="#marketplace" onClick={openCategories}><span className="marketplace-shortcut-icon"><MarketplaceNavIcon name="categories" /></span><span>Categories<small>Browse</small></span></a>
+                    <a href="#top-products" onClick={(event) => openMarketplaceView(event, 'top')}><span className="marketplace-shortcut-icon"><MarketplaceNavIcon name="top" /></span><span>Top Livestock<small>Popular</small></span></a>
+                    <a href="#new-products" onClick={(event) => openMarketplaceView(event, 'newest')}><span className="marketplace-shortcut-icon"><MarketplaceNavIcon name="new" /></span><span>New Livestock Listings<small>Latest</small></span></a>
                 </nav>
             </div>
             <section className="marketplace" id="marketplace" aria-label="Livestock marketplace">

@@ -78,11 +78,12 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .header-auth, .hero-cta { background: var(--ink); border: 0; color: white; padding: 0.7rem 1rem; }
 .header-auth span, .hero-cta span { color: #f0b48f; margin-left: 0.4rem; }
 
-.quick-promo-nav { align-items: center; border-top: 1px solid var(--line); display: flex; gap: 0.35rem; grid-column: 1 / -1; justify-content: space-between; margin-top: 0.55rem; min-width: 0; overflow-x: auto; padding-top: 0.35rem; scrollbar-width: none; white-space: nowrap; -webkit-overflow-scrolling: touch; }
-.quick-promo-nav::-webkit-scrollbar { display: none; }
-.quick-promo-nav a { align-items: center; border-radius: 3px; color: var(--ink); display: flex; flex: 0 0 auto; font-size: 0.75rem; gap: 0.45rem; min-height: 42px; padding: 0.35rem 0.6rem; text-decoration: none; }
-.quick-promo-nav a:hover, .quick-promo-nav a:focus-visible { background: var(--mint); outline-color: var(--accent); }
-.quick-promo-icon { align-items: center; background: var(--accent-soft); border-radius: 50%; color: var(--accent); display: inline-flex; flex: 0 0 26px; font-size: 0.85rem; font-weight: 800; height: 26px; justify-content: center; }
+.quick-promo-nav { align-items: stretch; border-top: 1px solid var(--line); display: grid; gap: 0.35rem; grid-column: 1 / -1; grid-template-columns: repeat(4, minmax(0, 1fr)); justify-content: stretch; margin-top: 0.55rem; min-width: 0; padding-top: 0.35rem; }
+.quick-promo-nav a { align-items: center; border-radius: 3px; color: var(--ink); display: flex; font-size: 0.75rem; gap: 0.45rem; justify-content: center; min-height: 42px; min-width: 0; overflow-wrap: anywhere; padding: 0.35rem 0.4rem; text-decoration: none; }
+.quick-promo-nav a:hover, .quick-promo-nav a:focus-visible { background: #f5f4ee; color: var(--ink); }
+.quick-promo-nav a:focus-visible { outline: 2px solid currentColor; outline-offset: 1px; }
+.quick-promo-icon { align-items: center; background: transparent; color: var(--ink); display: inline-flex; flex: 0 0 22px; height: 22px; justify-content: center; width: 22px; }
+.quick-promo-icon svg { display: block; height: 20px; width: 20px; }
 .buyer-main-nav { align-items: stretch; border-top: 1px solid var(--line); display: grid; gap: 0.35rem; grid-column: 1 / -1; grid-template-columns: repeat(5, minmax(0, 1fr)); margin-top: 0.55rem; min-width: 0; padding-top: 0.35rem; }
 .buyer-main-nav button { align-items: center; background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--ink-soft); display: flex; font-size: 0.76rem; gap: 0.4rem; justify-content: center; min-height: 44px; min-width: 0; padding: 0.45rem 0.25rem; position: relative; white-space: nowrap; }
 .navigation-badge { align-items: center; background: #a6322a; border-radius: 999px; color: white; display: inline-flex; flex: 0 0 auto; font-size: 0.65rem; font-weight: 800; height: 1.25rem; justify-content: center; line-height: 1; min-width: 1.25rem; padding: 0 0.32rem; }
@@ -672,11 +673,13 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .promo-showcase-card.is-promotion .promo-side-copy .eyebrow { color: #f3c6a8; }
 @keyframes promo-showcase-image-in { from { opacity: 0.6; transform: scale(1.035); } to { opacity: 1; transform: scale(1); } }
 .marketplace-shortcuts { align-items: stretch; background: var(--panel); border: 1px solid var(--line); display: grid; gap: 0.35rem; grid-template-columns: repeat(4, minmax(0, 1fr)); min-width: 0; padding: 0.4rem; }
-.marketplace-shortcuts a { align-items: center; border-radius: 3px; color: var(--ink); display: flex; gap: 0.55rem; justify-content: center; min-height: 56px; min-width: 0; padding: 0.3rem 0.4rem; text-decoration: none; }
-.marketplace-shortcuts a:hover, .marketplace-shortcuts a:focus-visible { background: var(--mint); outline-color: var(--accent); }
-.marketplace-shortcuts a > span:last-child { display: grid; font-size: 0.7rem; font-weight: 700; line-height: 1.1; min-width: 0; white-space: nowrap; }
-.marketplace-shortcuts small { color: var(--ink-soft); font-size: 0.58rem; font-weight: 400; margin-top: 0.2rem; }
-.marketplace-shortcut-icon { align-items: center; background: var(--accent-soft); border-radius: 50%; display: inline-flex; flex: 0 0 34px; font-size: 1.1rem; height: 34px; justify-content: center; }
+.marketplace-shortcuts a { align-items: center; border-radius: 3px; color: var(--ink); display: flex; gap: 0.45rem; justify-content: center; min-height: 56px; min-width: 0; overflow-wrap: anywhere; padding: 0.3rem 0.4rem; text-decoration: none; }
+.marketplace-shortcuts a:hover, .marketplace-shortcuts a:focus-visible { background: #f5f4ee; color: var(--ink); }
+.marketplace-shortcuts a:focus-visible { outline: 2px solid currentColor; outline-offset: 1px; }
+.marketplace-shortcuts a > span:last-child { display: grid; font-size: 0.7rem; font-weight: 700; line-height: 1.1; min-width: 0; white-space: normal; }
+.marketplace-shortcuts small { color: var(--ink-soft); display: block; font-size: 0.58rem; font-weight: 400; margin-top: 0.2rem; }
+.marketplace-shortcut-icon { align-items: center; background: transparent; color: var(--ink); display: inline-flex; flex: 0 0 22px; height: 22px; justify-content: center; width: 22px; }
+.marketplace-shortcut-icon svg { display: block; height: 20px; width: 20px; }
 .intro-copy { color: var(--ink-soft); font-size: 1rem; line-height: 1.65; margin: 1.4rem 0 0; max-width: 38ch; }
 .hero-cta { margin-top: 1.5rem; }
 
@@ -1444,8 +1447,6 @@ label { display: grid; gap: 0.45rem; }
 @media (max-width: 900px) { .listing-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .account-panel { grid-column: 1 / -1; grid-row: auto; } .promo-market-grid { grid-template-columns: minmax(0, 1.7fr) minmax(235px, 1fr); } .promo-main { grid-template-columns: minmax(0, 1fr) minmax(0, 0.78fr); min-height: 285px; } .promo-main-image { min-height: 285px; } .promo-main h1 { font-size: 2.25rem; } .marketplace-shortcuts a { gap: 0.35rem; padding-left: 0.2rem; padding-right: 0.2rem; } .marketplace-shortcut-icon { flex-basis: 30px; font-size: 1rem; height: 30px; } .marketplace-shortcuts a > span:last-child { font-size: 0.64rem; } }
 @media (max-width: 640px) { .app-shell { gap: 2.5rem 1rem; grid-template-columns: minmax(0, 1fr); padding: 1rem 1rem 3rem; } .header-meta { display: none; } .marketplace-top { gap: 0.55rem; margin-top: -1.5rem; } .promo-market-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.55rem; } .promo-main { grid-template-columns: minmax(0, 1.25fr) minmax(108px, 0.75fr); min-height: 224px; } .promo-main-copy { padding: 1rem 0.85rem; } .promo-main .eyebrow { font-size: 0.58rem; letter-spacing: 0.1em; } .promo-main h1 { font-size: 1.65rem; max-width: 8ch; } .promo-main .intro-copy { font-size: 0.72rem; line-height: 1.35; margin-top: 0.55rem; } .promo-main .hero-cta { font-size: 0.67rem; margin-top: 0.7rem; min-height: 38px; padding: 0.5rem 0.6rem; } .promo-main-image { min-height: 224px; } .promo-side-banners { display: flex; min-width: 0; overflow-x: auto; overscroll-behavior-inline: contain; padding-right: 0.35rem; scroll-snap-type: x mandatory; scrollbar-width: none; touch-action: pan-x; -webkit-overflow-scrolling: touch; } .promo-side-banners::-webkit-scrollbar { display: none; } .promo-side-card { flex: 0 0 min(72vw, 260px); min-height: 120px; scroll-snap-align: start; } .marketplace-shortcuts { display: flex; gap: 0.25rem; min-width: 0; overflow-x: auto; overscroll-behavior-inline: contain; padding: 0.3rem 0.35rem; scrollbar-width: none; touch-action: pan-x; -webkit-overflow-scrolling: touch; } .marketplace-shortcuts::-webkit-scrollbar { display: none; } .marketplace-shortcuts a { align-content: center; flex: 0 0 82px; flex-direction: column; gap: 0.2rem; min-height: 68px; padding: 0.25rem; text-align: center; } .marketplace-shortcuts a > span:last-child { font-size: 0.6rem; } .marketplace-shortcuts small { display: none; } .marketplace-shortcut-icon { flex-basis: 30px; font-size: 1rem; height: 30px; } .marketplace-tools, .marketplace-heading, .report-heading { align-items: stretch; flex-direction: column; } .marketplace-tools select { min-width: 0; } .listing-grid { gap: 0.65rem; grid-template-columns: repeat(2, minmax(0, 1fr)); } .listing-card-body { padding: 0.65rem; } .listing-card-body h3 { font-size: 1.05rem; overflow-wrap: anywhere; } .listing-card-body p:not(.eyebrow) { font-size: 0.7rem; } .listing-card-body .eyebrow { font-size: 0.55rem; } .listing-type { bottom: 0.4rem; font-size: 0.55rem; left: 0.4rem; padding: 0.25rem 0.35rem; } .listing-price { align-items: flex-start; flex-direction: column; gap: 0.2rem; margin-top: 0.7rem; } .listing-price strong { font-size: 1.05rem; } .listing-price small { font-size: 0.62rem; } .listing-purchase-actions { gap: 0.3rem; grid-template-columns: 1fr; margin-top: 0.65rem; } .listing-purchase-actions button { font-size: 0.65rem; min-height: 36px; } .feedback-grid, .report-controls, .order-case-forms { grid-template-columns: 1fr; } .refund-admin-actions { grid-template-columns: 1fr; } .listing-skeleton { min-height: 180px; } .auth-modal { padding: 1.5rem; } }
 
-@media (max-width: 900px) { .quick-promo-nav { gap: 0.1rem; justify-content: flex-start; } .quick-promo-nav a { font-size: 0.7rem; gap: 0.3rem; padding-left: 0.35rem; padding-right: 0.35rem; } }
-@media (max-width: 640px) { .quick-promo-nav { min-width: 0; padding-right: 0.35rem; } .quick-promo-nav a { min-height: 42px; } }
 @media (max-width: 640px) {
     .buyer-app-shell { padding-bottom: calc(6rem + env(safe-area-inset-bottom)); }
     .buyer-main-nav { background: var(--panel); border-top: 1px solid var(--line); bottom: 0; box-shadow: 0 -8px 24px rgba(24, 59, 50, 0.08); display: flex; gap: 0; left: 0; margin: 0; overflow: hidden; padding: 0.35rem 0.2rem calc(0.35rem + env(safe-area-inset-bottom)); position: fixed; right: 0; z-index: 20; }
@@ -3270,6 +3271,15 @@ label { display: grid; gap: 0.45rem; }
 .calendar-detail-content dd { margin: 0.2rem 0 0; overflow-wrap: anywhere; }
 .seller-order-modal { max-height: min(90vh, 920px); overflow: hidden; padding: 0; }
 .seller-order-content { min-height: 0; overflow: auto; }
+@media (max-width: 640px) {
+    .quick-promo-nav, .marketplace-shortcuts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .quick-promo-nav { justify-content: stretch; }
+    .marketplace-shortcuts { display: grid; overflow: visible; touch-action: auto; }
+    .quick-promo-nav a, .marketplace-shortcuts a { flex-direction: row; min-height: 56px; }
+    .marketplace-shortcut-icon { flex-basis: 22px; height: 22px; }
+    .marketplace-shortcuts a > span:last-child { overflow-wrap: anywhere; white-space: normal; }
+    .marketplace-shortcuts small { display: block; }
+}
 @media (max-width: 640px) {
     .farmgate-detail-backdrop { align-items: stretch; padding: 0.4rem; }
     .farmgate-detail-dialog { border-radius: 8px; max-height: none; width: 100%; }
