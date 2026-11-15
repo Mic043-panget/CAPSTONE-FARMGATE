@@ -16,6 +16,7 @@ class DeliveryVerificationService
     public function __construct(
         private readonly SystemSettingsService $settings,
         private readonly OrderWorkflowService $orders,
+        private readonly RiderEarningsService $riderEarnings,
     ) {}
 
     /**
@@ -175,11 +176,22 @@ class DeliveryVerificationService
             $completedByDelivery = $purpose === 'delivery'
                 && $order->status === OrderStatus::FULFILLING;
             if ($completedByDelivery) {
-                $this->orders->completeAfterVerifiedDelivery(
-                    $order,
-                    $rider,
-                    'DELIVERY_QR_VERIFIED at '.number_format((float) $verificationLatitude, 7, '.', '').','.number_format((float) $verificationLongitude, 7, '.', ''),
-                );
+                if ($order->payment_method === 'COD' || $order->payment_status === 'PAID') {
+                    $this->orders->completeAfterVerifiedDelivery(
+                        $order,
+                        $rider,
+                        'DELIVERY_QR_VERIFIED at '.number_format((float) $verificationLatitude, 7, '.', '').','.number_format((float) $verificationLongitude, 7, '.', ''),
+                    );
+                } else {
+                    $order->statusHistory()->create([
+                        'changed_by' => $rider->id,
+                        'from_status' => $order->status->value,
+                        'to_status' => $order->status->value,
+                        'reason' => 'DELIVERY_QR_VERIFIED; order completion remains separate from payment status.',
+                        'created_at' => now(),
+                    ]);
+                }
+                $this->riderEarnings->recordCompletedDelivery($locked);
             } else {
                 $order->statusHistory()->create([
                     'changed_by' => $rider->id,

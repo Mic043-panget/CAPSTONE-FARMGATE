@@ -37,6 +37,7 @@ use App\Http\Controllers\Api\ReportController;
 use App\Http\Controllers\Api\Rider\DashboardController as RiderDashboardController;
 use App\Http\Controllers\Api\RiderApplicationController;
 use App\Http\Controllers\Api\RiderController;
+use App\Http\Controllers\Api\RiderPayoutController;
 use App\Http\Controllers\Api\Seller\ComplaintController as SellerComplaintController;
 use App\Http\Controllers\Api\Seller\DashboardController as SellerDashboardController;
 use App\Http\Controllers\Api\Seller\ProfileController as SellerProfileController;
@@ -90,6 +91,9 @@ Route::middleware(MaintenanceMode::class)->group(function (): void {
         Route::middleware('auth:sanctum')->group(function (): void {
             Route::get('/auth/user', [AuthController::class, 'user']);
             Route::get('/rider/application', [RiderApplicationController::class, 'show']);
+            Route::get('/rider/earnings', [RiderPayoutController::class, 'earnings'])->middleware(EnsureApprovedRider::class);
+            Route::get('/rider/payout-destination', [RiderPayoutController::class, 'showDestination'])->middleware(EnsureApprovedRider::class);
+            Route::put('/rider/payout-destination', [RiderPayoutController::class, 'saveDestination'])->middleware(['throttle:5,1', EnsureApprovedRider::class]);
             Route::post('/rider/application/draft', [RiderApplicationController::class, 'saveDraft'])->middleware('throttle:10,1');
             Route::post('/rider/application/submit', [RiderApplicationController::class, 'submit'])->middleware('throttle:10,1');
             Route::post('/rider/vehicle-change', [RiderApplicationController::class, 'vehicleChange'])->middleware('throttle:10,1');
@@ -168,6 +172,19 @@ Route::middleware(MaintenanceMode::class)->group(function (): void {
             Route::post('/admin/cod/receiving-methods/{method}/deactivate', [CodReceivingMethodController::class, 'deactivate'])->middleware('throttle:10,1');
             Route::post('/admin/cod/receiving-methods/{method}/enable', [CodReceivingMethodController::class, 'enable'])->middleware('throttle:10,1');
             Route::get('/admin/seller-payouts', [CodRemittanceController::class, 'adminPayouts']);
+            Route::get('/admin/rider-payouts', [RiderPayoutController::class, 'adminPayouts']);
+            Route::post('/admin/rider-payouts', [RiderPayoutController::class, 'createPayout'])->middleware('throttle:10,1');
+            Route::post('/admin/rider-payouts/{payout}/status', [RiderPayoutController::class, 'updatePayoutStatus'])->middleware('throttle:10,1');
+            Route::post('/admin/rider-payouts/{payout}/manual-confirm', [RiderPayoutController::class, 'confirmManualTransfer'])->middleware('throttle:5,1');
+            Route::get('/admin/rider-earnings', [RiderPayoutController::class, 'adminEarnings']);
+            Route::post('/admin/rider-earnings/{earning}/adjustment', [RiderPayoutController::class, 'adjustEarning'])->middleware('throttle:10,1');
+            Route::post('/admin/rider-earnings/{earning}/review', [RiderPayoutController::class, 'reviewEarning'])->middleware('throttle:10,1');
+            Route::get('/admin/rider-payout-destinations', [RiderPayoutController::class, 'adminDestinations']);
+            Route::post('/admin/rider-payout-destinations/{destination}/verify', [RiderPayoutController::class, 'verifyDestination'])->middleware('throttle:10,1');
+            Route::get('/admin/rider-payout-methods', [RiderPayoutController::class, 'adminMethods']);
+            Route::post('/admin/rider-payout-methods', [RiderPayoutController::class, 'configureMethod'])->middleware('throttle:10,1');
+            Route::post('/admin/rider-payout-methods/{method}/verify', [RiderPayoutController::class, 'verifyMethod'])->middleware('throttle:10,1');
+            Route::get('/rider-payouts/{payout}/receipt', [RiderPayoutController::class, 'receipt'])->middleware('throttle:30,1')->name('rider-payouts.receipt');
             Route::post('/admin/orders/{order}/seller-payout', [CodRemittanceController::class, 'payout'])->middleware('throttle:10,1');
             Route::post('/admin/seller-payouts/{payout}/manual-confirm', [CodRemittanceController::class, 'confirmManualPayout'])->middleware('throttle:10,1');
             Route::post('/admin/seller-payouts/{payout}/status', [CodRemittanceController::class, 'updatePayoutStatus'])->middleware('throttle:10,1');

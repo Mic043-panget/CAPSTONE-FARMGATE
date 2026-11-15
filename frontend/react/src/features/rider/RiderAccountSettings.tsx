@@ -3,7 +3,18 @@ import api, { initializeCsrf } from '../../lib/api';
 import { confirmAction, showSuccess } from '../../lib/alerts';
 import type { User } from '../../shared/types';
 
-type SettingsTab = 'profile' | 'password' | 'delivery' | 'vehicle' | 'notifications' | 'location';
+type SettingsTab = 'profile' | 'password' | 'delivery' | 'vehicle' | 'payout' | 'notifications' | 'location';
+type PayoutMethod = { method_type: 'BANK' | 'GCASH'; status: string };
+type PayoutDestination = {
+    id: number;
+    destination_type: 'BANK' | 'GCASH';
+    account_holder_masked: string;
+    bank_name_masked: string | null;
+    account_number_masked: string | null;
+    wallet_number_masked: string | null;
+    status: string;
+    verified_at: string | null;
+};
 type RiderSettings = {
     availability: 'AVAILABLE' | 'OFFLINE';
     vehicle_type: string | null;
@@ -41,6 +52,7 @@ const tabs: { id: SettingsTab; label: string }[] = [
     { id: 'password', label: 'Password' },
     { id: 'delivery', label: 'Delivery preferences' },
     { id: 'vehicle', label: 'Vehicle information' },
+    { id: 'payout', label: 'Payout destination' },
     { id: 'notifications', label: 'Notifications' },
     { id: 'location', label: 'Location permissions' },
 ];
@@ -74,6 +86,15 @@ export function RiderAccountSettings({ user, onUserUpdated, onError }: {
     const [passwordConfirmation, setPasswordConfirmation] = React.useState('');
     const [photoBusy, setPhotoBusy] = React.useState(false);
     const [settings, setSettings] = React.useState<RiderSettings | null>(null);
+    const [payoutDestination, setPayoutDestination] = React.useState<PayoutDestination | null>(null);
+    const [payoutMethods, setPayoutMethods] = React.useState<PayoutMethod[]>([]);
+    const [payoutType, setPayoutType] = React.useState<'BANK' | 'GCASH'>('BANK');
+    const [payoutHolder, setPayoutHolder] = React.useState('');
+    const [payoutBank, setPayoutBank] = React.useState('');
+    const [payoutAccount, setPayoutAccount] = React.useState('');
+    const [payoutWallet, setPayoutWallet] = React.useState('');
+    const [payoutPassword, setPayoutPassword] = React.useState('');
+    const [payoutBusy, setPayoutBusy] = React.useState(false);
     const [settingsBusy, setSettingsBusy] = React.useState(false);
     const [vehicleFields, setVehicleFields] = React.useState<VehicleChangeFields>({
         plate_number: '', vehicle_type: '', vehicle_make_model: '', vehicle_color: '',
@@ -99,9 +120,10 @@ export function RiderAccountSettings({ user, onUserUpdated, onError }: {
     const refreshSettings = React.useCallback(async () => {
         setLoading(true);
         try {
-            const [riderResponse, accountResponse] = await Promise.all([
+            const [riderResponse, accountResponse, payoutResponse] = await Promise.all([
                 api.get<{ settings: RiderSettings }>('/api/riders/settings'),
                 api.get<{ preferences: AccountPreferences }>('/api/profile/settings'),
+                api.get<{ destination: PayoutDestination | null; methods: PayoutMethod[] }>('/api/rider/payout-destination'),
             ]);
             setSettings(riderResponse.data.settings);
             setVehicleFields({
@@ -113,6 +135,8 @@ export function RiderAccountSettings({ user, onUserUpdated, onError }: {
                 vehicle_registration_expires_on: riderResponse.data.settings.vehicle_registration_expires_on ?? '',
             });
             setPreferences({ ...defaultPreferences, ...accountResponse.data.preferences });
+            setPayoutDestination(payoutResponse.data.destination);
+            setPayoutMethods(payoutResponse.data.methods);
         } catch (requestError: any) {
             onError(errorMessage(requestError, 'Rider account settings could not be loaded.'));
         } finally {
@@ -329,6 +353,35 @@ export function RiderAccountSettings({ user, onUserUpdated, onError }: {
         return selected;
     }
 
+    async function savePayoutDestination(event: React.FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+        if (payoutBusy || !payoutMethods.some((method) => method.method_type === payoutType && method.status === 'ACTIVE')) return;
+        setPayoutBusy(true);
+        setNotice('');
+        try {
+            await initializeCsrf();
+            const response = await api.put<{ message: string; destination: PayoutDestination }>('/api/rider/payout-destination', {
+                current_password: payoutPassword,
+                destination_type: payoutType,
+                account_holder: payoutHolder.trim(),
+                ...(payoutType === 'BANK'
+                    ? { bank_name: payoutBank.trim(), account_number: payoutAccount.trim() }
+                    : { wallet_number: payoutWallet.trim() }),
+            });
+            setPayoutDestination(response.data.destination);
+            setPayoutPassword('');
+            setPayoutHolder('');
+            setPayoutBank('');
+            setPayoutAccount('');
+            setPayoutWallet('');
+            setNotice(response.data.message);
+        } catch (requestError: any) {
+            onError(errorMessage(requestError, 'Payout destination could not be saved.'));
+        } finally {
+            setPayoutBusy(false);
+        }
+    }
+
     async function changeAvailability(availability: RiderSettings['availability']) {
         if (!settings || settings.availability === availability || settingsBusy) return;
         const confirmed = await confirmAction({
@@ -479,6 +532,30 @@ export function RiderAccountSettings({ user, onUserUpdated, onError }: {
                             : <button className="seller-inline-action" type="button" disabled={settingsBusy || !settings?.is_verified} onClick={() => void changeAvailability('AVAILABLE')}>{settingsBusy ? 'Saving…' : 'Go available'}</button>}
                     </div>
                 </div>
+            </section>
+            <section className="seller-settings-section rider-settings-panel" id="rider-settings-panel-payout" role="tabpanel" aria-labelledby="rider-settings-tab-payout" hidden={tab !== 'payout'} tabIndex={-1}>
+                <div className="seller-work-heading"><div><p className="eyebrow">Private payment details</p><h3>Rider payout destination</h3></div></div>
+                <p>Only bank and GCash methods explicitly configured and verified by two administrators are available. Your details are encrypted at rest and shown masked after saving. A second administrator must verify a new or changed destination before it can receive a payout.</p>
+                {payoutDestination && <div className="rider-availability-card">
+                    <div><strong>{payoutDestination.destination_type} · {payoutDestination.account_holder_masked}</strong>
+                        <p>{[payoutDestination.bank_name_masked, payoutDestination.account_number_masked ?? payoutDestination.wallet_number_masked].filter(Boolean).join(' · ')} · {payoutDestination.status.replaceAll('_', ' ')}</p>
+                        {payoutDestination.verified_at && <small>Verified {new Date(payoutDestination.verified_at).toLocaleDateString()}</small>}
+                    </div>
+                </div>}
+                {payoutMethods.length === 0 ? <p className="rider-settings-notice" role="status">No payout destination method is currently enabled. Ask Farmgate administration to configure and verify a bank or GCash method.</p>
+                    : <form className="seller-account-form rider-profile-form" onSubmit={(event) => void savePayoutDestination(event)}>
+                        <label>Destination type<select required value={payoutType} onChange={(event) => setPayoutType(event.target.value as 'BANK' | 'GCASH')}>
+                            {payoutMethods.map((method) => <option key={method.method_type} value={method.method_type}>{method.method_type === 'GCASH' ? 'GCash e-wallet' : 'Bank account'}</option>)}
+                        </select></label>
+                        <label>Account holder name<input required minLength={2} maxLength={120} autoComplete="name" value={payoutHolder} onChange={(event) => setPayoutHolder(event.target.value)} /></label>
+                        {payoutType === 'BANK' ? <>
+                            <label>Bank name<input required minLength={2} maxLength={100} autoComplete="off" value={payoutBank} onChange={(event) => setPayoutBank(event.target.value)} /></label>
+                            <label>Bank account number<input required minLength={4} maxLength={40} autoComplete="off" value={payoutAccount} onChange={(event) => setPayoutAccount(event.target.value)} /></label>
+                        </> : <label>GCash mobile number<input required type="tel" inputMode="tel" autoComplete="off" pattern="\+?[0-9][0-9 -]{6,19}" value={payoutWallet} onChange={(event) => setPayoutWallet(event.target.value)} /></label>}
+                        <label>Current password<input type="password" autoComplete="current-password" required value={payoutPassword} onChange={(event) => setPayoutPassword(event.target.value)} /></label>
+                        <p className="rider-settings-field-note">Saving or changing details resets verification. Changes are blocked while a payout is pending or processing. Farmgate does not initiate transfers; admins record external payments only after independent confirmation.</p>
+                        <button className="seller-inline-action" type="submit" disabled={payoutBusy || !payoutMethods.some((method) => method.method_type === payoutType && method.status === 'ACTIVE')}>{payoutBusy ? 'Saving destination…' : payoutDestination ? 'Update payout destination' : 'Save payout destination'}</button>
+                    </form>}
             </section>
             <section className="seller-settings-section rider-settings-panel" id="rider-settings-panel-vehicle" role="tabpanel" aria-labelledby="rider-settings-tab-vehicle" hidden={tab !== 'vehicle'} tabIndex={-1}>
                 <div className="seller-work-heading"><div><p className="eyebrow">Admin-reviewed change</p><h3>Vehicle information</h3></div></div>

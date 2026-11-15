@@ -15,10 +15,11 @@ import { confirmAction } from '../../lib/alerts';
 import type { User } from '../../shared/types';
 import { SystemCalendar } from '../shared/SystemCalendar';
 import { LoadingSkeleton } from '../../shared/components/LoadingSkeleton';
+import { RiderEarningsPage } from './RiderEarningsPage';
 
 const NearbyOrdersMap = React.lazy(() => import('./NearbyOrdersMap').then((module) => ({ default: module.NearbyOrdersMap })));
 
-type RiderPage = 'dashboard' | 'deliveries' | 'events' | 'chats' | 'reports' | 'notifications' | 'account';
+type RiderPage = 'dashboard' | 'deliveries' | 'earnings' | 'events' | 'chats' | 'reports' | 'notifications' | 'account';
 type RiderDeliveryTab = 'nearby' | 'assigned' | 'scanner' | 'history';
 type RiderSummary = {
     availability: string;
@@ -97,6 +98,7 @@ const riderStatuses = ['RIDER_ACCEPTED', 'PICKUP_PENDING', 'PICKED_UP', 'IN_TRAN
 const navigation: { id: RiderPage; label: string; icon: string }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: '◈' },
     { id: 'deliveries', label: 'Deliveries', icon: '▣' },
+    { id: 'earnings', label: 'Earnings', icon: '₱' },
     { id: 'events', label: 'Events', icon: '◷' },
     { id: 'chats', label: 'Chats', icon: '✦' },
     { id: 'reports', label: 'Reports', icon: '▥' },
@@ -1384,6 +1386,7 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
                 </section>}
                 {deliveryTab === 'history' && <ReportPanel role="RIDER" onError={onError} title="Delivery History" hideTypeSelector />}
             </section>}
+            {page === 'earnings' && <RiderEarningsPage onError={onError} />}
             {page === 'chats' && <AIChatPage role="RIDER" initialConversationId={activeConversationId} onBack={() => setPage('dashboard')} />}
             {page === 'reports' && <ReportPanel role="RIDER" onError={onError} />}
             {page === 'events' && <SystemCalendar role="RIDER" onError={onError} onOpenDelivery={(_, orderReference) => openRiderDeliveries(orderReference ?? '')} />}
