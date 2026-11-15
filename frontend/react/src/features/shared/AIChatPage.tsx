@@ -195,6 +195,10 @@ function conversationLabel(conversation: ChatConversation): string {
     return conversation.title || 'New AI conversation';
 }
 
+function conversationInitials(name: string): string {
+    return name.trim().split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0].toUpperCase()).join('') || 'FG';
+}
+
 export function AIChatPage({ role, reportContext: incomingReport, onBack, initialConversationId, onUnreadMessagesRead, orderId, onOpenOrder }: {
     role: UserRole;
     reportContext?: ChatReportContext | null;
@@ -556,30 +560,49 @@ export function AIChatPage({ role, reportContext: incomingReport, onBack, initia
     }
 
     const selectedAI = selected?.kind === 'ai';
+    const selectedPeer = selected?.kind === 'direct' ? selected.peer : null;
+    const threadTitle = mode === 'direct' ? selectedPeer?.name ?? 'New message' : selected?.title || 'FARMGATE AI';
 
     return <section className="ai-chat-page" aria-label="FARMGATE conversations">
         <aside className="ai-chat-sidebar">
-            <div className="ai-chat-sidebar-heading"><h2>Conversations</h2></div>
+            <div className="ai-chat-sidebar-heading"><h2>Messages</h2></div>
             <div className="chat-start-actions">
                 <button type="button" onClick={startNewAIChat}>New AI chat</button>
                 <button type="button" onClick={startDirectDraft}>New message</button>
             </div>
-            {selectedAI && <button type="button" className="ai-chat-delete" onClick={() => void deleteConversation(selected)}>Delete selected AI chat</button>}
             {loadingHistory ? <p className="ai-chat-history-note">Loading history...</p> : conversations.length ? <nav aria-label="Chat history" tabIndex={0}>
                 {conversations.map((conversation) => <button type="button" key={conversation.id} className={conversation.id === selected?.id ? 'active' : ''} onClick={() => void openConversation(conversation.id)}>
-                    <strong>{conversationLabel(conversation)}</strong>
-                    <small>{conversation.kind === 'direct' ? `${conversation.peer?.role ?? 'Direct message'} · ` : 'FARMGATE AI · '}{new Date(conversation.updated_at).toLocaleDateString()}</small>
-                    {conversation.unread && <span className="ai-chat-unread" aria-label="Unread messages">Unread</span>}
+                    <span className={`ai-chat-conversation-avatar${conversation.kind === 'ai' ? ' ai' : ''}`} aria-hidden="true">
+                        {conversation.kind === 'ai' ? 'AI' : conversationInitials(conversationLabel(conversation))}
+                    </span>
+                    <span className="ai-chat-conversation-copy">
+                        <strong>{conversationLabel(conversation)}</strong>
+                        <small>{conversation.kind === 'direct' ? `${conversation.peer?.role ?? 'Direct message'} · ` : 'FARMGATE AI · '}{new Date(conversation.updated_at).toLocaleDateString()}</small>
+                        {conversation.unread && <span className="ai-chat-unread" aria-label="Unread messages">Unread</span>}
+                    </span>
                 </button>)}
             </nav> : <p className="ai-chat-history-note">Saved AI and direct conversations will appear here.</p>}
         </aside>
         <div className="ai-chat-panel">
-            <header className="ai-chat-header"><div>
-                {onBack && <button type="button" className="ai-chat-back" onClick={onBack}>← Delivery dashboard</button>}
-                <p className="eyebrow">FARMGATE · {role}</p>
-                <h1>Chats</h1>
-                <p>{mode === 'direct' && selected?.peer ? `Direct conversation with ${selected.peer.name}.` : 'One place for direct messages and your saved FARMGATE AI conversations.'}</p>
-            </div>{report && selectedAI && <button type="button" className="ai-chat-clear-context" onClick={() => void clearReportContext()}>Clear report context</button>}</header>
+            <header className="ai-chat-header">
+                <div className="ai-chat-header-identity">
+                    <span className={`ai-chat-header-avatar${mode === 'ai' ? ' ai' : ''}`} aria-hidden="true">
+                        {mode === 'direct' ? conversationInitials(selectedPeer?.name ?? 'Direct message') : 'AI'}
+                    </span>
+                    <div className="ai-chat-header-copy">
+                        {onBack && <button type="button" className="ai-chat-back" onClick={onBack}>← Delivery dashboard</button>}
+                        <p className="eyebrow">{mode === 'direct' ? selectedPeer?.role ?? 'DIRECT MESSAGE' : `FARMGATE · ${role}`}</p>
+                        <h1>{threadTitle}</h1>
+                        <p>{mode === 'direct'
+                            ? selectedPeer ? 'Direct conversation' : 'Choose a conversation or find someone to message.'
+                            : selected?.title ? 'Saved FARMGATE AI conversation' : 'Ask FARMGATE AI about Farmgate.'}</p>
+                    </div>
+                </div>
+                {selectedAI && <div className="ai-chat-header-actions">
+                    <button type="button" className="ai-chat-delete" onClick={() => void deleteConversation(selected)}>Delete chat</button>
+                    {report && <button type="button" className="ai-chat-clear-context" onClick={() => void clearReportContext()}>Clear report context</button>}
+                </div>}
+            </header>
             <div className="ai-chat-contexts">
             {orderId && <aside className="ai-chat-order-context" aria-label="Order being discussed">
                 {orderContextLoading ? <p role="status">Loading order context...</p> : orderContext ? <>
