@@ -205,46 +205,71 @@ export function RiderPayoutOperations({ onError }: { onError: (message: string) 
     const isConfigured = settingConfigured;
 
     return <section className="payments-settings-card rider-payout-operations" aria-labelledby="rider-payout-operations-title">
-        <div className="payments-section-heading">
-            <div><h3 id="rider-payout-operations-title">Rider earnings and payouts</h3><p>Configure audited rates, review per-delivery amounts, and record only transfers already completed outside Farmgate.</p></div>
-            <span className={`status-pill${isConfigured ? ' status-active' : ''}`}>{isConfigured ? 'Configured' : 'Not configured'}</span>
-        </div>
-        {loading ? <p role="status">Loading rider payout settings…</p> : <>
-            <div className="payments-blocked-card" role="status">
-                {!isConfigured
-                    ? <p>Rider earnings and payouts are blocked until an authorized admin saves both a percentage and an explicit cap option. No rate or cap was seeded.</p>
-                    : <p>Configuration saved by {setting?.updater?.name ?? 'an authorized admin'} on {setting?.updated_at ? new Date(setting.updated_at).toLocaleString() : '—'}. Each later delivery uses its own immutable settings snapshot.</p>}
-                <p>The existing legacy maximum-compensation setting is not used. A cap applies only after this screen explicitly saves its amount and scope.</p>
+        <header className="rider-payout-operations-heading">
+            <div>
+                <p className="eyebrow">Admin · Payments</p>
+                <h3 id="rider-payout-operations-title">Rider earnings &amp; payouts</h3>
+                <p>Set an auditable per-delivery rate, then reconcile external transfers only after payment is complete.</p>
             </div>
-            <form className="settings-grid" onSubmit={(event) => void saveSettings(event)} aria-busy={saving}>
-                <label className="settings-field">Rider earnings percentage
-                    <span><input type="number" min="0" max="100" step="0.01" required value={percentage} onChange={(event) => setPercentage(event.target.value)} /> %</span>
-                </label>
-                <label className="settings-field">Maximum-compensation cap
-                    <select value={capScope} onChange={(event) => {
-                        setCapScope(event.target.value);
-                        if (event.target.value === 'NO_CAP') setCapAmount('');
-                    }}>
-                        <option value="">Choose an option</option>
-                        <option value="NO_CAP">No cap</option>
-                        <option value="PER_DELIVERY">Cap per delivery</option>
-                        <option value="PER_PAYOUT">Cap per payout</option>
-                    </select>
-                </label>
-                {capScope !== 'NO_CAP' && <label className="settings-field">Cap amount (PHP)
-                    <input type="number" min="0.01" step="0.01" required value={capAmount} onChange={(event) => setCapAmount(event.target.value)} />
-                </label>}
-                {capScope === 'PER_PAYOUT' && <p className="payments-inline-note">Payouts are per delivery, so this cap applies to each single-delivery payout.</p>}
-                <label className="settings-reason">Reason for this earnings and cap configuration (required)
-                    <input minLength={8} maxLength={255} required value={settingReason} onChange={(event) => setSettingReason(event.target.value)} />
-                </label>
-                <div className="settings-actions"><button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save rider earnings settings'}</button>{success && <span className="settings-success" role="status">{success}</span>}</div>
-            </form>
+            <span className={`rider-payout-config-state${isConfigured ? ' is-configured' : ''}`} role="status">
+                <span className="rider-payout-config-indicator" aria-hidden="true" />
+                {isConfigured ? 'Configured' : 'Not configured'}
+            </span>
+        </header>
+        {loading ? <p role="status">Loading rider payout settings…</p> : <>
+            <div className={`rider-payout-config-notice${isConfigured ? ' is-configured' : ''}`} role="status">
+                <strong>{isConfigured ? 'Earnings are enabled' : 'Payouts are disabled'}</strong>
+                {!isConfigured
+                    ? <p>Save a percentage and an explicit cap option to enable rider earnings. No default rate or cap is applied.</p>
+                    : <p>Saved by {setting?.updater?.name ?? 'an authorized admin'} on {setting?.updated_at ? new Date(setting.updated_at).toLocaleString() : '—'}. New deliveries use a frozen copy of these settings.</p>}
+                <small>The legacy maximum-compensation setting is not used here.</small>
+            </div>
 
-            <section aria-labelledby="rider-earnings-history-title">
-                <h4 id="rider-earnings-history-title">Configuration audit history</h4>
-                {history.length === 0 ? <p className="admin-empty">No rider earnings settings have been saved.</p>
-                    : <div className="data-table-wrap"><table><thead><tr><th>Changed by</th><th>Percentage</th><th>Cap</th><th>Reason</th><th>Time</th></tr></thead><tbody>
+            <section className="rider-payout-subsection" aria-labelledby="rider-earnings-settings-title">
+                <div className="rider-payout-subsection-heading">
+                    <div><h4 id="rider-earnings-settings-title">Earnings rules</h4><p>Changes apply to future deliveries; saved earnings are never repriced.</p></div>
+                </div>
+                <form className="rider-earnings-settings-form" onSubmit={(event) => void saveSettings(event)} aria-busy={saving}>
+                    <div className="rider-earnings-settings-fields">
+                        <label className="rider-payout-field">Rider earnings percentage
+                            <span className="rider-payout-percentage-control"><input type="number" min="0" max="100" step="0.01" required value={percentage} onChange={(event) => setPercentage(event.target.value)} /><span aria-hidden="true">%</span></span>
+                            <small>Applied to the delivery fee saved on each order.</small>
+                        </label>
+                        <label className="rider-payout-field">Maximum-compensation cap
+                            <select value={capScope} onChange={(event) => {
+                                setCapScope(event.target.value);
+                                if (event.target.value === 'NO_CAP') setCapAmount('');
+                            }}>
+                                <option value="">Choose an option</option>
+                                <option value="NO_CAP">No cap</option>
+                                <option value="PER_DELIVERY">Cap per delivery</option>
+                                <option value="PER_PAYOUT">Cap per payout</option>
+                            </select>
+                            <small>Choose explicitly; a blank value does not mean no cap.</small>
+                        </label>
+                        {capScope !== 'NO_CAP' && <label className="rider-payout-field">Cap amount (PHP)
+                            <input type="number" min="0.01" step="0.01" required value={capAmount} onChange={(event) => setCapAmount(event.target.value)} />
+                            <small>Enter the maximum compensation amount.</small>
+                        </label>}
+                        {capScope === 'PER_PAYOUT' && <p className="payments-inline-note rider-payout-cap-note">Payouts are per delivery, so this cap applies to each individual delivery payout.</p>}
+                        <label className="rider-payout-field rider-payout-reason-field">Reason for this configuration
+                            <textarea minLength={8} maxLength={255} required value={settingReason} onChange={(event) => setSettingReason(event.target.value)} placeholder="Explain why this rate and cap are being set." />
+                            <small>Required for the audit history (at least 8 characters).</small>
+                        </label>
+                    </div>
+                    <div className="rider-payout-settings-actions">
+                        <button type="submit" disabled={saving}>{saving ? 'Saving settings…' : 'Save earnings rules'}</button>
+                        {success && <p className="rider-payout-success" role="status">{success}</p>}
+                    </div>
+                </form>
+            </section>
+
+            <section className="rider-payout-subsection" aria-labelledby="rider-earnings-history-title">
+                <div className="rider-payout-subsection-heading">
+                    <div><h4 id="rider-earnings-history-title">Configuration history</h4><p>Audited changes to the rider earnings rate and cap.</p></div>
+                </div>
+                {history.length === 0 ? <div className="payments-empty-state rider-payout-empty-state"><strong>No configuration changes yet</strong><span>When an administrator saves earnings rules, the change and reason will appear here.</span></div>
+                    : <div className="data-table-wrap rider-payout-history-table-wrap"><table><thead><tr><th>Changed by</th><th>Percentage</th><th>Cap</th><th>Reason</th><th>Time</th></tr></thead><tbody>
                         {history.map((item) => <tr key={item.id}>
                             <td>{item.actor?.name ?? '—'}</td>
                             <td>{item.old_percentage === null ? 'Not configured' : `${item.old_percentage}%`} → {item.new_percentage}%</td>
@@ -255,9 +280,12 @@ export function RiderPayoutOperations({ onError }: { onError: (message: string) 
                     </tbody></table></div>}
             </section>
 
-            <section aria-labelledby="rider-payout-queue-title">
-                <div className="payments-section-heading"><div><h4 id="rider-payout-queue-title">Pending manual payouts</h4><p>These are records only. Confirm payment after the external transfer has actually completed.</p></div></div>
-                {queueRows.length === 0 ? <p className="admin-empty">No pending rider payouts.</p> : queueRows.map((payout) => {
+            <section className="rider-payout-subsection" aria-labelledby="rider-payout-queue-title">
+                <div className="rider-payout-subsection-heading">
+                    <div><h4 id="rider-payout-queue-title">Pending manual payouts</h4><p>Record a payout only after independently confirming the external transfer is complete.</p></div>
+                    <span className="rider-payout-count">{pendingPayouts?.total ?? 0} pending</span>
+                </div>
+                {queueRows.length === 0 ? <div className="payments-empty-state rider-payout-empty-state"><strong>No pending payouts</strong><span>Eligible delivery payouts will appear here for reconciliation.</span></div> : queueRows.map((payout) => {
                     const form = payoutForms[payout.id] ?? {
                         amount: (payout.amount_cents / 100).toFixed(2),
                         method: 'BANK_TRANSFER',
@@ -266,29 +294,34 @@ export function RiderPayoutOperations({ onError }: { onError: (message: string) 
                         reason: '',
                         externallyCompleted: false,
                     };
-                    return <article className="payments-settings-card" key={payout.id}>
-                        <h5>{payout.earning.order.order_reference} · {payout.earning.delivery.delivery_reference}</h5>
-                        <p>{payout.rider.name} · {money(payout.amount_cents)} · {payout.earning.percentage_snapshot}% of saved delivery fee</p>
-                        <div className="settings-grid">
-                            <label>Amount (PHP)<input type="number" min="0.01" step="0.01" value={form.amount} onChange={(event) => updatePayoutForm(payout, { amount: event.target.value })} /></label>
-                            <label>Method<select value={form.method} onChange={(event) => updatePayoutForm(payout, { method: event.target.value })}>
+                    return <article className="rider-payout-record" key={payout.id}>
+                        <div className="rider-payout-record-heading">
+                            <div><p className="eyebrow">Delivery payout</p><h5>{payout.earning.delivery.delivery_reference}</h5><p>Order {payout.earning.order.order_reference} · {payout.rider.name}</p></div>
+                            <strong>{money(payout.amount_cents)}</strong>
+                        </div>
+                        <p className="rider-payout-record-rate">{payout.earning.percentage_snapshot}% of saved delivery fee</p>
+                        <div className="rider-payout-payment-fields">
+                            <label className="rider-payout-field">Amount (PHP)<input type="number" min="0.01" step="0.01" value={form.amount} onChange={(event) => updatePayoutForm(payout, { amount: event.target.value })} /><small>Must match the payout amount exactly.</small></label>
+                            <label className="rider-payout-field">Method<select value={form.method} onChange={(event) => updatePayoutForm(payout, { method: event.target.value })}>
                                 <option value="BANK_TRANSFER">Bank transfer</option><option value="GCASH">GCash</option><option value="CASH">Cash</option><option value="OTHER">Other</option>
                             </select></label>
-                            <label>External transfer reference<input value={form.externalReference} onChange={(event) => updatePayoutForm(payout, { externalReference: event.target.value })} /></label>
-                            <label>Transfer date<input type="date" value={form.paidAt} onChange={(event) => updatePayoutForm(payout, { paidAt: event.target.value })} /></label>
-                            <label>Reason<input minLength={8} maxLength={500} value={form.reason} onChange={(event) => updatePayoutForm(payout, { reason: event.target.value })} /></label>
+                            <label className="rider-payout-field">External transfer reference<input value={form.externalReference} onChange={(event) => updatePayoutForm(payout, { externalReference: event.target.value })} /><small>Enter the reference from the external payment provider.</small></label>
+                            <label className="rider-payout-field">Transfer date<input type="date" value={form.paidAt} onChange={(event) => updatePayoutForm(payout, { paidAt: event.target.value })} /></label>
+                            <label className="rider-payout-field rider-payout-reason-field">Reason<input minLength={8} maxLength={500} value={form.reason} onChange={(event) => updatePayoutForm(payout, { reason: event.target.value })} /></label>
                         </div>
-                        <label className="seller-payout-destination-consent"><input type="checkbox" checked={form.externallyCompleted} onChange={(event) => updatePayoutForm(payout, { externallyCompleted: event.target.checked })} /><span>I confirm this transfer was already completed outside Farmgate. This action will only record it.</span></label>
-                        <button type="button" className="seller-inline-action" disabled={saving} onClick={() => void confirmPayout(payout)}>Record external payment</button>
+                        <label className="seller-payout-destination-consent rider-payout-confirmation"><input type="checkbox" checked={form.externallyCompleted} onChange={(event) => updatePayoutForm(payout, { externallyCompleted: event.target.checked })} /><span>I independently confirm this transfer was already completed outside Farmgate. Recording it will not send money.</span></label>
+                        <div className="rider-payout-record-actions"><button type="button" className="seller-inline-action" disabled={saving} onClick={() => void confirmPayout(payout)}>Record completed transfer</button></div>
                     </article>;
                 })}
                 {(pendingPayouts?.last_page ?? 1) > 1 && <Pagination page={pendingPayouts?.current_page ?? 1} lastPage={pendingPayouts?.last_page ?? 1} onChange={setPendingPage} label="Pending rider payouts pages" />}
             </section>
 
-            <section aria-labelledby="rider-payout-history-title">
-                <div className="payments-section-heading"><div><h4 id="rider-payout-history-title">Recorded external payouts</h4></div></div>
-                {recordedRows.length === 0 ? <p className="admin-empty">No rider payouts have been recorded as externally paid.</p>
-                    : <div className="data-table-wrap"><table><thead><tr><th>Order</th><th>Rider</th><th>Amount</th><th>Method</th><th>Recorded by</th><th>Paid at</th></tr></thead><tbody>
+            <section className="rider-payout-subsection" aria-labelledby="rider-payout-history-title">
+                <div className="rider-payout-subsection-heading">
+                    <div><h4 id="rider-payout-history-title">Recorded external payouts</h4><p>History of transfers confirmed as externally paid.</p></div>
+                </div>
+                {recordedRows.length === 0 ? <div className="payments-empty-state rider-payout-empty-state"><strong>No paid payouts yet</strong><span>Confirmed external transfers will be listed here with their delivery and audit details.</span></div>
+                    : <div className="data-table-wrap rider-payout-history-table-wrap"><table><thead><tr><th>Order</th><th>Rider</th><th>Amount</th><th>Method</th><th>Recorded by</th><th>Paid at</th></tr></thead><tbody>
                         {recordedRows.map((payout) => <tr key={payout.id}>
                             <td>{payout.earning.order.order_reference}</td><td>{payout.rider.name}</td><td>{money(payout.amount_cents)}</td><td>{payout.method}</td><td>{payout.recorder?.name ?? '—'}</td><td>{payout.paid_at ? new Date(payout.paid_at).toLocaleDateString() : '—'}</td>
                         </tr>)}
