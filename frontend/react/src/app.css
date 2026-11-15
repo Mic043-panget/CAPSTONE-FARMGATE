@@ -3271,14 +3271,36 @@ label { display: grid; gap: 0.45rem; }
 .calendar-detail-content dd { margin: 0.2rem 0 0; overflow-wrap: anywhere; }
 .seller-order-modal { max-height: min(90vh, 920px); overflow: hidden; padding: 0; }
 .seller-order-content { min-height: 0; overflow: auto; }
-@media (max-width: 640px) {
-    .quick-promo-nav, .marketplace-shortcuts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .quick-promo-nav { justify-content: stretch; }
-    .marketplace-shortcuts { display: grid; overflow: visible; touch-action: auto; }
-    .quick-promo-nav a, .marketplace-shortcuts a { flex-direction: row; min-height: 56px; }
+@media (max-width: 760px) {
+    .quick-promo-nav, .marketplace-shortcuts {
+        display: flex;
+        flex-wrap: nowrap;
+        gap: 0.35rem;
+        min-width: 0;
+        overflow-x: auto;
+        overflow-y: hidden;
+        overscroll-behavior-inline: contain;
+        padding-bottom: 0.35rem;
+        scroll-snap-type: x proximity;
+        scrollbar-width: thin;
+        touch-action: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    .quick-promo-nav { grid-template-columns: none; }
+    .quick-promo-nav a, .marketplace-shortcuts a {
+        flex: 0 0 clamp(150px, 38vw, 220px);
+        justify-content: flex-start;
+        min-width: 0;
+        scroll-snap-align: start;
+        width: auto;
+    }
+    .marketplace-shortcuts { display: flex; }
+    .marketplace-shortcuts a { flex-direction: row; min-height: 56px; }
     .marketplace-shortcut-icon { flex-basis: 22px; height: 22px; }
     .marketplace-shortcuts a > span:last-child { overflow-wrap: anywhere; white-space: normal; }
     .marketplace-shortcuts small { display: block; }
+    .quick-promo-nav::-webkit-scrollbar, .marketplace-shortcuts::-webkit-scrollbar { height: 4px; }
+    .quick-promo-nav::-webkit-scrollbar-thumb, .marketplace-shortcuts::-webkit-scrollbar-thumb { background: var(--line); border-radius: 999px; }
 }
 @media (max-width: 640px) {
     .farmgate-detail-backdrop { align-items: stretch; padding: 0.4rem; }
