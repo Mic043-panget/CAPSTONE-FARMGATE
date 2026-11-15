@@ -15,10 +15,11 @@ import { confirmAction } from '../../lib/alerts';
 import type { User } from '../../shared/types';
 import { SystemCalendar } from '../shared/SystemCalendar';
 import { LoadingSkeleton } from '../../shared/components/LoadingSkeleton';
+import { RiderEarningsPanel } from './RiderEarningsPanel';
 
 const NearbyOrdersMap = React.lazy(() => import('./NearbyOrdersMap').then((module) => ({ default: module.NearbyOrdersMap })));
 
-type RiderPage = 'dashboard' | 'deliveries' | 'events' | 'chats' | 'reports' | 'notifications' | 'account';
+type RiderPage = 'dashboard' | 'earnings' | 'deliveries' | 'events' | 'chats' | 'reports' | 'notifications' | 'account';
 type RiderDeliveryTab = 'nearby' | 'assigned' | 'scanner' | 'history';
 type RiderSummary = {
     availability: string;
@@ -96,6 +97,7 @@ const activeStatuses = new Set(['RIDER_ACCEPTED', 'PICKUP_PENDING', 'PICKED_UP',
 const riderStatuses = ['RIDER_ACCEPTED', 'PICKUP_PENDING', 'PICKED_UP', 'IN_TRANSIT', 'DELIVERED', 'FAILED', 'CANCELLED'];
 const navigation: { id: RiderPage; label: string; icon: string }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: '◈' },
+    { id: 'earnings', label: 'Earnings', icon: '₱' },
     { id: 'deliveries', label: 'Deliveries', icon: '▣' },
     { id: 'events', label: 'Events', icon: '◷' },
     { id: 'chats', label: 'Chats', icon: '✦' },
@@ -1222,6 +1224,7 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
                     </section>
                 </div>
             </section>}
+            {page === 'earnings' && <RiderEarningsPanel />}
             {page === 'deliveries' && <section className="rider-deliveries" aria-labelledby="rider-deliveries-title">
                 <div className="rider-work-heading"><div><p className="eyebrow">Rider workspace</p><h2 id="rider-deliveries-title">Deliveries</h2></div></div>
                 <TabNav

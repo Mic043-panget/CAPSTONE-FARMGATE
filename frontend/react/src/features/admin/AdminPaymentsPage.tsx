@@ -1,8 +1,9 @@
 import React from 'react';
 import { CodMoneyOperations } from './CodMoneyOperations';
 import { CodReceivingSettings } from './CodReceivingSettings';
+import { RiderPayoutOperations } from './RiderPayoutOperations';
 
-type PaymentsTab = 'reconciliation' | 'settings';
+type PaymentsTab = 'reconciliation' | 'settings' | 'rider-earnings';
 
 export function AdminPaymentsPage({ onError, onOpenSystemSettings }: { onError: (message: string) => void; onOpenSystemSettings: () => void }) {
     const [activeTab, setActiveTab] = React.useState<PaymentsTab>('reconciliation');
@@ -32,6 +33,17 @@ export function AdminPaymentsPage({ onError, onOpenSystemSettings }: { onError: 
             >
                 Payment and COD Settings
             </button>
+            <button
+                type="button"
+                role="tab"
+                id="admin-payments-rider-earnings-tab"
+                aria-controls="admin-payments-rider-earnings-panel"
+                aria-selected={activeTab === 'rider-earnings'}
+                className={activeTab === 'rider-earnings' ? 'active' : ''}
+                onClick={() => setActiveTab('rider-earnings')}
+            >
+                Rider Earnings
+            </button>
         </div>
         <div
             role="tabpanel"
@@ -48,6 +60,14 @@ export function AdminPaymentsPage({ onError, onOpenSystemSettings }: { onError: 
             hidden={activeTab !== 'settings'}
         >
             <CodReceivingSettings onError={onError} onOpenSystemSettings={onOpenSystemSettings} />
+        </div>
+        <div
+            role="tabpanel"
+            id="admin-payments-rider-earnings-panel"
+            aria-labelledby="admin-payments-rider-earnings-tab"
+            hidden={activeTab !== 'rider-earnings'}
+        >
+            <RiderPayoutOperations onError={onError} />
         </div>
     </section>;
 }

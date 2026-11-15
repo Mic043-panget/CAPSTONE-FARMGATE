@@ -60,7 +60,7 @@ class SystemSettingsService
         'rider_base_compensation' => ['default' => 0, 'type' => 'decimal', 'category' => 'rider', 'label' => 'Rider base compensation'],
         'rider_per_km_compensation' => ['default' => 0, 'type' => 'decimal', 'category' => 'rider', 'label' => 'Rider per kilometer compensation'],
         'rider_minimum_compensation' => ['default' => 0, 'type' => 'decimal', 'category' => 'rider', 'label' => 'Rider minimum compensation'],
-        'rider_maximum_compensation' => ['default' => 0, 'type' => 'decimal', 'category' => 'rider', 'label' => 'Rider maximum compensation'],
+        'rider_maximum_compensation' => ['default' => 0, 'type' => 'decimal', 'category' => 'rider', 'label' => 'Legacy rider maximum compensation (unused)'],
         'rider_cancellation_compensation' => ['default' => 0, 'type' => 'decimal', 'category' => 'rider', 'label' => 'Rider cancellation compensation'],
         'rider_waiting_fee' => ['default' => 0, 'type' => 'decimal', 'category' => 'rider', 'label' => 'Rider waiting fee'],
         'rider_waiting_minutes' => ['default' => 15, 'type' => 'integer', 'category' => 'rider', 'label' => 'Rider waiting threshold'],

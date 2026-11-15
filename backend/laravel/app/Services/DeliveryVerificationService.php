@@ -16,6 +16,7 @@ class DeliveryVerificationService
     public function __construct(
         private readonly SystemSettingsService $settings,
         private readonly OrderWorkflowService $orders,
+        private readonly RiderEarningsService $riderEarnings,
     ) {}
 
     /**
@@ -168,6 +169,9 @@ class DeliveryVerificationService
                 'reason' => $purpose === 'pickup' ? 'PICKUP_QR_VERIFIED' : 'DELIVERY_QR_VERIFIED',
                 'created_at' => now(),
             ]);
+            if ($purpose === 'delivery') {
+                $this->riderEarnings->recordVerifiedDelivery($locked, $order);
+            }
             $fromOrderStatus = $order->status;
             if ($purpose === 'pickup' && $order->status === OrderStatus::READY_FOR_PICKUP) {
                 $order->forceFill(['status' => OrderStatus::FULFILLING])->save();

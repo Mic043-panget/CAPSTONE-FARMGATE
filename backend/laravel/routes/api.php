@@ -7,6 +7,8 @@ use App\Http\Controllers\Api\Admin\EmailDeliveryController as AdminEmailDelivery
 use App\Http\Controllers\Api\Admin\ListingController as AdminListingController;
 use App\Http\Controllers\Api\Admin\OverviewController as AdminOverviewController;
 use App\Http\Controllers\Api\Admin\ReviewModerationController;
+use App\Http\Controllers\Api\Admin\RiderEarningsSettingsController;
+use App\Http\Controllers\Api\Admin\RiderPayoutController;
 use App\Http\Controllers\Api\Admin\SettingsController as AdminSettingsController;
 use App\Http\Controllers\Api\Admin\UserAccountController;
 use App\Http\Controllers\Api\AnalyticsController;
@@ -37,6 +39,7 @@ use App\Http\Controllers\Api\ReportController;
 use App\Http\Controllers\Api\Rider\DashboardController as RiderDashboardController;
 use App\Http\Controllers\Api\RiderApplicationController;
 use App\Http\Controllers\Api\RiderController;
+use App\Http\Controllers\Api\RiderEarningsController;
 use App\Http\Controllers\Api\Seller\ComplaintController as SellerComplaintController;
 use App\Http\Controllers\Api\Seller\DashboardController as SellerDashboardController;
 use App\Http\Controllers\Api\Seller\ProfileController as SellerProfileController;
@@ -167,6 +170,10 @@ Route::middleware(MaintenanceMode::class)->group(function (): void {
             Route::post('/admin/cod/receiving-methods/{method}/verify', [CodReceivingMethodController::class, 'verify'])->middleware('throttle:10,1');
             Route::post('/admin/cod/receiving-methods/{method}/deactivate', [CodReceivingMethodController::class, 'deactivate'])->middleware('throttle:10,1');
             Route::post('/admin/cod/receiving-methods/{method}/enable', [CodReceivingMethodController::class, 'enable'])->middleware('throttle:10,1');
+            Route::get('/admin/rider-earnings/settings', [RiderEarningsSettingsController::class, 'show']);
+            Route::put('/admin/rider-earnings/settings', [RiderEarningsSettingsController::class, 'update'])->middleware('throttle:10,1');
+            Route::get('/admin/rider-payouts', [RiderPayoutController::class, 'index']);
+            Route::post('/admin/rider-payouts/{payout}/manual-confirm', [RiderPayoutController::class, 'confirmManual'])->middleware('throttle:10,1');
             Route::get('/admin/seller-payouts', [CodRemittanceController::class, 'adminPayouts']);
             Route::post('/admin/orders/{order}/seller-payout', [CodRemittanceController::class, 'payout'])->middleware('throttle:10,1');
             Route::post('/admin/seller-payouts/{payout}/manual-confirm', [CodRemittanceController::class, 'confirmManualPayout'])->middleware('throttle:10,1');
@@ -243,6 +250,7 @@ Route::middleware(MaintenanceMode::class)->group(function (): void {
             Route::get('/riders/settings', [RiderController::class, 'preferences'])->middleware(EnsureApprovedRider::class);
             Route::put('/riders/settings', [RiderController::class, 'updatePreferences'])->middleware(EnsureApprovedRider::class);
             Route::get('/riders/deliveries', [RiderController::class, 'deliveries'])->middleware(EnsureApprovedRider::class);
+            Route::get('/rider/earnings', [RiderEarningsController::class, 'index'])->middleware(EnsureApprovedRider::class);
             Route::get('/riders/cod/collections', [CodRemittanceController::class, 'riderCollections'])->middleware(EnsureApprovedRider::class);
             Route::get('/riders/cod/remittances', [CodRemittanceController::class, 'riderRemittances'])->middleware(EnsureApprovedRider::class);
             Route::get('/riders/cod/receiving-methods', [CodReceivingMethodController::class, 'riderIndex'])->middleware(EnsureApprovedRider::class);
