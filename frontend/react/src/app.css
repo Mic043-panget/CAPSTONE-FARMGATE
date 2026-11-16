@@ -2473,9 +2473,13 @@ label { display: grid; gap: 0.45rem; }
     .admin-sidebar.role-sidebar .role-mobile-header { align-items: center; display: flex; justify-content: space-between; min-height: 44px; width: 100%; }
     .role-mobile-brand { color: var(--panel); font-size: 1.1rem; font-weight: 900; letter-spacing: 0.16em; text-decoration: none; }
     .role-mobile-brand span { color: var(--accent); }
+    .role-mobile-context { background: #315449; border: 1px solid #416155; border-radius: 999px; color: var(--panel); flex: 0 0 auto; font-size: 0.62rem; font-weight: 800; letter-spacing: 0.12em; margin-left: auto; margin-right: 0.55rem; padding: 0.35rem 0.55rem; white-space: nowrap; }
     .admin-sidebar.role-sidebar .role-mobile-menu-toggle { align-items: center; background: transparent; border: 0; border-radius: 4px; color: var(--panel); display: inline-flex; height: 44px; justify-content: center; min-height: 44px; padding: 0; width: 44px; }
     .admin-sidebar.role-sidebar .role-mobile-menu-toggle svg { display: block; height: 24px; width: 24px; }
     .admin-sidebar.role-sidebar .role-mobile-menu-toggle:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+    .admin-content > .admin-header { align-items: center; flex-direction: row; gap: 0.75rem; margin-bottom: 1rem; padding-bottom: 0.75rem; }
+    .admin-content > .admin-header .eyebrow, .admin-content > .admin-header p:not(.eyebrow), .admin-content > .admin-header > .admin-role { display: none; }
+    .admin-content > .admin-header h1 { font-size: clamp(1.65rem, 6vw, 2.1rem); line-height: 1.1; }
     .admin-sidebar.role-sidebar .role-mobile-menu-panel { display: none; }
     .admin-sidebar.role-sidebar .role-mobile-menu-panel > .brand { display: none; }
     .admin-sidebar.role-sidebar.mobile-open { z-index: 1000; }
