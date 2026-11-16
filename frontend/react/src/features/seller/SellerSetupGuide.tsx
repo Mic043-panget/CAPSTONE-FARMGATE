@@ -1,6 +1,7 @@
 import React from 'react';
 import api from '../../lib/api';
-import { AccountSetupChecklist, type AccountSetupGroup, type AccountSetupStatus } from '../../shared/components/AccountSetupChecklist';
+import { AccountSetupProgress, type AccountSetupGroup, type AccountSetupStatus } from '../../shared/components/AccountSetupChecklist';
+import { GuidedWalkthrough, type GuidedWalkthroughStep } from '../../shared/components/GuidedWalkthrough';
 import type { User } from '../../shared/types';
 
 type SellerProfile = {
@@ -30,6 +31,40 @@ type SetupData = {
     preferencesReviewedAt: string | null;
 };
 type SettingsSection = 'profile' | 'shop' | 'phone' | 'preferences' | 'pickup' | 'password' | 'payouts';
+
+const sellerTourSections: SettingsSection[] = ['profile', 'shop', 'phone', 'pickup', 'preferences', 'password'];
+const sellerTourSteps: GuidedWalkthroughStep[] = [
+    {
+        title: 'Profile & business',
+        description: 'Update your account name, username, email, business name, business phone, and address here. Save the form to keep your changes.',
+        targetSelectors: ['#seller-settings-panel-profile', '#seller-settings-tab-profile'],
+    },
+    {
+        title: 'Shop profile',
+        description: 'Set the shop name, image, and public business information buyers see on your storefront. Identity verification is handled separately and requires admin review.',
+        targetSelectors: ['#seller-settings-panel-shop', '#seller-settings-tab-shop'],
+    },
+    {
+        title: 'Phone security',
+        description: 'Add or update your account phone number, request a one-time code, and verify it here.',
+        targetSelectors: ['#seller-settings-panel-phone', '#seller-settings-tab-phone'],
+    },
+    {
+        title: 'Pickup location',
+        description: 'Choose your actual livestock pickup point on the map and save it. A map pin is not confirmed until you save it.',
+        targetSelectors: ['#seller-settings-panel-pickup', '#seller-settings-tab-pickup'],
+    },
+    {
+        title: 'Notifications & privacy',
+        description: 'Choose which in-app order and chat updates you receive and whether other users can message you.',
+        targetSelectors: ['#seller-settings-panel-preferences', '#seller-settings-tab-preferences'],
+    },
+    {
+        title: 'Password & account security',
+        description: 'Set a password for password sign-in or update your current password. Your existing sign-in method remains available.',
+        targetSelectors: ['#seller-settings-panel-password', '#seller-settings-tab-password'],
+    },
+];
 
 function requestErrorMessage(error: unknown): string {
     if (typeof error === 'object' && error !== null && 'userMessage' in error && typeof error.userMessage === 'string') {
@@ -64,6 +99,7 @@ export function SellerSetupGuide({ user, refreshKey, onOpenSection }: {
     const [loading, setLoading] = React.useState(true);
     const [error, setError] = React.useState('');
     const [reviewBusy, setReviewBusy] = React.useState(false);
+    const [tourOpen, setTourOpen] = React.useState(false);
 
     const refresh = React.useCallback(async () => {
         setLoading(true);
@@ -104,11 +140,14 @@ export function SellerSetupGuide({ user, refreshKey, onOpenSection }: {
         }
     }
 
-    if (loading) return <p className="seller-loading account-setup-loading" role="status">Loading setup progress…</p>;
-    if (error || !data) return <p className="account-setup-error" role="alert">
-        {error || 'Couldn’t load your setup progress.'}
-        <button type="button" className="seller-text-action" onClick={() => void refresh()}>Retry</button>
-    </p>;
+    if (loading || error || !data) return <AccountSetupProgress
+        title="Seller setup"
+        groups={[]}
+        loading={loading}
+        error={error || (!data ? 'Saved setup data is unavailable. Try again.' : '')}
+        onRetry={() => void refresh()}
+        onReviewTutorial={() => setTourOpen(true)}
+    />;
 
     const profileComplete = Boolean(
         user.name.trim()
@@ -241,9 +280,20 @@ export function SellerSetupGuide({ user, refreshKey, onOpenSection }: {
         },
     ];
 
-    return <AccountSetupChecklist
-        title="Seller setup"
-        description="Your checklist follows saved account data and administrator decisions. You can leave and return; unfinished steps stay available here."
-        groups={groups}
-    />;
+    return <>
+        <AccountSetupProgress
+            title="Seller setup"
+            groups={groups}
+            loading={false}
+            error=""
+            onRetry={() => void refresh()}
+            onReviewTutorial={() => setTourOpen(true)}
+        />
+        <GuidedWalkthrough
+            open={tourOpen}
+            steps={sellerTourSteps}
+            onStepChange={(index) => onOpenSection(sellerTourSections[index])}
+            onClose={() => setTourOpen(false)}
+        />
+    </>;
 }

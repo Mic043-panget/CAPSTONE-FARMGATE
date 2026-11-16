@@ -1,6 +1,7 @@
 import React from 'react';
 import api from '../../lib/api';
-import { AccountSetupChecklist, type AccountSetupGroup, type AccountSetupStatus } from '../../shared/components/AccountSetupChecklist';
+import { AccountSetupProgress, type AccountSetupGroup, type AccountSetupStatus } from '../../shared/components/AccountSetupChecklist';
+import { GuidedWalkthrough, type GuidedWalkthroughStep } from '../../shared/components/GuidedWalkthrough';
 import type { User } from '../../shared/types';
 
 type RiderApplication = {
@@ -41,7 +42,7 @@ type SetupData = {
     payoutDestination: RiderPayoutDestination;
     preferencesReviewedAt: string | null;
 };
-type SettingsSection = 'profile' | 'password' | 'vehicle' | 'payout' | 'notifications';
+type SettingsSection = 'profile' | 'password' | 'delivery' | 'vehicle' | 'payout' | 'notifications' | 'location';
 
 function requestErrorMessage(error: unknown): string {
     if (typeof error === 'object' && error !== null && 'userMessage' in error && typeof error.userMessage === 'string') {
@@ -79,7 +80,7 @@ function applicationReviewLabel(status: string | undefined, verified: boolean): 
 
 function applicationReviewMessage(status: string | undefined, verified: boolean): string {
     if (status === 'APPROVED' || verified) {
-        return 'Applicant review is complete. The checklist below tracks account setup separately.';
+        return 'Applicant review is complete. The setup progress below tracks account settings separately.';
     }
     if (status === 'SUBMITTED' || status === 'UNDER_REVIEW') {
         return 'Your documents and eligibility are under admin review. Application review is separate from account setup.';
@@ -94,19 +95,20 @@ function applicationReviewMessage(status: string | undefined, verified: boolean)
         return 'Finish and submit the application before an administrator can review it.';
     }
 
-    return 'Your verified rider account is active. Account setup progress is shown below.';
+    return 'Your verified rider account is active. Account setup progress is available in the floating progress control.';
 }
 
 export function RiderSetupGuide({ user, refreshKey, onOpenSection, onReviewTutorial }: {
     user: User;
     refreshKey: number;
-    onOpenSection: (section: SettingsSection) => void;
+    onOpenSection: (section: SettingsSection, focusTab?: boolean) => void;
     onReviewTutorial: () => void;
 }) {
     const [data, setData] = React.useState<SetupData | null>(null);
     const [loading, setLoading] = React.useState(true);
     const [error, setError] = React.useState('');
     const [reviewBusy, setReviewBusy] = React.useState(false);
+    const [tourOpen, setTourOpen] = React.useState(false);
 
     const refresh = React.useCallback(async () => {
         setLoading(true);
@@ -157,11 +159,14 @@ export function RiderSetupGuide({ user, refreshKey, onOpenSection, onReviewTutor
         }
     }
 
-    if (loading) return <p className="seller-loading account-setup-loading" role="status">Loading setup progress…</p>;
-    if (error || !data) return <p className="account-setup-error" role="alert">
-        {error || 'Couldn’t load your setup progress.'}
-        <button type="button" className="seller-text-action" onClick={() => void refresh()}>Retry</button>
-    </p>;
+    if (loading || error || !data) return <AccountSetupProgress
+        title="Rider setup"
+        groups={[]}
+        loading={loading}
+        error={error || (!data ? 'Saved setup data is unavailable. Try again.' : '')}
+        onRetry={() => void refresh()}
+        onReviewTutorial={() => setTourOpen(true)}
+    />;
 
     const application = data.application;
     const hasLegalProfile = application
@@ -282,6 +287,65 @@ export function RiderSetupGuide({ user, refreshKey, onOpenSection, onReviewTutor
         },
     ];
 
+    const riderTourItems: { section: SettingsSection; step: GuidedWalkthroughStep }[] = [
+        {
+            section: 'profile',
+            step: {
+                title: 'Profile & contact',
+                description: 'Keep your account contact details current. Add a phone number and verify it with a one-time code in the profile section.',
+                targetSelectors: ['#rider-settings-panel-profile', '#rider-settings-tab-profile'],
+            },
+        },
+        {
+            section: 'delivery',
+            step: {
+                title: 'Delivery preferences',
+                description: 'Manage your availability for offers and review the delivery-specific preferences available to your rider account.',
+                targetSelectors: ['#rider-settings-panel-delivery', '#rider-settings-tab-delivery'],
+            },
+        },
+        {
+            section: 'vehicle',
+            step: {
+                title: 'Vehicle & required documents',
+                description: 'Review your vehicle details and required documents. Submitted application documents are private; admin approval is separate from changing your account settings.',
+                targetSelectors: ['#rider-settings-panel-vehicle', '#rider-settings-tab-vehicle'],
+            },
+        },
+        ...(data.payoutEnabled ? [{
+            section: 'payout' as const,
+            step: {
+                title: 'Payout destination',
+                description: 'Manage your bank or GCash destination here. The destination must be verified before payouts can be made.',
+                targetSelectors: ['#rider-settings-panel-payout', '#rider-settings-tab-payout'],
+            },
+        }] : []),
+        {
+            section: 'notifications',
+            step: {
+                title: 'Notifications & privacy',
+                description: 'Choose which in-app updates you receive and whether other users can start or continue direct messages.',
+                targetSelectors: ['#rider-settings-panel-notifications', '#rider-settings-tab-notifications'],
+            },
+        },
+        {
+            section: 'password',
+            step: {
+                title: 'Password & account security',
+                description: 'Set a password for password sign-in or update your current password without changing your other account details.',
+                targetSelectors: ['#rider-settings-panel-password', '#rider-settings-tab-password'],
+            },
+        },
+        {
+            section: 'location',
+            step: {
+                title: 'Location permissions',
+                description: 'Review the browser location permission used by rider features. You can change a blocked permission in your browser settings.',
+                targetSelectors: ['#rider-settings-panel-location', '#rider-settings-tab-location'],
+            },
+        },
+    ];
+
     return <div className="rider-setup-guide">
         <section className="rider-application-review" aria-label="Rider application review status">
             <div>
@@ -293,10 +357,19 @@ export function RiderSetupGuide({ user, refreshKey, onOpenSection, onReviewTutor
         <div className="rider-guide-actions">
             <button type="button" className="seller-text-action" onClick={onReviewTutorial}>Review delivery tutorial</button>
         </div>
-        <AccountSetupChecklist
+        <AccountSetupProgress
             title="Rider setup"
-            description="Progress reflects saved application, account, and admin-review data. This checklist includes only requirements enabled for your rider account."
             groups={groups}
+            loading={false}
+            error=""
+            onRetry={() => void refresh()}
+            onReviewTutorial={() => setTourOpen(true)}
+        />
+        <GuidedWalkthrough
+            open={tourOpen}
+            steps={riderTourItems.map((item) => item.step)}
+            onStepChange={(index) => onOpenSection(riderTourItems[index].section, false)}
+            onClose={() => setTourOpen(false)}
         />
     </div>;
 }

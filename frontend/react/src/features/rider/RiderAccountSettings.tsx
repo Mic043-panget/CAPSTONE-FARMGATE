@@ -500,9 +500,11 @@ export function RiderAccountSettings({ user, onUserUpdated, onError, onReviewTut
         <RiderSetupGuide
             user={user}
             refreshKey={setupRefreshKey}
-            onOpenSection={(section) => {
+            onOpenSection={(section, focusTab = true) => {
                 setTab(section);
-                window.requestAnimationFrame(() => document.getElementById(`rider-settings-tab-${section}`)?.focus());
+                if (focusTab) {
+                    window.requestAnimationFrame(() => document.getElementById(`rider-settings-tab-${section}`)?.focus());
+                }
             }}
             onReviewTutorial={onReviewTutorial}
         />
