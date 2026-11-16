@@ -93,7 +93,7 @@ function payoutStatus(destination: PayoutDestination): AccountSetupStatus {
 export function SellerSetupGuide({ user, refreshKey, onOpenSection }: {
     user: User;
     refreshKey: number;
-    onOpenSection: (section: SettingsSection) => void;
+    onOpenSection: (section: SettingsSection, focusTarget?: boolean) => void;
 }) {
     const [data, setData] = React.useState<SetupData | null>(null);
     const [loading, setLoading] = React.useState(true);
@@ -292,7 +292,7 @@ export function SellerSetupGuide({ user, refreshKey, onOpenSection }: {
         <GuidedWalkthrough
             open={tourOpen}
             steps={sellerTourSteps}
-            onStepChange={(index) => onOpenSection(sellerTourSections[index])}
+            onStepChange={(index) => onOpenSection(sellerTourSections[index], false)}
             onClose={() => setTourOpen(false)}
         />
     </>;

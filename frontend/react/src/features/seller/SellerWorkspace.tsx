@@ -767,13 +767,20 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
             <SellerSetupGuide
                 user={user}
                 refreshKey={setupRefreshKey}
-                onOpenSection={(section) => {
+                onOpenSection={(section, focusTarget = true) => {
                     if (section === 'payouts') {
                         setPage('payouts');
                         return;
                     }
                     setPage('account');
                     setSettingsTab(section);
+                    if (focusTarget) {
+                        window.requestAnimationFrame(() => {
+                            const target = document.getElementById(`seller-settings-panel-${section}`);
+                            target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            target?.focus({ preventScroll: true });
+                        });
+                    }
                 }}
             />
             <div className="seller-settings-tabs" role="tablist" aria-label="Seller settings">
