@@ -191,8 +191,10 @@ function orderMatchesFilter(order: BuyerOrder, filter: OrderFilter): boolean {
     }
 }
 
-export function BuyerProfile({ user, onUserUpdated, onLogout, onNavigateHome, onOpenOrder, initialSection = 'profile' }: { user: User; onUserUpdated: (user: User) => void; onLogout: () => void; onNavigateHome: () => void; onOpenOrder: (orderId: number) => void; initialSection?: 'profile' | 'settings' }) {
-    const [section, setSection] = React.useState<ProfileSection>(initialSection);
+export function BuyerProfile({ user, onUserUpdated, onLogout, onNavigateHome, onOpenOrder, initialSection = 'profile' }: { user: User; onUserUpdated: (user: User) => void; onLogout: () => void; onNavigateHome: () => void; onOpenOrder: (orderId: number) => void; initialSection?: 'profile' | 'settings' | 'notification-settings' }) {
+    const [section, setSection] = React.useState<ProfileSection>(initialSection === 'notification-settings' ? 'settings' : initialSection);
+    const notificationSettingsHeadingRef = React.useRef<HTMLHeadingElement | null>(null);
+    const notificationSettingsFocusHandled = React.useRef(false);
     const [editing, setEditing] = React.useState(false);
     const [name, setName] = React.useState(user.name);
     const [username, setUsername] = React.useState(user.username ?? user.email.split('@')[0]);
@@ -234,8 +236,20 @@ export function BuyerProfile({ user, onUserUpdated, onLogout, onNavigateHome, on
     }, [user]);
 
     React.useEffect(() => {
-        setSection(initialSection);
+        setSection(initialSection === 'notification-settings' ? 'settings' : initialSection);
     }, [initialSection]);
+
+    React.useEffect(() => {
+        if (section !== 'settings' || initialSection !== 'notification-settings' || notificationSettingsFocusHandled.current) return undefined;
+        const frame = window.requestAnimationFrame(() => {
+            const heading = notificationSettingsHeadingRef.current;
+            if (!heading) return;
+            notificationSettingsFocusHandled.current = true;
+            heading.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            heading.focus({ preventScroll: true });
+        });
+        return () => window.cancelAnimationFrame(frame);
+    }, [section, initialSection]);
 
     React.useEffect(() => {
         if (section !== 'orders' && section !== 'reviews') return undefined;
@@ -620,7 +634,7 @@ export function BuyerProfile({ user, onUserUpdated, onLogout, onNavigateHome, on
                         {!emailVerifiedAt && <p className="buyer-account-settings-help">Open the verification link sent to your email, then refresh this status.</p>}
                     </section>
                     <section className="buyer-account-settings-card" aria-labelledby="device-notifications-heading">
-                        <p className="eyebrow">Notifications</p><h2 id="device-notifications-heading">Device notifications</h2>
+                        <p className="eyebrow">Notifications</p><h2 id="device-notifications-heading" ref={notificationSettingsHeadingRef} tabIndex={-1} className="buyer-notification-settings-target">Device notifications</h2>
                         <NotificationDeviceSettings />
                     </section>
                     {accountSettingsLoading ? <LoadingSkeleton variant="detail" count={2} label="Loading account settings" /> : <>

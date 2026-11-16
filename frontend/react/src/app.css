@@ -183,6 +183,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .buyer-account-settings-card { background: #fbfcf9; border: 1px solid var(--line); display: grid; gap: 0.8rem; padding: 1.1rem; }
 .buyer-account-settings-card .eyebrow { margin: 0; }
 .buyer-account-settings-card h2 { font: 400 1.2rem Georgia, serif; margin: 0; }
+.buyer-notification-settings-target:focus { outline: 3px solid var(--accent); outline-offset: 3px; }
 .buyer-account-settings-card > p:not(.eyebrow) { color: var(--ink-soft); font-size: 0.85rem; margin: 0; overflow-wrap: anywhere; }
 .buyer-account-settings-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; }
 .buyer-account-settings-actions button { background: var(--ink); border: 0; color: white; min-height: 40px; padding: 0.6rem 0.85rem; }
