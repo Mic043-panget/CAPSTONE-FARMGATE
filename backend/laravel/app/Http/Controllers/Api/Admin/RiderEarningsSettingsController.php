@@ -38,7 +38,7 @@ class RiderEarningsSettingsController extends Controller
         $this->admin($request);
         $data = $request->validate([
             'percentage' => ['required', 'numeric', 'between:0,100', 'decimal:0,2'],
-            'cap_scope' => ['required', Rule::in(['NO_CAP', 'PER_DELIVERY', 'PER_PAYOUT'])],
+            'cap_scope' => ['required', Rule::in(['NO_CAP', 'PER_DELIVERY'])],
             'cap_amount' => ['sometimes', 'nullable', 'numeric', 'gt:0', 'max:9999999999.99', 'decimal:0,2'],
             'reason' => ['required', 'string', 'min:8', 'max:255'],
         ]);

@@ -77,6 +77,16 @@ class DirectChatApiTest extends TestCase
             'total_amount' => 1400,
             'pricing_type' => 'PER_HEAD',
         ]);
+        $this->actingAs($buyer)->getJson("/api/orders/{$order->id}/chat-context")
+            ->assertOk()
+            ->assertJsonPath('order.order_reference', $order->order_reference)
+            ->assertJsonPath('order.items.0.listing.name', 'Dorset ewe')
+            ->assertJsonPath('order.items.0.listing.image_url', 'https://farmgate.test/dorset.jpg')
+            ->assertJsonMissingPath('order.id')
+            ->assertJsonMissingPath('order.items.0.listing.id')
+            ->assertJsonMissingPath('order.shipping_address');
+        $this->actingAs($otherBuyer)->getJson("/api/orders/{$order->id}/chat-context")->assertForbidden();
+
         $otherOrder = Order::query()->create([
             'buyer_id' => $otherBuyer->id,
             'seller_id' => $seller->id,
@@ -101,6 +111,12 @@ class DirectChatApiTest extends TestCase
             ->assertJsonPath('message.order_previews.0.items.1.name', 'Suffolk ram')
             ->assertJsonMissingPath('message.order_previews.0.payment_reference')
             ->assertJsonMissingPath('message.order_previews.0.shipping_address');
+
+        $this->actingAs($buyer)->getJson('/api/chat/conversations?search='.urlencode($seller->name))
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.peer.name', $seller->name)
+            ->assertJsonPath('data.0.last_message_preview', $message);
 
         $this->actingAs($buyer)->getJson("/api/chat/conversations/{$conversationId}")
             ->assertOk()

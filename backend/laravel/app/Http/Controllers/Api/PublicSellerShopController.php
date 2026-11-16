@@ -15,6 +15,7 @@ use App\Services\SystemSettingsService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 
 class PublicSellerShopController extends Controller
@@ -122,7 +123,12 @@ class PublicSellerShopController extends Controller
             'created_at' => $review->created_at?->toIso8601String(),
         ]);
 
-        $profile = $seller->sellerProfile()->first(['business_name', 'is_verified']);
+        $profile = $seller->sellerProfile()->first([
+            'business_name',
+            'shop_name',
+            'shop_image_path',
+            'verification_status',
+        ]);
         $categories = LivestockListing::query()
             ->join('categories', 'categories.id', '=', 'livestock_listings.category_id')
             ->where('livestock_listings.seller_id', $seller->id)
@@ -139,7 +145,9 @@ class PublicSellerShopController extends Controller
                 'id' => $seller->id,
                 'name' => $seller->name,
                 'business_name' => $profile?->business_name,
-                'is_verified' => (bool) ($profile?->is_verified ?? false),
+                'shop_name' => $profile?->shop_name,
+                'shop_image_url' => $profile?->shop_image_path ? Storage::disk('public')->url($profile->shop_image_path) : null,
+                'is_verified' => $profile?->verification_status === 'VERIFIED',
             ],
             'listings' => $listings,
             'categories' => $categories,

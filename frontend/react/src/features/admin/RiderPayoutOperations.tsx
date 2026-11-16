@@ -1,55 +1,128 @@
-import React from 'react';
+import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from 'react';
 import api, { initializeCsrf } from '../../lib/api';
 import { confirmAction } from '../../lib/alerts';
 import { Pagination } from '../../shared/components/Pagination';
 
-type Setting = {
-    percentage: string | null;
-    cap_scope: 'NO_CAP' | 'PER_DELIVERY' | 'PER_PAYOUT' | null;
+type Props = { onError: (message: string) => void };
+type TabId = 'settings' | 'destinations' | 'pending' | 'recorded';
+type CapScope = 'NO_CAP' | 'PER_DELIVERY' | '';
+type Page<T> = { data: T[]; current_page: number; last_page: number; total: number };
+type RequestError = {
+    userMessage?: string;
+    response?: { data?: { message?: string; errors?: Record<string, string[]> } };
+};
+type EarningsSetting = {
+    percentage: string;
+    cap_scope: string;
     cap_amount: string | null;
-    change_reason: string | null;
-    updated_at: string | null;
-    updater?: { id: number; name: string } | null;
+    updated_at?: string | null;
+    updater?: { name?: string } | null;
 };
 type SettingHistory = {
-    id: number;
-    old_percentage: string | null;
     new_percentage: string;
-    old_cap_scope: string | null;
     new_cap_scope: string;
-    old_cap_amount: string | null;
     new_cap_amount: string | null;
+    actor?: { name?: string } | null;
     reason: string;
     created_at: string;
-    actor?: { id: number; name: string } | null;
+};
+type Destination = {
+    id: number;
+    destination_type: 'BANK' | 'GCASH';
+    account_holder_masked: string;
+    bank_name_masked: string | null;
+    account_number_masked: string | null;
+    wallet_number_masked: string | null;
+    status: string;
+    is_current: boolean;
+    verified_at: string | null;
+    updated_at: string;
+    rider: { id: number; name: string | null };
+    verified_by_name?: string | null;
+};
+type DestinationHistory = {
+    action: string;
+    actor: string | null;
+    reason: string | null;
+    created_at: string | null;
+};
+type DestinationDetails = Destination & {
+    consent_version: string | null;
+    consent_accepted_at: string | null;
+    verification_history: DestinationHistory[];
 };
 type Payout = {
     id: number;
+    payout_reference: string;
+    status: string;
     amount_cents: number;
-    status: 'PENDING' | 'PAID';
     method: string | null;
-    paid_at: string | null;
     created_at: string;
-    rider: { id: number; name: string };
-    recorder?: { id: number; name: string } | null;
+    paid_at: string | null;
+    receipt_url: string | null;
+    destination_masked: {
+        type: string;
+        status: string;
+        account_holder: string;
+        institution: string;
+        identifier: string | null;
+    } | null;
+    rider: { id: number; name: string | null };
     earning: {
+        amount_cents: number;
+        delivery_fee_cents: number;
         percentage_snapshot: string;
-        order: { order_reference: string };
-        delivery: { delivery_reference: string };
+        cap_scope_snapshot: string;
+        cap_amount_snapshot: string | null;
+        delivery: {
+            delivery_reference: string;
+            delivery_verified_at: string | null;
+            status: string;
+        };
+        order: { order_reference: string; delivery_fee: string | number };
     };
+    histories: {
+        action: string;
+        from_status: string | null;
+        to_status: string | null;
+        reason: string | null;
+        actor?: { name?: string } | null;
+        created_at: string;
+    }[];
 };
-type Page<T> = { data: T[]; current_page: number; last_page: number; total: number };
-type PayoutForm = {
-    amount: string;
-    method: string;
+type PayoutFormState = {
     externalReference: string;
+    amount: string;
     paidAt: string;
     reason: string;
-    externallyCompleted: boolean;
+    receipt: File | null;
+    confirmed: boolean;
+    method: 'BANK_TRANSFER' | 'GCASH';
 };
 
-function money(cents: number): string {
-    return `PHP ${(cents / 100).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const TABS: { id: TabId; label: string; panel: string }[] = [
+    { id: 'settings', label: 'Earnings & Payout Settings', panel: 'rider-payout-settings-panel' },
+    { id: 'destinations', label: 'Payout Destinations', panel: 'rider-payout-destinations-panel' },
+    { id: 'pending', label: 'Pending Manual Payouts', panel: 'rider-payout-pending-panel' },
+    { id: 'recorded', label: 'Recorded External Payouts', panel: 'rider-payout-recorded-panel' },
+];
+
+function messageFrom(error: unknown, fallback: string): string {
+    const requestError = error as RequestError;
+    const validationMessage = requestError.response?.data?.errors
+        ? Object.values(requestError.response.data.errors).flat().join(' ')
+        : '';
+    return validationMessage || requestError.userMessage || requestError.response?.data?.message || fallback;
+}
+
+function dateLabel(value: string | null | undefined): string {
+    if (!value) return '—';
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString();
+}
+
+function money(cents: number | null | undefined): string {
+    return `₱${((cents ?? 0) / 100).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function parseCents(value: string): number | null {
@@ -59,242 +132,703 @@ function parseCents(value: string): number | null {
     return Number.isSafeInteger(cents) ? cents : null;
 }
 
-export function RiderPayoutOperations({ onError }: { onError: (message: string) => void }) {
-    const [setting, setSetting] = React.useState<Setting | null>(null);
-    const [settingConfigured, setSettingConfigured] = React.useState(false);
-    const [history, setHistory] = React.useState<SettingHistory[]>([]);
-    const [percentage, setPercentage] = React.useState('');
-    const [capScope, setCapScope] = React.useState('');
-    const [capAmount, setCapAmount] = React.useState('');
-    const [settingReason, setSettingReason] = React.useState('');
-    const [pendingPayouts, setPendingPayouts] = React.useState<Page<Payout> | null>(null);
-    const [recordedPayouts, setRecordedPayouts] = React.useState<Page<Payout> | null>(null);
-    const [pendingPage, setPendingPage] = React.useState(1);
-    const [recordedPage, setRecordedPage] = React.useState(1);
-    const [payoutForms, setPayoutForms] = React.useState<Record<number, PayoutForm>>({});
-    const [loading, setLoading] = React.useState(true);
-    const [saving, setSaving] = React.useState(false);
-    const [success, setSuccess] = React.useState('');
+function localDate(): string {
+    const now = new Date();
+    now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+    return now.toISOString().slice(0, 10);
+}
 
-    const refresh = React.useCallback(async () => {
+function scopeLabel(scope: string | null | undefined): string {
+    if (scope === 'PER_DELIVERY' || scope === 'PER_PAYOUT') return 'Per delivery';
+    return scope === 'NO_CAP' ? 'No cap' : 'Not configured';
+}
+
+function destinationIdentifier(destination: Pick<Destination, 'destination_type' | 'account_number_masked' | 'wallet_number_masked'>): string {
+    return destination.destination_type === 'BANK'
+        ? destination.account_number_masked ?? 'Not available'
+        : destination.wallet_number_masked ?? 'Not available';
+}
+
+function StatusPill({ children, status }: { children: string; status?: string }) {
+    const kind = status?.toLowerCase().replaceAll('_', '-') ?? 'neutral';
+    return <span className={`rider-payout-status-pill rider-payout-status-pill--${kind}`}>{children}</span>;
+}
+
+function LoadState({ loading, error, onRetry }: { loading: boolean; error: string; onRetry: () => void }) {
+    if (loading) return <p className="seller-loading" role="status">Loading rider payout records…</p>;
+    if (error) return <div className="seller-error" role="alert">{error} <button type="button" className="seller-inline-action" onClick={onRetry}>Try again</button></div>;
+    return null;
+}
+
+export function RiderPayoutOperations({ onError }: Props) {
+    const [activeTab, setActiveTab] = useState<TabId>('settings');
+    const [payoutVersion, setPayoutVersion] = useState(0);
+    const tabRefs = useRef<Record<TabId, HTMLButtonElement | null>>({
+        settings: null,
+        destinations: null,
+        pending: null,
+        recorded: null,
+    });
+
+    const changeTab = (next: TabId) => {
+        setActiveTab(next);
+        tabRefs.current[next]?.focus();
+    };
+
+    const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, current: TabId) => {
+        const index = TABS.findIndex((tab) => tab.id === current);
+        if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+            event.preventDefault();
+            const direction = event.key === 'ArrowRight' ? 1 : -1;
+            const next = TABS[(index + direction + TABS.length) % TABS.length].id;
+            changeTab(next);
+        } else if (event.key === 'Home' || event.key === 'End') {
+            event.preventDefault();
+            changeTab(event.key === 'Home' ? TABS[0].id : TABS[TABS.length - 1].id);
+        }
+    };
+
+    return <section className="rider-payout-operations">
+        <header className="rider-payout-operations-heading">
+            <div>
+                <p className="eyebrow">Admin · Payments</p>
+                <h3>Rider earnings and payouts</h3>
+                <p>Review delivery earnings and record only external transfers that have already been independently completed.</p>
+            </div>
+            <span className="rider-payout-count">One payout per eligible delivery</span>
+        </header>
+        <div className="seller-settings-tabs rider-settings-tabs rider-payout-tabs" role="tablist" aria-label="Rider payout operations">
+            {TABS.map((tab) => <button
+                key={tab.id}
+                ref={(element) => { tabRefs.current[tab.id] = element; }}
+                id={`rider-payout-${tab.id}-tab`}
+                type="button"
+                role="tab"
+                className={`seller-settings-tab${activeTab === tab.id ? ' is-active' : ''}`}
+                aria-selected={activeTab === tab.id}
+                aria-controls={tab.panel}
+                tabIndex={activeTab === tab.id ? 0 : -1}
+                onClick={() => setActiveTab(tab.id)}
+                onKeyDown={(event) => onTabKeyDown(event, tab.id)}
+            >{tab.label}</button>)}
+        </div>
+        <section id="rider-payout-settings-panel" role="tabpanel" aria-labelledby="rider-payout-settings-tab" hidden={activeTab !== 'settings'} className="rider-payout-tab-panel">
+            <EarningsSettingsTab />
+        </section>
+        <section id="rider-payout-destinations-panel" role="tabpanel" aria-labelledby="rider-payout-destinations-tab" hidden={activeTab !== 'destinations'} className="rider-payout-tab-panel">
+            <DestinationsTab onPayoutsChanged={() => setPayoutVersion((version) => version + 1)} />
+        </section>
+        <section id="rider-payout-pending-panel" role="tabpanel" aria-labelledby="rider-payout-pending-tab" hidden={activeTab !== 'pending'} className="rider-payout-tab-panel">
+            <PendingPayoutsTab refreshVersion={payoutVersion} onPayoutChanged={() => setPayoutVersion((version) => version + 1)} onError={onError} />
+        </section>
+        <section id="rider-payout-recorded-panel" role="tabpanel" aria-labelledby="rider-payout-recorded-tab" hidden={activeTab !== 'recorded'} className="rider-payout-tab-panel">
+            <RecordedPayoutsTab refreshVersion={payoutVersion} />
+        </section>
+    </section>;
+}
+
+function EarningsSettingsTab() {
+    const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState('');
+    const [actionError, setActionError] = useState('');
+    const [saveMessage, setSaveMessage] = useState('');
+    const [saving, setSaving] = useState(false);
+    const [reload, setReload] = useState(0);
+    const [configured, setConfigured] = useState(false);
+    const [setting, setSetting] = useState<EarningsSetting | null>(null);
+    const [history, setHistory] = useState<SettingHistory[]>([]);
+    const [percentage, setPercentage] = useState('');
+    const [capScope, setCapScope] = useState<CapScope>('');
+    const [capAmount, setCapAmount] = useState('');
+    const [reason, setReason] = useState('');
+
+    useEffect(() => {
+        let active = true;
         setLoading(true);
-        try {
-            const [settingsResponse, pendingResponse, recordedResponse] = await Promise.all([
-                api.get<{ setting: Setting | null; configured: boolean; history: SettingHistory[] }>('/api/admin/rider-earnings/settings'),
-                api.get<{ payouts: Page<Payout> }>('/api/admin/rider-payouts', { params: { group: 'queue', page: pendingPage } }),
-                api.get<{ payouts: Page<Payout> }>('/api/admin/rider-payouts', { params: { group: 'recorded', page: recordedPage } }),
-            ]);
-            const nextSetting = settingsResponse.data.setting;
-            setSetting(nextSetting);
-            setSettingConfigured(settingsResponse.data.configured);
-            setHistory(settingsResponse.data.history);
-            setPercentage(nextSetting?.percentage ?? '');
-            setCapScope(nextSetting?.cap_scope ?? '');
-            setCapAmount(nextSetting?.cap_amount ?? '');
-            setPendingPayouts(pendingResponse.data.payouts);
-            setRecordedPayouts(recordedResponse.data.payouts);
-        } catch (error: any) {
-            onError(error.userMessage ?? error.response?.data?.message ?? 'Rider earnings settings and payouts could not be loaded.');
-        } finally {
-            setLoading(false);
-        }
-    }, [onError, pendingPage, recordedPage]);
+        setLoadError('');
+        api.get<{ configured: boolean; setting: EarningsSetting | null; history: SettingHistory[] }>('/api/admin/rider-earnings/settings')
+            .then((response) => {
+            if (!active) return;
+            const data = response.data;
+            setConfigured(data.configured);
+            setSetting(data.setting);
+            setHistory(data.history ?? []);
+            if (data.setting) {
+                setPercentage(data.setting.percentage);
+                setCapScope(data.setting.cap_scope === 'NO_CAP' ? 'NO_CAP' : 'PER_DELIVERY');
+                setCapAmount(data.setting.cap_amount ?? '');
+            } else {
+                setCapScope('NO_CAP');
+            }
+        }).catch((error: unknown) => {
+            if (active) setLoadError(messageFrom(error, 'Rider earnings settings could not be loaded.'));
+        }).finally(() => {
+            if (active) setLoading(false);
+        });
+        return () => { active = false; };
+    }, [reload]);
 
-    React.useEffect(() => { void refresh(); }, [refresh]);
-
-    async function saveSettings(event: React.FormEvent<HTMLFormElement>) {
+    const submit = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
-        const numericPercentage = Number(percentage);
-        if (!/^(?:0|[1-9]\d?)(?:\.\d{1,2})?$|^100(?:\.0{1,2})?$/.test(percentage.trim())
-            || !Number.isFinite(numericPercentage)
-            || numericPercentage < 0
-            || numericPercentage > 100) {
-            onError('Enter an earnings percentage from 0% to 100%, with at most two decimal places.');
-            return;
-        }
-        if (!capScope) {
-            onError('Choose an explicit cap option before saving rider earnings.');
-            return;
-        }
-        if (capScope !== 'NO_CAP' && (parseCents(capAmount) === null || parseCents(capAmount)! <= 0)) {
-            onError('Enter a positive cap amount for a per-delivery or per-payout cap. Zero does not mean no cap.');
-            return;
-        }
-        if (capScope === 'NO_CAP' && capAmount.trim() !== '') {
-            onError('Leave the cap amount blank when selecting no cap.');
-            return;
-        }
-        if (settingReason.trim().length < 8) {
-            onError('Enter an audit reason of at least eight characters.');
-            return;
-        }
-
         setSaving(true);
-        setSuccess('');
+        setActionError('');
+        setSaveMessage('');
         try {
             await initializeCsrf();
             await api.put('/api/admin/rider-earnings/settings', {
-                percentage: percentage.trim(),
+                percentage: Number(percentage),
                 cap_scope: capScope,
-                cap_amount: capScope === 'NO_CAP' ? null : capAmount.trim(),
-                reason: settingReason.trim(),
+                cap_amount: capScope === 'PER_DELIVERY' ? Number(capAmount) : null,
+                reason,
             });
-            setSettingReason('');
-            setSuccess('Rider earnings settings saved and audited. Existing delivery snapshots were not changed.');
-            await refresh();
-        } catch (error: any) {
-            onError(error.userMessage ?? error.response?.data?.message ?? 'Rider earnings settings could not be saved.');
+            setReason('');
+            setSaveMessage('Settings saved. Existing delivery earnings remain unchanged.');
+            setReload((version) => version + 1);
+        } catch (error: unknown) {
+            setActionError(messageFrom(error, 'Rider earnings settings could not be saved.'));
         } finally {
             setSaving(false);
         }
-    }
+    };
 
-    function updatePayoutForm(payout: Payout, changes: Partial<PayoutForm>) {
-        const current = payoutForms[payout.id] ?? {
-            amount: (payout.amount_cents / 100).toFixed(2),
-            method: 'BANK_TRANSFER',
-            externalReference: '',
-            paidAt: new Date().toISOString().slice(0, 10),
-            reason: '',
-            externallyCompleted: false,
-        };
-        setPayoutForms((forms) => ({ ...forms, [payout.id]: { ...current, ...changes } }));
-    }
-
-    async function confirmPayout(payout: Payout) {
-        const form = payoutForms[payout.id];
-        const amountCents = parseCents(form?.amount ?? '');
-        if (amountCents === null
-            || amountCents !== payout.amount_cents
-            || !form?.method
-            || form.externalReference.trim().length < 4
-            || !form.paidAt
-            || form.reason.trim().length < 8
-            || !form.externallyCompleted) {
-            onError('Enter the exact payout amount, transfer method, reference, date, reason, and confirm the transfer was already completed outside Farmgate.');
-            return;
-        }
-        if (!await confirmAction({
-            title: 'Record externally completed rider payout?',
-            text: `Confirm that ${money(amountCents)} was already transferred outside Farmgate. This action records the transfer only; Farmgate will not send money.`,
-            confirmText: 'Record external transfer',
-        })) return;
-
-        setSaving(true);
-        setSuccess('');
-        try {
-            await api.post(`/api/admin/rider-payouts/${payout.id}/manual-confirm`, {
-                amount_cents: amountCents,
-                method: form.method,
-                external_reference: form.externalReference.trim(),
-                paid_at: form.paidAt,
-                reason: form.reason.trim(),
-                externally_completed_confirmed: true,
-            });
-            setSuccess('Externally completed rider payout recorded. Farmgate did not initiate a transfer.');
-            await refresh();
-        } catch (error: any) {
-            onError(error.userMessage ?? error.response?.data?.message ?? 'The rider payout could not be recorded.');
-        } finally {
-            setSaving(false);
-        }
-    }
-
-    const queueRows = pendingPayouts?.data ?? [];
-    const recordedRows = recordedPayouts?.data ?? [];
-    const isConfigured = settingConfigured;
-
-    return <section className="payments-settings-card rider-payout-operations" aria-labelledby="rider-payout-operations-title">
-        <div className="payments-section-heading">
-            <div><h3 id="rider-payout-operations-title">Rider earnings and payouts</h3><p>Configure audited rates, review per-delivery amounts, and record only transfers already completed outside Farmgate.</p></div>
-            <span className={`status-pill${isConfigured ? ' status-active' : ''}`}>{isConfigured ? 'Configured' : 'Not configured'}</span>
-        </div>
-        {loading ? <p role="status">Loading rider payout settings…</p> : <>
-            <div className="payments-blocked-card" role="status">
-                {!isConfigured
-                    ? <p>Rider earnings and payouts are blocked until an authorized admin saves both a percentage and an explicit cap option. No rate or cap was seeded.</p>
-                    : <p>Configuration saved by {setting?.updater?.name ?? 'an authorized admin'} on {setting?.updated_at ? new Date(setting.updated_at).toLocaleString() : '—'}. Each later delivery uses its own immutable settings snapshot.</p>}
-                <p>The existing legacy maximum-compensation setting is not used. A cap applies only after this screen explicitly saves its amount and scope.</p>
+    return <div className="rider-payout-tab-content">
+        <div className="rider-payout-subsection-heading">
+            <div>
+                <h4>Earnings calculation policy</h4>
+                <p>New earnings use the saved rate when a delivery is completed and verified. Payouts remain one per delivery.</p>
             </div>
-            <form className="settings-grid" onSubmit={(event) => void saveSettings(event)} aria-busy={saving}>
-                <label className="settings-field">Rider earnings percentage
-                    <span><input type="number" min="0" max="100" step="0.01" required value={percentage} onChange={(event) => setPercentage(event.target.value)} /> %</span>
+            <StatusPill status={configured ? 'configured' : 'not-configured'}>{configured ? 'Configured' : 'Not configured'}</StatusPill>
+        </div>
+        <LoadState loading={loading} error={loadError} onRetry={() => setReload((version) => version + 1)} />
+        {!loading && !loadError && <div className={`rider-payout-config-notice${configured ? ' is-configured' : ''}`}>
+            <strong>{configured ? 'Saved settings are active for future delivery earnings.' : 'No earnings rate or cap has been saved.'}</strong>
+            {setting && <p>Current rate: {setting.percentage}% · {scopeLabel(setting.cap_scope)}{setting.cap_scope !== 'NO_CAP' && setting.cap_amount ? ` · cap ₱${Number(setting.cap_amount).toFixed(2)}` : ''}{setting.updater?.name ? ` · saved by ${setting.updater.name}` : ''}</p>}
+            <small>Existing delivery earnings keep their original rate and amount. Changing this policy does not reprice saved earnings.</small>
+        </div>}
+        {!loading && !loadError && <form className="rider-payout-settings-form" onSubmit={submit} aria-busy={saving}>
+            <div className="rider-earnings-settings-fields">
+                <label className="rider-payout-field">Rider earnings percentage
+                    <span className="rider-payout-percentage-control"><input type="number" min="0" max="100" step="0.01" value={percentage} onChange={(event) => setPercentage(event.target.value)} required /><span>% of delivery fee</span></span>
                 </label>
-                <label className="settings-field">Maximum-compensation cap
-                    <select value={capScope} onChange={(event) => {
-                        setCapScope(event.target.value);
-                        if (event.target.value === 'NO_CAP') setCapAmount('');
-                    }}>
+                <label className="rider-payout-field">Maximum-compensation cap
+                    <select value={capScope} onChange={(event) => setCapScope(event.target.value as CapScope)} required>
                         <option value="">Choose an option</option>
                         <option value="NO_CAP">No cap</option>
                         <option value="PER_DELIVERY">Cap per delivery</option>
-                        <option value="PER_PAYOUT">Cap per payout</option>
                     </select>
                 </label>
-                {capScope !== 'NO_CAP' && <label className="settings-field">Cap amount (PHP)
-                    <input type="number" min="0.01" step="0.01" required value={capAmount} onChange={(event) => setCapAmount(event.target.value)} />
+                {capScope === 'PER_DELIVERY' && <label className="rider-payout-field">Cap amount (PHP)
+                    <input type="number" min="0.01" step="0.01" value={capAmount} onChange={(event) => setCapAmount(event.target.value)} required />
+                    <small>Required when a per-delivery cap is selected.</small>
                 </label>}
-                {capScope === 'PER_PAYOUT' && <p className="payments-inline-note">Payouts are per delivery, so this cap applies to each single-delivery payout.</p>}
-                <label className="settings-reason">Reason for this earnings and cap configuration (required)
-                    <input minLength={8} maxLength={255} required value={settingReason} onChange={(event) => setSettingReason(event.target.value)} />
+                <label className="rider-payout-field rider-payout-reason-field">Reason for this earnings and cap configuration
+                    <input type="text" minLength={8} maxLength={255} value={reason} onChange={(event) => setReason(event.target.value)} required />
                 </label>
-                <div className="settings-actions"><button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save rider earnings settings'}</button>{success && <span className="settings-success" role="status">{success}</span>}</div>
-            </form>
+            </div>
+            <p className="rider-payout-cap-note">The rate and cap apply to future eligible deliveries only. No cap applies unless explicitly selected and saved.</p>
+            {actionError && <p className="seller-error" role="alert">{actionError}</p>}
+            {saveMessage && <p className="rider-payout-success" role="status">{saveMessage}</p>}
+            <div className="rider-payout-settings-actions"><button type="submit" disabled={saving || !capScope}>{saving ? 'Saving…' : 'Save rider earnings settings'}</button></div>
+        </form>}
+        <section className="rider-payout-subsection" aria-labelledby="rider-payout-settings-history-title">
+            <div className="rider-payout-subsection-heading"><div><h4 id="rider-payout-settings-history-title">Configuration audit history</h4><p>Every saved rate and cap change remains recorded with its administrator and reason.</p></div></div>
+            {loading ? <p className="seller-loading">Loading configuration history…</p> : loadError ? <p className="seller-empty">History is unavailable until settings load successfully.</p> : history.length === 0 ? <p className="seller-empty">No rider earnings settings have been saved.</p> : <div className="rider-payout-history-table-wrap">
+                <table className="data-table">
+                    <thead><tr><th>Saved</th><th>Administrator</th><th>Rate</th><th>Cap</th><th>Reason</th></tr></thead>
+                    <tbody>{history.map((item, index) => <tr key={`${item.created_at}-${index}`}>
+                        <td>{dateLabel(item.created_at)}</td><td>{item.actor?.name ?? '—'}</td><td>{item.new_percentage}%</td><td>{scopeLabel(item.new_cap_scope)}{item.new_cap_scope !== 'NO_CAP' && item.new_cap_amount ? ` · ₱${Number(item.new_cap_amount).toFixed(2)}` : ''}</td><td>{item.reason}</td>
+                    </tr>)}</tbody>
+                </table>
+            </div>}
+        </section>
+    </div>;
+}
 
-            <section aria-labelledby="rider-earnings-history-title">
-                <h4 id="rider-earnings-history-title">Configuration audit history</h4>
-                {history.length === 0 ? <p className="admin-empty">No rider earnings settings have been saved.</p>
-                    : <div className="data-table-wrap"><table><thead><tr><th>Changed by</th><th>Percentage</th><th>Cap</th><th>Reason</th><th>Time</th></tr></thead><tbody>
-                        {history.map((item) => <tr key={item.id}>
-                            <td>{item.actor?.name ?? '—'}</td>
-                            <td>{item.old_percentage === null ? 'Not configured' : `${item.old_percentage}%`} → {item.new_percentage}%</td>
-                            <td>{item.new_cap_scope === 'NO_CAP' ? 'No cap' : `${item.new_cap_scope === 'PER_PAYOUT' ? 'Per payout' : 'Per delivery'} · PHP ${item.new_cap_amount ?? '—'}`}</td>
-                            <td>{item.reason}</td>
-                            <td>{new Date(item.created_at).toLocaleString()}</td>
-                        </tr>)}
-                    </tbody></table></div>}
-            </section>
+function DestinationsTab({ onPayoutsChanged }: { onPayoutsChanged: () => void }) {
+    const [destinations, setDestinations] = useState<Page<Destination> | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState('');
+    const [reload, setReload] = useState(0);
+    const [page, setPage] = useState(1);
+    const [searchText, setSearchText] = useState('');
+    const [search, setSearch] = useState('');
+    const [status, setStatus] = useState('ALL');
+    const [selectedId, setSelectedId] = useState<number | null>(null);
+    const [details, setDetails] = useState<DestinationDetails | null>(null);
+    const [detailsLoading, setDetailsLoading] = useState(false);
+    const [detailsError, setDetailsError] = useState('');
+    const [decisionReason, setDecisionReason] = useState('');
+    const [decisionError, setDecisionError] = useState('');
+    const [savingDecision, setSavingDecision] = useState(false);
 
-            <section aria-labelledby="rider-payout-queue-title">
-                <div className="payments-section-heading"><div><h4 id="rider-payout-queue-title">Pending manual payouts</h4><p>These are records only. Confirm payment after the external transfer has actually completed.</p></div></div>
-                {queueRows.length === 0 ? <p className="admin-empty">No pending rider payouts.</p> : queueRows.map((payout) => {
-                    const form = payoutForms[payout.id] ?? {
-                        amount: (payout.amount_cents / 100).toFixed(2),
-                        method: 'BANK_TRANSFER',
-                        externalReference: '',
-                        paidAt: new Date().toISOString().slice(0, 10),
-                        reason: '',
-                        externallyCompleted: false,
-                    };
-                    return <article className="payments-settings-card" key={payout.id}>
-                        <h5>{payout.earning.order.order_reference} · {payout.earning.delivery.delivery_reference}</h5>
-                        <p>{payout.rider.name} · {money(payout.amount_cents)} · {payout.earning.percentage_snapshot}% of saved delivery fee</p>
-                        <div className="settings-grid">
-                            <label>Amount (PHP)<input type="number" min="0.01" step="0.01" value={form.amount} onChange={(event) => updatePayoutForm(payout, { amount: event.target.value })} /></label>
-                            <label>Method<select value={form.method} onChange={(event) => updatePayoutForm(payout, { method: event.target.value })}>
-                                <option value="BANK_TRANSFER">Bank transfer</option><option value="GCASH">GCash</option><option value="CASH">Cash</option><option value="OTHER">Other</option>
-                            </select></label>
-                            <label>External transfer reference<input value={form.externalReference} onChange={(event) => updatePayoutForm(payout, { externalReference: event.target.value })} /></label>
-                            <label>Transfer date<input type="date" value={form.paidAt} onChange={(event) => updatePayoutForm(payout, { paidAt: event.target.value })} /></label>
-                            <label>Reason<input minLength={8} maxLength={500} value={form.reason} onChange={(event) => updatePayoutForm(payout, { reason: event.target.value })} /></label>
-                        </div>
-                        <label className="seller-payout-destination-consent"><input type="checkbox" checked={form.externallyCompleted} onChange={(event) => updatePayoutForm(payout, { externallyCompleted: event.target.checked })} /><span>I confirm this transfer was already completed outside Farmgate. This action will only record it.</span></label>
-                        <button type="button" className="seller-inline-action" disabled={saving} onClick={() => void confirmPayout(payout)}>Record external payment</button>
-                    </article>;
-                })}
-                {(pendingPayouts?.last_page ?? 1) > 1 && <Pagination page={pendingPayouts?.current_page ?? 1} lastPage={pendingPayouts?.last_page ?? 1} onChange={setPendingPage} label="Pending rider payouts pages" />}
-            </section>
+    useEffect(() => {
+        const timer = window.setTimeout(() => { setSearch(searchText.trim()); setPage(1); }, 250);
+        return () => window.clearTimeout(timer);
+    }, [searchText]);
 
-            <section aria-labelledby="rider-payout-history-title">
-                <div className="payments-section-heading"><div><h4 id="rider-payout-history-title">Recorded external payouts</h4></div></div>
-                {recordedRows.length === 0 ? <p className="admin-empty">No rider payouts have been recorded as externally paid.</p>
-                    : <div className="data-table-wrap"><table><thead><tr><th>Order</th><th>Rider</th><th>Amount</th><th>Method</th><th>Recorded by</th><th>Paid at</th></tr></thead><tbody>
-                        {recordedRows.map((payout) => <tr key={payout.id}>
-                            <td>{payout.earning.order.order_reference}</td><td>{payout.rider.name}</td><td>{money(payout.amount_cents)}</td><td>{payout.method}</td><td>{payout.recorder?.name ?? '—'}</td><td>{payout.paid_at ? new Date(payout.paid_at).toLocaleDateString() : '—'}</td>
-                        </tr>)}
-                    </tbody></table></div>}
-                {(recordedPayouts?.last_page ?? 1) > 1 && <Pagination page={recordedPayouts?.current_page ?? 1} lastPage={recordedPayouts?.last_page ?? 1} onChange={setRecordedPage} label="Recorded rider payouts pages" />}
-            </section>
-        </>}
-    </section>;
+    useEffect(() => {
+        let active = true;
+        const params: Record<string, string | number> = { page, per_page: 10 };
+        if (search) params.search = search;
+        if (status !== 'ALL') params.status = status;
+        setLoading(true);
+        setError('');
+        api.get<{ destinations: Page<Destination> }>('/api/admin/rider-payout-destinations', { params })
+            .then((response) => { if (active) setDestinations(response.data.destinations); })
+            .catch((requestError: unknown) => { if (active) setError(messageFrom(requestError, 'Rider payout destinations could not be loaded.')); })
+            .finally(() => { if (active) setLoading(false); });
+        return () => { active = false; };
+    }, [page, search, status, reload]);
+
+    const openDetails = async (destination: Destination) => {
+        if (selectedId === destination.id) {
+            setSelectedId(null);
+            setDetails(null);
+            return;
+        }
+        setSelectedId(destination.id);
+        setDetails(null);
+        setDetailsError('');
+        setDecisionReason('');
+        setDetailsLoading(true);
+        try {
+            const response = await api.get<{ destination: DestinationDetails }>(`/api/admin/rider-payout-destinations/${destination.id}`);
+            setDetails(response.data.destination);
+        } catch (requestError: unknown) {
+            setDetailsError(messageFrom(requestError, 'Destination details could not be loaded.'));
+        } finally {
+            setDetailsLoading(false);
+        }
+    };
+
+    const decide = async (decision: 'verify' | 'reject') => {
+        if (!details || decisionReason.trim().length < 8) return;
+        const approved = decision === 'verify';
+        const confirmed = await confirmAction({
+            title: approved ? 'Verify this payout destination?' : 'Reject this payout destination?',
+            text: approved ? 'Only masked destination details will be available in Farmgate.' : 'The rider will need to update the destination before payouts can use it.',
+            confirmText: approved ? 'Verify destination' : 'Reject destination',
+            danger: !approved,
+        });
+        if (!confirmed) return;
+        setSavingDecision(true);
+        setDecisionError('');
+        try {
+            await initializeCsrf();
+            await api.post(`/api/admin/rider-payout-destinations/${details.id}/${decision}`, { reason: decisionReason });
+            setSelectedId(null);
+            setDetails(null);
+            setDecisionReason('');
+            setReload((version) => version + 1);
+            onPayoutsChanged();
+        } catch (requestError: unknown) {
+            setDecisionError(messageFrom(requestError, 'The payout destination decision could not be saved.'));
+        } finally {
+            setSavingDecision(false);
+        }
+    };
+
+    return <div className="rider-payout-tab-content">
+        <div className="rider-payout-subsection-heading"><div><h4>Rider payout destinations</h4><p>Only current, admin-verified destinations can be used when recording a transfer. Account identifiers remain masked.</p></div></div>
+        <div className="rider-payout-filter-bar">
+            <label className="seller-listing-search">Search rider or destination
+                <input type="search" value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder="Rider name, ID, bank, or status" />
+            </label>
+            <label className="rider-payout-filter">Destination status
+                <select value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }}>
+                    <option value="ALL">All statuses</option>
+                    <option value="PENDING_VERIFICATION">Pending verification</option>
+                    <option value="VERIFIED">Verified</option>
+                    <option value="REJECTED">Rejected</option>
+                    <option value="REPLACED">Replaced</option>
+                </select>
+            </label>
+        </div>
+        <LoadState loading={loading} error={error} onRetry={() => setReload((version) => version + 1)} />
+        {!loading && !error && <div className="rider-payout-history-table-wrap">
+            <table className="data-table rider-payout-operations-table">
+                <thead><tr><th>Rider</th><th>Destination</th><th>Masked identifier</th><th>Status</th><th>Updated</th><th>Action</th></tr></thead>
+                <tbody>
+                    {(destinations?.data ?? []).map((destination) => <FragmentDestinationRow
+                        key={destination.id}
+                        destination={destination}
+                        selected={selectedId === destination.id}
+                        details={selectedId === destination.id ? details : null}
+                        detailsLoading={selectedId === destination.id && detailsLoading}
+                        detailsError={selectedId === destination.id ? detailsError : ''}
+                        reason={decisionReason}
+                        decisionError={decisionError}
+                        saving={savingDecision}
+                        onReasonChange={setDecisionReason}
+                        onOpen={() => void openDetails(destination)}
+                        onDecision={decide}
+                    />)}
+                    {destinations?.data.length === 0 && <tr><td colSpan={6}><p className="rider-payout-empty-state">No payout destinations match these filters.</p></td></tr>}
+                </tbody>
+            </table>
+        </div>}
+        {!loading && !error && destinations && <Pagination page={destinations.current_page} lastPage={destinations.last_page} onChange={setPage} label="Rider payout destination pages" />}
+    </div>;
+}
+
+function FragmentDestinationRow({
+    destination, selected, details, detailsLoading, detailsError, reason, decisionError, saving, onReasonChange, onOpen, onDecision,
+}: {
+    destination: Destination;
+    selected: boolean;
+    details: DestinationDetails | null;
+    detailsLoading: boolean;
+    detailsError: string;
+    reason: string;
+    decisionError: string;
+    saving: boolean;
+    onReasonChange: (reason: string) => void;
+    onOpen: () => void;
+    onDecision: (decision: 'verify' | 'reject') => void;
+}) {
+    return <>
+        <tr>
+            <td>{destination.rider?.name ?? 'Rider'} <small className="rider-payout-secondary">Rider #{destination.rider?.id ?? '—'}</small></td>
+            <td>{destination.destination_type === 'BANK' ? `Bank · ${destination.bank_name_masked ?? '—'}` : 'GCash'}{destination.is_current && <small className="rider-payout-secondary">Current</small>}</td>
+            <td>{destinationIdentifier(destination)}</td>
+            <td><StatusPill status={destination.status}>{destination.status.replaceAll('_', ' ')}</StatusPill></td>
+            <td>{dateLabel(destination.updated_at)}</td>
+            <td><button type="button" className="seller-inline-action" aria-expanded={selected} onClick={onOpen}>{selected ? 'Hide details' : 'View details'}</button></td>
+        </tr>
+        {selected && <tr className="rider-payout-expanded-row"><td colSpan={6}>
+            {detailsLoading && <p className="seller-loading" role="status">Loading masked destination details…</p>}
+            {detailsError && <p className="seller-error" role="alert">{detailsError}</p>}
+            {details && <div className="rider-payout-expanded">
+                <dl className="rider-payout-destination-details">
+                    <div><dt>Rider</dt><dd>{details.rider?.name ?? '—'} (#{details.rider?.id ?? '—'})</dd></div>
+                    <div><dt>Account holder</dt><dd>{details.account_holder_masked}</dd></div>
+                    <div><dt>Destination</dt><dd>{details.destination_type === 'BANK' ? `Bank · ${details.bank_name_masked ?? '—'}` : 'GCash'}</dd></div>
+                    <div><dt>Masked identifier</dt><dd>{destinationIdentifier(details)}</dd></div>
+                    <div><dt>Status</dt><dd><StatusPill status={details.status}>{details.status.replaceAll('_', ' ')}</StatusPill></dd></div>
+                    <div><dt>Verified</dt><dd>{details.verified_at ? `${dateLabel(details.verified_at)}${details.verified_by_name ? ` by ${details.verified_by_name}` : ''}` : 'Not verified'}</dd></div>
+                    <div><dt>Rider consent</dt><dd>{details.consent_version ?? '—'}{details.consent_accepted_at ? ` · ${dateLabel(details.consent_accepted_at)}` : ''}</dd></div>
+                </dl>
+                {details.status === 'PENDING_VERIFICATION' && details.is_current && <form className="rider-payout-destination-review" onSubmit={(event) => event.preventDefault()}>
+                    <label className="rider-payout-field">Reason for this destination decision
+                        <textarea minLength={8} maxLength={500} required value={reason} onChange={(event) => onReasonChange(event.target.value)} />
+                    </label>
+                    {decisionError && <p className="seller-error" role="alert">{decisionError}</p>}
+                    <div className="rider-payout-settings-actions">
+                        <button type="button" disabled={saving || reason.trim().length < 8} onClick={() => onDecision('verify')}>{saving ? 'Saving…' : 'Verify destination'}</button>
+                        <button type="button" className="rider-payout-danger-action" disabled={saving || reason.trim().length < 8} onClick={() => onDecision('reject')}>Reject destination</button>
+                    </div>
+                </form>}
+                <div className="rider-payout-audit-list">
+                    <h5>Destination audit history</h5>
+                    {details.verification_history?.length ? <ol>{details.verification_history.map((item, index) => <li key={`${item.action}-${item.created_at}-${index}`}>
+                        <strong>{item.action.replaceAll('_', ' ')}</strong><span>{item.actor ?? 'System'} · {dateLabel(item.created_at)}</span>{item.reason && <p>{item.reason}</p>}
+                    </li>)}</ol> : <p>No destination audit events are available.</p>}
+                </div>
+            </div>}
+        </td></tr>}
+    </>;
+}
+
+function PendingPayoutsTab({ refreshVersion, onPayoutChanged, onError }: { refreshVersion: number; onPayoutChanged: () => void; onError: (message: string) => void }) {
+    const [payouts, setPayouts] = useState<Page<Payout> | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState('');
+    const [reload, setReload] = useState(0);
+    const [page, setPage] = useState(1);
+    const [searchText, setSearchText] = useState('');
+    const [search, setSearch] = useState('');
+    const [destinationStatus, setDestinationStatus] = useState('ALL');
+    const [sort, setSort] = useState('newest');
+    const [expandedId, setExpandedId] = useState<number | null>(null);
+    const [forms, setForms] = useState<Record<number, PayoutFormState>>({});
+    const [savingId, setSavingId] = useState<number | null>(null);
+    const [actionError, setActionError] = useState('');
+
+    useEffect(() => {
+        const timer = window.setTimeout(() => { setSearch(searchText.trim()); setPage(1); }, 250);
+        return () => window.clearTimeout(timer);
+    }, [searchText]);
+
+    useEffect(() => {
+        let active = true;
+        const params: Record<string, string | number> = { group: 'queue', page, per_page: 10, sort };
+        if (search) params.search = search;
+        if (destinationStatus !== 'ALL') params.destination_status = destinationStatus;
+        setLoading(true);
+        setError('');
+        api.get<{ payouts: Page<Payout> }>('/api/admin/rider-payouts', { params })
+            .then((response) => { if (active) setPayouts(response.data.payouts); })
+            .catch((requestError: unknown) => { if (active) setError(messageFrom(requestError, 'Pending rider payouts could not be loaded.')); })
+            .finally(() => { if (active) setLoading(false); });
+        return () => { active = false; };
+    }, [page, search, destinationStatus, sort, reload, refreshVersion]);
+
+    const formFor = (payout: Payout): PayoutFormState => {
+        const defaultMethod = payout.destination_masked?.type === 'GCASH' ? 'GCASH' : 'BANK_TRANSFER';
+        return forms[payout.id] ?? {
+            externalReference: '',
+            amount: (payout.amount_cents / 100).toFixed(2),
+            paidAt: localDate(),
+            reason: '',
+            receipt: null,
+            confirmed: false,
+            method: defaultMethod,
+        };
+    };
+
+    const updateForm = (payout: Payout, values: Partial<PayoutFormState>) => {
+        setForms((current) => ({ ...current, [payout.id]: { ...formFor(payout), ...values } }));
+    };
+
+    const recordPayout = async (event: FormEvent<HTMLFormElement>, payout: Payout) => {
+        event.preventDefault();
+        const form = formFor(payout);
+        if (!payout.destination_masked || payout.destination_masked.status !== 'VERIFIED') {
+            setActionError('A current verified payout destination is required.');
+            return;
+        }
+        if (!form.receipt) {
+            setActionError('Upload a private receipt for the completed external transfer.');
+            return;
+        }
+        const amountCents = parseCents(form.amount);
+        if (amountCents === null || amountCents !== payout.amount_cents) {
+            setActionError('Enter the exact amount already transferred. It must match the delivery payout amount.');
+            return;
+        }
+        const confirmed = await confirmAction({
+            title: `Record ${money(payout.amount_cents)} as externally paid?`,
+            text: 'Confirm only after you have independently completed the bank or e-wallet transfer. Farmgate will record it but will not send money.',
+            confirmText: 'Record completed transfer',
+        });
+        if (!confirmed) return;
+        setSavingId(payout.id);
+        setActionError('');
+        try {
+            await initializeCsrf();
+            const payload = new FormData();
+            payload.append('external_reference', form.externalReference);
+            payload.append('method', form.method);
+            payload.append('amount_cents', String(amountCents));
+            payload.append('paid_at', form.paidAt);
+            payload.append('reason', form.reason);
+            payload.append('externally_completed_confirmed', form.confirmed ? '1' : '');
+            payload.append('receipt', form.receipt);
+            await api.post(`/api/admin/rider-payouts/${payout.id}/manual-confirm`, payload);
+            setExpandedId(null);
+            setForms((current) => {
+                const next = { ...current };
+                delete next[payout.id];
+                return next;
+            });
+            onPayoutChanged();
+        } catch (requestError: unknown) {
+            const message = messageFrom(requestError, 'The external payout could not be recorded.');
+            setActionError(message);
+            onError(message);
+        } finally {
+            setSavingId(null);
+        }
+    };
+
+    return <div className="rider-payout-tab-content">
+        <div className="rider-payout-subsection-heading">
+            <div><h4>Eligible unpaid delivery earnings</h4><p>Each row represents one verified delivery and its saved fee and rate snapshot. Confirm the external transfer before recording it.</p></div>
+            <span className="rider-payout-count">{payouts?.total ?? 0} pending</span>
+        </div>
+        <div className="rider-payout-filter-bar">
+            <label className="seller-listing-search">Search rider, delivery, or order
+                <input type="search" value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder="Name, delivery reference, or order reference" />
+            </label>
+            <label className="rider-payout-filter">Destination
+                <select value={destinationStatus} onChange={(event) => { setDestinationStatus(event.target.value); setPage(1); }}>
+                    <option value="ALL">All destinations</option>
+                    <option value="VERIFIED">Ready to pay</option>
+                    <option value="NEEDS_REVIEW">Needs destination review</option>
+                </select>
+            </label>
+            <label className="rider-payout-filter">Sort
+                <select value={sort} onChange={(event) => { setSort(event.target.value); setPage(1); }}>
+                    <option value="newest">Newest first</option>
+                    <option value="oldest">Oldest first</option>
+                    <option value="amount_desc">Amount: high to low</option>
+                    <option value="amount_asc">Amount: low to high</option>
+                </select>
+            </label>
+        </div>
+        <LoadState loading={loading} error={error} onRetry={() => setReload((version) => version + 1)} />
+        {!loading && !error && <div className="rider-payout-history-table-wrap">
+            <table className="data-table rider-payout-operations-table">
+                <thead><tr><th>Payout reference</th><th>Rider</th><th>Delivery / order</th><th>Amount due</th><th>Destination</th><th>Details</th></tr></thead>
+                <tbody>
+                    {(payouts?.data ?? []).map((payout) => <PendingPayoutRow
+                        key={payout.id}
+                        payout={payout}
+                        expanded={expandedId === payout.id}
+                        form={formFor(payout)}
+                        saving={savingId === payout.id}
+                        actionError={expandedId === payout.id ? actionError : ''}
+                        onToggle={() => { setExpandedId((current) => current === payout.id ? null : payout.id); setActionError(''); }}
+                        onUpdate={(values) => updateForm(payout, values)}
+                        onSubmit={(event) => void recordPayout(event, payout)}
+                    />)}
+                    {payouts?.data.length === 0 && <tr><td colSpan={6}><p className="rider-payout-empty-state">No eligible unpaid delivery earnings match these filters.</p></td></tr>}
+                </tbody>
+            </table>
+        </div>}
+        {!loading && !error && payouts && <Pagination page={payouts.current_page} lastPage={payouts.last_page} onChange={setPage} label="Pending rider payout pages" />}
+    </div>;
+}
+
+function PendingPayoutRow({ payout, expanded, form, saving, actionError, onToggle, onUpdate, onSubmit }: {
+    payout: Payout;
+    expanded: boolean;
+    form: PayoutFormState;
+    saving: boolean;
+    actionError: string;
+    onToggle: () => void;
+    onUpdate: (values: Partial<PayoutFormState>) => void;
+    onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+    const destination = payout.destination_masked;
+    const eligibleDestination = destination?.status === 'VERIFIED';
+    return <>
+        <tr>
+            <td><strong>{payout.payout_reference}</strong><small className="rider-payout-secondary">{payout.status}</small></td>
+            <td>{payout.rider?.name ?? 'Rider'}<small className="rider-payout-secondary">Rider #{payout.rider?.id ?? '—'}</small></td>
+            <td>{payout.earning?.delivery?.delivery_reference ?? '—'}<small className="rider-payout-secondary">{payout.earning?.order?.order_reference ?? 'Order unavailable'}</small></td>
+            <td><strong>{money(payout.amount_cents)}</strong></td>
+            <td>{destination ? <>{destination.institution}<small className="rider-payout-secondary">{destination.identifier ?? 'Identifier unavailable'}</small><StatusPill status={destination.status}>{destination.status.replaceAll('_', ' ')}</StatusPill></> : <StatusPill status="needs-review">No destination</StatusPill>}</td>
+            <td><button type="button" className="seller-inline-action" aria-expanded={expanded} onClick={onToggle}>{expanded ? 'Hide details' : 'Review payout'}</button></td>
+        </tr>
+        {expanded && <tr className="rider-payout-expanded-row"><td colSpan={6}>
+            <div className="rider-payout-expanded">
+                <div className="rider-payout-record-heading">
+                    <div><p className="eyebrow">Delivery earnings</p><h5>{payout.earning?.delivery?.delivery_reference ?? 'Delivery reference unavailable'}</h5><p>Order {payout.earning?.order?.order_reference ?? '—'} · verified {dateLabel(payout.earning?.delivery?.delivery_verified_at)}</p></div>
+                    <strong>{money(payout.amount_cents)}</strong>
+                </div>
+                <dl className="rider-payout-destination-details">
+                    <div><dt>Delivery fee saved at completion</dt><dd>{money(payout.earning?.delivery_fee_cents)}</dd></div>
+                    <div><dt>Saved earning rate</dt><dd>{payout.earning?.percentage_snapshot ?? '—'}%</dd></div>
+                    <div><dt>Saved cap rule</dt><dd>{scopeLabel(payout.earning?.cap_scope_snapshot)}{payout.earning?.cap_amount_snapshot ? ` · ₱${Number(payout.earning.cap_amount_snapshot).toFixed(2)}` : ''}</dd></div>
+                    <div><dt>Calculated rider earning</dt><dd>{money(payout.earning?.amount_cents)}</dd></div>
+                    <div><dt>Verified payout destination</dt><dd>{destination ? `${destination.account_holder} · ${destination.institution} · ${destination.identifier ?? 'masked identifier unavailable'}` : 'No verified destination assigned'}</dd></div>
+                    <div><dt>Destination status</dt><dd>{destination ? <StatusPill status={destination.status}>{destination.status.replaceAll('_', ' ')}</StatusPill> : 'Needs review'}</dd></div>
+                </dl>
+                <div className="rider-payout-audit-list">
+                    <h5>Payout audit history</h5>
+                    {payout.histories?.length ? <ol>{payout.histories.map((item, index) => <li key={`${item.action}-${item.created_at}-${index}`}><strong>{item.action.replaceAll('_', ' ')}</strong><span>{item.actor?.name ?? 'System'} · {dateLabel(item.created_at)}</span>{item.reason && <p>{item.reason}</p>}</li>)}</ol> : <p>No payout audit events are available.</p>}
+                </div>
+                {!eligibleDestination ? <p className="seller-error" role="status">A current admin-verified destination is required before an external transfer can be recorded.</p> : <form className="rider-payout-record-form" onSubmit={onSubmit}>
+                    <h5>Record a completed external transfer</h5>
+                    <p>Transfer the exact amount outside Farmgate first. Farmgate does not initiate transfers from this screen.</p>
+                    <div className="rider-payout-payment-fields">
+                        <label className="rider-payout-field">Transfer method<input value={form.method === 'GCASH' ? 'GCash' : 'Bank transfer'} readOnly /></label>
+                        <label className="rider-payout-field">Transferred amount (PHP)
+                            <input type="number" min="0.01" step="0.01" value={form.amount} onChange={(event) => onUpdate({ amount: event.target.value })} required />
+                        </label>
+                        <label className="rider-payout-field">External transfer reference
+                            <input type="text" minLength={4} maxLength={100} pattern="[A-Za-z0-9._:-]+" value={form.externalReference} onChange={(event) => onUpdate({ externalReference: event.target.value })} required />
+                        </label>
+                        <label className="rider-payout-field">Transfer date
+                            <input type="date" max={localDate()} value={form.paidAt} onChange={(event) => onUpdate({ paidAt: event.target.value })} required />
+                        </label>
+                        <label className="rider-payout-field">Private transfer receipt
+                            <input type="file" accept=".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf" onChange={(event) => onUpdate({ receipt: event.target.files?.[0] ?? null })} required />
+                            <small>PDF or image, maximum 10 MB. Accessible only to this rider and authorized admins.</small>
+                        </label>
+                        <label className="rider-payout-field rider-payout-reason-field">Reason / reconciliation note
+                            <textarea minLength={8} maxLength={500} value={form.reason} onChange={(event) => onUpdate({ reason: event.target.value })} required />
+                        </label>
+                    </div>
+                    <label className="rider-payout-confirmation">
+                        <input type="checkbox" checked={form.confirmed} onChange={(event) => onUpdate({ confirmed: event.target.checked })} required />
+                        <span>I independently confirmed that this external transfer is complete for the exact amount shown.</span>
+                    </label>
+                    {actionError && <p className="seller-error" role="alert">{actionError}</p>}
+                    <div className="rider-payout-settings-actions"><button type="submit" disabled={saving || !form.confirmed}>{saving ? 'Recording…' : 'Record completed external payout'}</button></div>
+                </form>}
+            </div>
+        </td></tr>}
+    </>;
+}
+
+function RecordedPayoutsTab({ refreshVersion }: { refreshVersion: number }) {
+    const [payouts, setPayouts] = useState<Page<Payout> | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState('');
+    const [reload, setReload] = useState(0);
+    const [page, setPage] = useState(1);
+    const [searchText, setSearchText] = useState('');
+    const [search, setSearch] = useState('');
+    const [method, setMethod] = useState('ALL');
+    const [fromDate, setFromDate] = useState('');
+    const [toDate, setToDate] = useState('');
+    const [sort, setSort] = useState('newest');
+
+    useEffect(() => {
+        const timer = window.setTimeout(() => { setSearch(searchText.trim()); setPage(1); }, 250);
+        return () => window.clearTimeout(timer);
+    }, [searchText]);
+
+    useEffect(() => {
+        let active = true;
+        const params: Record<string, string | number> = { group: 'recorded', page, per_page: 10, sort };
+        if (search) params.search = search;
+        if (method !== 'ALL') params.method = method;
+        if (fromDate) params.from_date = fromDate;
+        if (toDate) params.to_date = toDate;
+        setLoading(true);
+        setError('');
+        api.get<{ payouts: Page<Payout> }>('/api/admin/rider-payouts', { params })
+            .then((response) => { if (active) setPayouts(response.data.payouts); })
+            .catch((requestError: unknown) => { if (active) setError(messageFrom(requestError, 'Recorded rider payouts could not be loaded.')); })
+            .finally(() => { if (active) setLoading(false); });
+        return () => { active = false; };
+    }, [page, search, method, fromDate, toDate, sort, reload, refreshVersion]);
+
+    return <div className="rider-payout-tab-content">
+        <div className="rider-payout-subsection-heading"><div><h4>Recorded external payouts</h4><p>Only payouts confirmed after an external transfer are shown here. Receipt access is authenticated and private.</p></div><span className="rider-payout-count">{payouts?.total ?? 0} recorded</span></div>
+        <div className="rider-payout-filter-bar rider-payout-filter-bar--recorded">
+            <label className="seller-listing-search">Search payout, rider, delivery, or order
+                <input type="search" value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder="Payout reference, rider, or delivery reference" />
+            </label>
+            <label className="rider-payout-filter">Transfer method
+                <select value={method} onChange={(event) => { setMethod(event.target.value); setPage(1); }}>
+                    <option value="ALL">All methods</option>
+                    <option value="BANK_TRANSFER">Bank transfer</option>
+                    <option value="GCASH">GCash</option>
+                </select>
+            </label>
+            <label className="rider-payout-filter">Paid from<input type="date" value={fromDate} onChange={(event) => { setFromDate(event.target.value); setPage(1); }} /></label>
+            <label className="rider-payout-filter">Paid through<input type="date" value={toDate} onChange={(event) => { setToDate(event.target.value); setPage(1); }} /></label>
+            <label className="rider-payout-filter">Sort
+                <select value={sort} onChange={(event) => { setSort(event.target.value); setPage(1); }}>
+                    <option value="newest">Newest first</option>
+                    <option value="oldest">Oldest first</option>
+                    <option value="amount_desc">Amount: high to low</option>
+                    <option value="amount_asc">Amount: low to high</option>
+                </select>
+            </label>
+        </div>
+        <LoadState loading={loading} error={error} onRetry={() => setReload((version) => version + 1)} />
+        {!loading && !error && <div className="rider-payout-history-table-wrap">
+            <table className="data-table rider-payout-operations-table">
+                <thead><tr><th>Payout reference</th><th>Rider</th><th>Delivery / order</th><th>Amount</th><th>Paid date</th><th>Destination</th><th>Receipt</th></tr></thead>
+                <tbody>
+                    {(payouts?.data ?? []).map((payout) => <tr key={payout.id}>
+                        <td><strong>{payout.payout_reference}</strong><small className="rider-payout-secondary">{payout.method === 'GCASH' ? 'GCash' : 'Bank transfer'}</small></td>
+                        <td>{payout.rider?.name ?? 'Rider'}<small className="rider-payout-secondary">Rider #{payout.rider?.id ?? '—'}</small></td>
+                        <td>{payout.earning?.delivery?.delivery_reference ?? '—'}<small className="rider-payout-secondary">{payout.earning?.order?.order_reference ?? '—'}</small></td>
+                        <td><strong>{money(payout.amount_cents)}</strong></td>
+                        <td>{dateLabel(payout.paid_at)}</td>
+                        <td>{payout.destination_masked ? <>{payout.destination_masked.institution}<small className="rider-payout-secondary">{payout.destination_masked.identifier ?? '—'}</small></> : 'Destination unavailable'}</td>
+                        <td>{payout.receipt_url ? <a className="seller-inline-action rider-payout-receipt-link" href={payout.receipt_url} target="_blank" rel="noreferrer">View receipt</a> : <span className="rider-payout-secondary">Not recorded</span>}</td>
+                    </tr>)}
+                    {payouts?.data.length === 0 && <tr><td colSpan={7}><p className="rider-payout-empty-state">No recorded external payouts match these filters.</p></td></tr>}
+                </tbody>
+            </table>
+        </div>}
+        {!loading && !error && payouts && <Pagination page={payouts.current_page} lastPage={payouts.last_page} onChange={setPage} label="Recorded rider payout pages" />}
+    </div>;
 }

@@ -44,7 +44,13 @@ export type Listing = {
     estimated_weight_kg?: string;
     quantity: number;
     category: Category;
-    seller: { id: number; name: string };
+    seller: {
+        id: number;
+        name: string;
+        shop_name?: string | null;
+        shop_image_url?: string | null;
+        is_verified?: boolean;
+    };
     images: { url: string; alt_text?: string }[];
 };
 

@@ -12,6 +12,7 @@ class RiderPayout extends Model
     protected $fillable = [
         'rider_earning_id',
         'rider_id',
+        'destination_id',
         'amount_cents',
         'status',
         'recorded_by',
@@ -20,9 +21,11 @@ class RiderPayout extends Model
         'external_reference_hash',
         'reason',
         'paid_at',
+        'receipt_path',
+        'receipt_mime_type',
     ];
 
-    protected $hidden = ['external_reference', 'external_reference_hash', 'reason'];
+    protected $hidden = ['external_reference', 'external_reference_hash', 'reason', 'receipt_path', 'receipt_mime_type'];
 
     protected function casts(): array
     {
@@ -47,6 +50,11 @@ class RiderPayout extends Model
     public function rider(): BelongsTo
     {
         return $this->belongsTo(User::class, 'rider_id');
+    }
+
+    public function destination(): BelongsTo
+    {
+        return $this->belongsTo(RiderPayoutDestination::class, 'destination_id');
     }
 
     public function recorder(): BelongsTo

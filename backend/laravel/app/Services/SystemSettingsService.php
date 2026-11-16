@@ -24,7 +24,7 @@ class SystemSettingsService
         'account_lockout_minutes' => ['default' => 15, 'type' => 'integer', 'category' => 'security', 'label' => 'Account lockout duration'],
         'email_verification_required' => ['default' => false, 'type' => 'boolean', 'category' => 'security', 'label' => 'Email verification required'],
         'phone_verification_required' => ['default' => false, 'type' => 'boolean', 'category' => 'security', 'label' => 'Phone verification required'],
-        'seller_verification_required' => ['default' => true, 'type' => 'boolean', 'category' => 'seller', 'label' => 'Seller verification required'],
+        'seller_verification_required' => ['default' => true, 'type' => 'boolean', 'category' => 'seller', 'label' => 'Seller identity or verified email/mobile required to add listings'],
         'rider_verification_required' => ['default' => true, 'type' => 'boolean', 'category' => 'rider', 'label' => 'Rider verification required'],
         'allow_account_deactivation' => ['default' => true, 'type' => 'boolean', 'category' => 'account', 'label' => 'Allow account deactivation'],
         'allow_account_reactivation' => ['default' => true, 'type' => 'boolean', 'category' => 'account', 'label' => 'Allow account reactivation'],

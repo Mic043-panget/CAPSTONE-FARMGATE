@@ -23,7 +23,14 @@ type ShopPromotion = {
     status: 'ACTIVE' | 'SCHEDULED';
 };
 type ShopResponse = {
-    seller: { id: number; name: string; business_name: string | null; is_verified: boolean };
+    seller: {
+        id: number;
+        name: string;
+        business_name: string | null;
+        shop_name: string | null;
+        shop_image_url: string | null;
+        is_verified: boolean;
+    };
     listings: { data: Listing[]; current_page: number; last_page: number; total: number };
     categories: Category[];
     promotions: ShopPromotion[];
@@ -87,7 +94,7 @@ export function SellerShopPage({ sellerId, onOpenListing, onMessageSeller, onBac
         window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
-    const sellerName = shop?.seller.business_name?.trim() || shop?.seller.name || 'Seller shop';
+    const sellerName = shop?.seller.shop_name?.trim() || shop?.seller.business_name?.trim() || shop?.seller.name || 'Seller shop';
 
     return <main className="seller-shop-page" aria-labelledby="seller-shop-title">
         <button className="product-back-link" type="button" onClick={onBack}>← Back to livestock</button>
@@ -95,11 +102,11 @@ export function SellerShopPage({ sellerId, onOpenListing, onMessageSeller, onBac
             : error && (!shop || shop.seller.id !== sellerId) ? <div className="seller-shop-state seller-shop-error" role="alert"><p>{error}</p><button type="button" onClick={() => setRetry((value) => value + 1)}>Try again</button></div>
                 : shop && shop.seller.id === sellerId && <>
                     <header className="seller-shop-header">
-                        <div className="seller-shop-avatar" aria-hidden="true">{sellerName.slice(0, 1).toUpperCase()}</div>
+                        <div className="seller-shop-avatar" aria-hidden="true">{shop.seller.shop_image_url ? <img src={shop.seller.shop_image_url} alt="" /> : sellerName.slice(0, 1).toUpperCase()}</div>
                         <div className="seller-shop-profile">
                             <p className="eyebrow">Farmgate seller shop</p>
                             <h1 id="seller-shop-title">{sellerName}</h1>
-                            {shop.seller.business_name && shop.seller.name !== shop.seller.business_name && <p className="seller-shop-owner">Seller: {shop.seller.name}</p>}
+                            {sellerName !== shop.seller.name && <p className="seller-shop-owner">Seller: {shop.seller.name}</p>}
                             {shop.seller.is_verified && <span className="seller-shop-verified">Verified seller</span>}
                             <p className="seller-shop-rating"><span aria-label={`${shop.rating_average} out of 5 stars`}>{'★'.repeat(Math.round(shop.rating_average))}{'☆'.repeat(5 - Math.round(shop.rating_average))}</span> <strong>{shop.rating_average.toFixed(1)}</strong> · {shop.review_count} {shop.review_count === 1 ? 'review' : 'reviews'}</p>
                         </div>

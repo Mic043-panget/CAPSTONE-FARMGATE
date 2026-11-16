@@ -43,10 +43,12 @@ use App\Http\Controllers\Api\RiderEarningsController;
 use App\Http\Controllers\Api\Seller\ComplaintController as SellerComplaintController;
 use App\Http\Controllers\Api\Seller\DashboardController as SellerDashboardController;
 use App\Http\Controllers\Api\Seller\ProfileController as SellerProfileController;
+use App\Http\Controllers\Api\Seller\ShopProfileController as SellerShopProfileController;
 use App\Http\Controllers\Api\Seller\PromotionController as SellerPromotionController;
 use App\Http\Controllers\Api\Seller\ReviewController as SellerReviewController;
 use App\Http\Controllers\Api\SellerPayoutDestinationController;
 use App\Http\Controllers\Api\SellerPayoutPolicyController;
+use App\Http\Controllers\Api\RiderPayoutDestinationController;
 use App\Http\Controllers\Api\SellerRegistrationPhoneVerificationController;
 use App\Http\Middleware\EnsureApprovedRider;
 use App\Http\Middleware\MaintenanceMode;
@@ -118,6 +120,17 @@ Route::middleware(MaintenanceMode::class)->group(function (): void {
             Route::get('/seller/listings', [ListingController::class, 'mine']);
             Route::get('/seller/profile', [SellerProfileController::class, 'show']);
             Route::put('/seller/profile/location', [SellerProfileController::class, 'update']);
+            Route::get('/seller/shop-profile', [SellerShopProfileController::class, 'show']);
+            Route::post('/seller/shop-profile', [SellerShopProfileController::class, 'update'])->middleware('throttle:10,1');
+            Route::post('/seller/verification/submit', [SellerShopProfileController::class, 'submitVerification'])->middleware('throttle:5,1');
+            Route::get('/admin/seller-verifications', [SellerShopProfileController::class, 'adminIndex']);
+            Route::get('/admin/seller-verifications/{seller}', [SellerShopProfileController::class, 'adminShow'])->whereNumber('seller');
+            Route::post('/admin/seller-verifications/{seller}/document/reviewed', [SellerShopProfileController::class, 'adminMarkDocumentReviewed'])->whereNumber('seller')->middleware('throttle:10,1');
+            Route::post('/admin/seller-verifications/{seller}/decision', [SellerShopProfileController::class, 'adminDecision'])->whereNumber('seller')->middleware('throttle:10,1');
+            Route::get('/admin/seller-verifications/{seller}/document', [SellerShopProfileController::class, 'adminDocument'])
+                ->whereNumber('seller')
+                ->middleware('signed')
+                ->name('admin.seller-verification-document');
             Route::get('/seller/promotions', [SellerPromotionController::class, 'index']);
             Route::get('/seller/promotions/eligible-listings', [SellerPromotionController::class, 'eligibleListings']);
             Route::post('/seller/promotions', [SellerPromotionController::class, 'store'])->middleware('throttle:30,1');
@@ -174,6 +187,11 @@ Route::middleware(MaintenanceMode::class)->group(function (): void {
             Route::put('/admin/rider-earnings/settings', [RiderEarningsSettingsController::class, 'update'])->middleware('throttle:10,1');
             Route::get('/admin/rider-payouts', [RiderPayoutController::class, 'index']);
             Route::post('/admin/rider-payouts/{payout}/manual-confirm', [RiderPayoutController::class, 'confirmManual'])->middleware('throttle:10,1');
+            Route::get('/rider-payouts/{payout}/receipt', [RiderPayoutController::class, 'receipt'])->middleware('throttle:30,1')->name('rider-payouts.receipt');
+            Route::get('/admin/rider-payout-destinations', [RiderPayoutDestinationController::class, 'adminIndex']);
+            Route::get('/admin/rider-payout-destinations/{destination}', [RiderPayoutDestinationController::class, 'adminShow']);
+            Route::post('/admin/rider-payout-destinations/{destination}/verify', [RiderPayoutDestinationController::class, 'verify'])->middleware('throttle:10,1');
+            Route::post('/admin/rider-payout-destinations/{destination}/reject', [RiderPayoutDestinationController::class, 'reject'])->middleware('throttle:10,1');
             Route::get('/admin/seller-payouts', [CodRemittanceController::class, 'adminPayouts']);
             Route::post('/admin/orders/{order}/seller-payout', [CodRemittanceController::class, 'payout'])->middleware('throttle:10,1');
             Route::post('/admin/seller-payouts/{payout}/manual-confirm', [CodRemittanceController::class, 'confirmManualPayout'])->middleware('throttle:10,1');
@@ -223,6 +241,7 @@ Route::middleware(MaintenanceMode::class)->group(function (): void {
             Route::post('/checkout', [CheckoutController::class, 'store']);
             Route::post('/checkout/quote', [CheckoutController::class, 'quote']);
             Route::get('/orders', [OrderController::class, 'index']);
+            Route::get('/orders/{order}/chat-context', [OrderController::class, 'chatContext']);
             Route::get('/orders/{order}', [OrderController::class, 'show']);
             Route::post('/orders/{order}/request-update', [OrderController::class, 'requestUpdate'])->middleware('throttle:3,1');
             Route::post('/orders/{order}/delivery-code', [DeliveryTrackingController::class, 'issueCode'])->middleware('throttle:10,1');
@@ -251,6 +270,8 @@ Route::middleware(MaintenanceMode::class)->group(function (): void {
             Route::put('/riders/settings', [RiderController::class, 'updatePreferences'])->middleware(EnsureApprovedRider::class);
             Route::get('/riders/deliveries', [RiderController::class, 'deliveries'])->middleware(EnsureApprovedRider::class);
             Route::get('/rider/earnings', [RiderEarningsController::class, 'index'])->middleware(EnsureApprovedRider::class);
+            Route::get('/rider/payout-destination', [RiderPayoutDestinationController::class, 'show'])->middleware(EnsureApprovedRider::class);
+            Route::put('/rider/payout-destination', [RiderPayoutDestinationController::class, 'save'])->middleware(['throttle:5,1', EnsureApprovedRider::class]);
             Route::get('/riders/cod/collections', [CodRemittanceController::class, 'riderCollections'])->middleware(EnsureApprovedRider::class);
             Route::get('/riders/cod/remittances', [CodRemittanceController::class, 'riderRemittances'])->middleware(EnsureApprovedRider::class);
             Route::get('/riders/cod/receiving-methods', [CodReceivingMethodController::class, 'riderIndex'])->middleware(EnsureApprovedRider::class);

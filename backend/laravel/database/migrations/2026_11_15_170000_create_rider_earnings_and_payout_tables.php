@@ -20,7 +20,11 @@ return new class extends Migration
 
         Schema::create('rider_earning_setting_histories', function (Blueprint $table): void {
             $table->id();
-            $table->foreignId('rider_earnings_setting_id')->constrained('rider_earnings_settings')->restrictOnDelete();
+            $table->unsignedTinyInteger('rider_earnings_setting_id');
+            $table->foreign('rider_earnings_setting_id', 'rider_earn_set_hist_setting_fk')
+                ->references('id')
+                ->on('rider_earnings_settings')
+                ->restrictOnDelete();
             $table->foreignId('actor_id')->constrained('users')->restrictOnDelete();
             $table->decimal('old_percentage', 5, 2)->nullable();
             $table->decimal('new_percentage', 5, 2);

@@ -15,7 +15,13 @@ type PublicPromotion = {
     starts_at: string;
     ends_at: string;
     status: 'SCHEDULED' | 'ACTIVE';
-    seller: { id: number; name: string };
+    seller: {
+        id: number;
+        name: string;
+        shop_name: string | null;
+        shop_image_url: string | null;
+        is_verified: boolean;
+    };
 };
 type PromotionDetail = PublicPromotion & {
     applies_to_all: boolean;
@@ -101,7 +107,7 @@ function PromotionCard({ promotion, tab, onOpen, onOpenSeller }: {
             <a className="public-promotion-seller" href={`#shop/${promotion.seller.id}`} onClick={(event) => {
                 event.preventDefault();
                 onOpenSeller(promotion.seller.id);
-            }}>Offered by {promotion.seller.name} · Visit shop</a>
+            }}>{promotion.seller.shop_image_url ? <img src={promotion.seller.shop_image_url} alt="" loading="lazy" /> : <span className="listing-seller-shop-avatar" aria-hidden="true">{(promotion.seller.shop_name || promotion.seller.name).slice(0, 1).toUpperCase()}</span>}<span className="listing-seller-shop-copy"><small>Offered by</small><strong>{promotion.seller.shop_name || promotion.seller.name}</strong>{promotion.seller.is_verified && <small className="listing-seller-verified">Verified seller</small>}<small>Visit shop</small></span></a>
         </div>
     </article>;
 }
@@ -125,7 +131,7 @@ function PromotionDetails({ promotion, onOpenListing, onOpenSeller, onBack }: {
                 <span className={`status-pill status-${promotion.status.toLowerCase()}`}>{isScheduled ? 'Upcoming' : 'Active'}</span>
                 <h2>{promotion.name}</h2>
                 <strong className="public-promotion-discount">{discountTerms}</strong>
-                <p>Offered by <button className="seller-shop-inline-link" type="button" onClick={() => onOpenSeller(promotion.seller.id)}>{promotion.seller.name} · Visit shop</button></p>
+                <p className="public-promotion-seller-detail">Offered by <button className="seller-shop-inline-link" type="button" onClick={() => onOpenSeller(promotion.seller.id)}>{promotion.seller.shop_image_url ? <img src={promotion.seller.shop_image_url} alt="" /> : <span className="listing-seller-shop-avatar" aria-hidden="true">{(promotion.seller.shop_name || promotion.seller.name).slice(0, 1).toUpperCase()}</span>}{promotion.seller.shop_name || promotion.seller.name} · Visit shop</button>{promotion.seller.is_verified && <span className="seller-shop-verified">Verified seller</span>}</p>
             </div>
         </header>
         <section className="public-promotion-detail-section">

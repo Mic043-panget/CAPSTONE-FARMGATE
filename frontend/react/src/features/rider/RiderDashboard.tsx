@@ -16,6 +16,7 @@ import type { User } from '../../shared/types';
 import { SystemCalendar } from '../shared/SystemCalendar';
 import { LoadingSkeleton } from '../../shared/components/LoadingSkeleton';
 import { RiderEarningsPanel } from './RiderEarningsPanel';
+import { WorkspaceMobileHeader } from '../shared/WorkspaceMobileHeader';
 
 const NearbyOrdersMap = React.lazy(() => import('./NearbyOrdersMap').then((module) => ({ default: module.NearbyOrdersMap })));
 
@@ -705,6 +706,7 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
     onLogout: () => void;
 }) {
     const [page, setPage] = React.useState<RiderPage>(() => window.location.hash === '#notifications' ? 'notifications' : 'dashboard');
+    const [mobileNavOpen, setMobileNavOpen] = React.useState(false);
     const [deliveryTab, setDeliveryTab] = React.useState<RiderDeliveryTab>('nearby');
     const [summary, setSummary] = React.useState<RiderSummary | null>(null);
     const [summaryLoading, setSummaryLoading] = React.useState(true);
@@ -1156,16 +1158,21 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
     const badgeCount = (id: RiderPage) => id === 'notifications' ? navigationCounts.notifications : id === 'chats' ? navigationCounts.chats : 0;
 
     return <main className="admin-shell seller-shell rider-shell">
-        <aside className="admin-sidebar">
+        <aside className={`admin-sidebar role-sidebar${mobileNavOpen ? ' mobile-open' : ''}`} onKeyDown={(event) => {
+            if (event.key === 'Escape') setMobileNavOpen(false);
+        }}>
+            <WorkspaceMobileHeader role="rider" menuOpen={mobileNavOpen} controlsId="rider-mobile-navigation" onToggle={() => setMobileNavOpen((open) => !open)} />
+            <div className="role-mobile-menu-panel" id="rider-mobile-navigation">
             <a className="brand" href="/">FARM<span>GATE</span></a>
             <div className="admin-sidebar-label">RIDER PORTAL</div>
             <nav aria-label="Rider navigation">{navigation.map((item) => {
                 const count = badgeCount(item.id);
-                return <button type="button" key={item.id} className={page === item.id ? 'active' : ''} aria-current={page === item.id ? 'page' : undefined} aria-label={count ? `${item.label}, ${count} unread` : item.label} onClick={() => { setPage(item.id); setNotice(''); }}>
+                return <button type="button" key={item.id} className={page === item.id ? 'active' : ''} aria-current={page === item.id ? 'page' : undefined} aria-label={count ? `${item.label}, ${count} unread` : item.label} onClick={() => { setPage(item.id); setNotice(''); setMobileNavOpen(false); }}>
                     <span className="nav-icon" aria-hidden="true">{item.icon}</span><span className="seller-nav-label">{item.label}</span><NavigationBadge count={count} />
                 </button>;
             })}</nav>
             <button className="sidebar-logout" type="button" onClick={() => void confirmLogout()}>Log out <span>↗</span></button>
+            </div>
         </aside>
         <section className="admin-content seller-content">
             <header className="admin-header"><div><p className="eyebrow">FARMGATE rider workspace</p><h1>{pageTitle}</h1><p>Manage your assigned deliveries and keep customers updated.</p></div><span className="admin-role">RIDER</span></header>

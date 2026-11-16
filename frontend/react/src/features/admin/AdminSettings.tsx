@@ -3,6 +3,7 @@ import api, { initializeCsrf } from '../../lib/api';
 import { confirmAction, showSuccess } from '../../lib/alerts';
 import { TabNav } from '../../shared/components/TabNav';
 import { Pagination } from '../../shared/components/Pagination';
+import { AdminSellerVerificationPage } from './AdminSellerVerificationPage';
 
 type Definition = { default: unknown; type: 'string' | 'integer' | 'decimal' | 'boolean' | 'json'; category: string; label: string };
 type Tier = { id: number; name?: string; min_km: string | number; max_km?: string | number | null; base_fee: string | number; fee_per_km: string | number; priority: number; is_active: boolean };
@@ -17,7 +18,7 @@ type SettingsResponse = { settings: Record<string, unknown>; definitions: Record
 const categoryLabels: Record<string, string> = {
     account: 'Account', orders: 'Orders', charges: 'Charges', delivery: 'Delivery', distance: 'Distance',
     rider: 'Rider', seller: 'Seller', buyer: 'Buyer', listings: 'Listings', notifications: 'Notifications', finance: 'Finance',
-    security: 'Security', system: 'System',
+    security: 'Security', system: 'System', 'seller-verification': 'Seller verification',
 };
 
 const initialTier: TierDraft = { name: '', min_km: 0, max_km: '', base_fee: 0, fee_per_km: 0, priority: 0, is_active: true };
@@ -60,7 +61,8 @@ export function AdminSettings({ onError, initialCategory = 'account' }: { onErro
             setHistoryPage(1);
             setHistoryLastPage(data.history.last_page ?? 1);
             setHistoryTotal(data.history.total ?? data.history.data?.length ?? 0);
-            setCategory((current) => Object.values(data.definitions).some((definition) => definition.category === current)
+            setCategory((current) => current === 'seller-verification'
+                || Object.values(data.definitions).some((definition) => definition.category === current)
                 ? current
                 : Object.values(data.definitions).some((definition) => definition.category === initialCategory)
                     ? initialCategory
@@ -139,7 +141,8 @@ export function AdminSettings({ onError, initialCategory = 'account' }: { onErro
         }
     }
 
-    const categories = [...new Set(Object.values(definitions).map((definition) => definition.category))];
+    const categories = [...new Set([...Object.values(definitions).map((definition) => definition.category), 'seller-verification'])];
+    const categoryOptions = categories.map((item) => ({ value: item, label: categoryLabels[item] ?? item }));
     const visibleSettings = Object.entries(definitions).filter(([, definition]) => definition.category === category);
     return <section className="admin-section settings-panel">
         <div className="admin-section-heading">
@@ -147,8 +150,9 @@ export function AdminSettings({ onError, initialCategory = 'account' }: { onErro
             <span className="admin-filter">Database-backed and audited</span>
         </div>
         {loading ? <p className="admin-loading">Loading settings...</p> : <>
-            <TabNav label="Settings category" value={category} onChange={setCategory} options={categories.map((item) => ({ value: item, label: categoryLabels[item] ?? item }))} />
-            <form onSubmit={save}>
+            <TabNav label="Settings category" value={category} onChange={setCategory} options={categoryOptions} />
+            {category === 'seller-verification' && <AdminSellerVerificationPage />}
+            <form onSubmit={save} hidden={category === 'seller-verification'}>
                 <div className="settings-grid">
                     {visibleSettings.map(([key, definition]) => <label key={key} className="settings-field">
                         <span className="settings-label-text">{definition.label}</span>
@@ -173,7 +177,7 @@ export function AdminSettings({ onError, initialCategory = 'account' }: { onErro
                 </form>
                 {tiers.length ? <div className="data-table-wrap"><table><thead><tr><th>Name</th><th>Range</th><th>Base</th><th>Per km</th><th>Action</th></tr></thead><tbody>{tiers.map((item) => <tr key={item.id}><td>{item.name ?? '-'}</td><td>{item.min_km} - {item.max_km ?? '+'} km</td><td>{item.base_fee}</td><td>{item.fee_per_km}</td><td><button type="button" onClick={() => deleteTier(item.id)}>Delete</button></td></tr>)}</tbody></table></div> : <p className="admin-empty">No delivery tiers configured.</p>}
             </div>}
-            <section className="settings-history" aria-labelledby="settings-history-heading">
+            <section className="settings-history" aria-labelledby="settings-history-heading" hidden={category === 'seller-verification'}>
                 <h3 className="settings-history-heading">
                     <button
                         type="button"

@@ -28,6 +28,8 @@ class NotificationLinkService
             $label = 'View payout update';
         } elseif (($data['type'] ?? null) === 'rider_application_status' && $recipient->role === Role::RIDER) {
             $label = 'View application update';
+        } elseif (($data['type'] ?? null) === 'seller_verification_status' && $recipient->role === Role::SELLER) {
+            $label = 'View verification update';
         } elseif (isset($data['conversation_id'])) {
             $label = 'View conversation';
         } elseif (isset($data['event_id'])) {

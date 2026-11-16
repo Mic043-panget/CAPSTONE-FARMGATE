@@ -66,6 +66,31 @@ class ChatApiTest extends TestCase
         $this->assertDatabaseCount('chat_messages', 2);
     }
 
+    public function test_conversation_index_searches_titles_and_messages_and_returns_latest_preview(): void
+    {
+        $user = User::factory()->create(['role' => Role::BUYER]);
+        $conversation = ChatConversation::query()->create([
+            'user_id' => $user->id,
+            'title' => 'Order support',
+        ]);
+        $conversation->messages()->create(['role' => 'user', 'content' => 'Earlier question']);
+        $conversation->messages()->create(['role' => 'assistant', 'content' => 'Latest delivery update']);
+
+        $this->actingAs($user)->getJson('/api/chat/conversations?search=delivery')
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.last_message_preview', 'Latest delivery update');
+
+        $this->actingAs($user)->getJson('/api/chat/conversations?search=support')
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.title', 'Order support');
+
+        $this->actingAs($user)->getJson('/api/chat/conversations?search=not-found')
+            ->assertOk()
+            ->assertJsonCount(0, 'data');
+    }
+
     public function test_uncertain_ai_response_is_labeled_for_handoff_and_notifies_an_admin(): void
     {
         $admin = User::factory()->create(['role' => Role::ADMIN]);

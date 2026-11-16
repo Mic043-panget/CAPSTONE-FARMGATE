@@ -124,4 +124,9 @@ class User extends Authenticatable implements CanResetPassword, MustVerifyEmail
 
         return (bool) ($preferences[$preference] ?? true);
     }
+
+    public function hasVerifiedContactMethod(): bool
+    {
+        return $this->email_verified_at !== null || $this->phone_verified_at !== null;
+    }
 }

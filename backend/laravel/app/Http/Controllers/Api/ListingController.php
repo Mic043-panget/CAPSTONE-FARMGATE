@@ -18,6 +18,7 @@ use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
@@ -28,7 +29,7 @@ class ListingController extends Controller
     public function index(Request $request, SystemSettingsService $settings, PromotionPricingService $promotionPricing): JsonResponse
     {
         $query = LivestockListing::query()
-            ->with(['category', 'images', 'seller:id,name'])
+            ->with(['category', 'images', 'seller:id,name', 'seller.sellerProfile:user_id,shop_name,business_name,shop_image_path,verification_status'])
             ->where('status', ListingStatus::ACTIVE);
         if ($request->boolean('promotions')) {
             $now = now();
@@ -118,6 +119,7 @@ class ListingController extends Controller
         };
 
         $listings = $query->paginate(15)->appends($request->query());
+        $this->attachSellerPublicProfiles($listings->getCollection());
         $promotionPricing->attach($listings->getCollection());
 
         return response()->json($listings);
@@ -132,15 +134,16 @@ class ListingController extends Controller
             abort(404);
         }
 
-        $listing->load(['category', 'images', 'seller:id,name']);
+        $listing->load(['category', 'images', 'seller:id,name', 'seller.sellerProfile:user_id,shop_name,business_name,shop_image_path,verification_status']);
         $related = LivestockListing::query()
-            ->with(['category', 'images', 'seller:id,name'])
+            ->with(['category', 'images', 'seller:id,name', 'seller.sellerProfile:user_id,shop_name,business_name,shop_image_path,verification_status'])
             ->where('status', ListingStatus::ACTIVE)
             ->where('category_id', $listing->category_id)
             ->whereKeyNot($listing->id)
             ->latest()
             ->limit(4)
             ->get();
+        $this->attachSellerPublicProfiles(collect([$listing])->concat($related));
         $promotionPricing->attach(collect([$listing])->concat($related));
         $reviewQuery = Review::query()
             ->where('status', ReviewStatus::PUBLISHED)
@@ -176,6 +179,26 @@ class ListingController extends Controller
             'review_count' => (clone $reviewQuery)->count(),
             'reviews' => $reviews,
         ]);
+    }
+
+    /**
+     * Add only approved public shop fields to the already constrained seller relation.
+     *
+     * @param  Collection<int, LivestockListing>  $listings
+     */
+    private function attachSellerPublicProfiles(Collection $listings): void
+    {
+        foreach ($listings as $listing) {
+            $seller = $listing->seller;
+            if (! $seller) {
+                continue;
+            }
+            $profile = $seller->sellerProfile;
+            $seller->setAttribute('shop_name', filled($profile?->shop_name) ? $profile->shop_name : $profile?->business_name);
+            $seller->setAttribute('shop_image_url', $profile?->shop_image_path ? Storage::disk('public')->url($profile->shop_image_path) : null);
+            $seller->setAttribute('is_verified', $profile?->verification_status === 'VERIFIED');
+            $seller->unsetRelation('sellerProfile');
+        }
     }
 
     public function mine(Request $request): JsonResponse
@@ -220,7 +243,11 @@ class ListingController extends Controller
         abort_unless($request->user()?->role === Role::SELLER, 403);
         if ($settings->getBoolean('seller_verification_required')) {
             $profile = $request->user()->sellerProfile()->first();
-            abort_unless($profile && $profile->is_verified, 403, 'Seller verification is required before creating listings.');
+            abort_unless(
+                $request->user()->hasVerifiedContactMethod() || $profile?->is_verified,
+                403,
+                'Verify your email address or mobile number, or complete seller identity review, before creating livestock listings.',
+            );
         }
         $data = $this->validated($request, $settings);
         $images = $data['images'] ?? [];

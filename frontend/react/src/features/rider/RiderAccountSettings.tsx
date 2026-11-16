@@ -3,7 +3,20 @@ import api, { initializeCsrf } from '../../lib/api';
 import { confirmAction, showSuccess } from '../../lib/alerts';
 import type { User } from '../../shared/types';
 
-type SettingsTab = 'profile' | 'password' | 'delivery' | 'vehicle' | 'notifications' | 'location';
+type SettingsTab = 'profile' | 'password' | 'delivery' | 'vehicle' | 'payout' | 'notifications' | 'location';
+type PayoutDestinationType = 'BANK' | 'GCASH';
+type PayoutDestination = {
+    id: number;
+    destination_type: PayoutDestinationType;
+    account_holder_masked: string;
+    bank_name_masked: string | null;
+    account_number_masked: string | null;
+    wallet_number_masked: string | null;
+    status: string;
+    consent_version: string;
+    is_current: boolean;
+};
+type PayoutDestinationConsent = { version: string; notice: string };
 type RiderSettings = {
     availability: 'AVAILABLE' | 'OFFLINE';
     vehicle_type: string | null;
@@ -41,6 +54,7 @@ const tabs: { id: SettingsTab; label: string }[] = [
     { id: 'password', label: 'Password' },
     { id: 'delivery', label: 'Delivery preferences' },
     { id: 'vehicle', label: 'Vehicle information' },
+    { id: 'payout', label: 'Payout destination' },
     { id: 'notifications', label: 'Notifications' },
     { id: 'location', label: 'Location permissions' },
 ];
@@ -86,6 +100,18 @@ export function RiderAccountSettings({ user, onUserUpdated, onError }: {
     const [preferenceBusy, setPreferenceBusy] = React.useState(false);
     const [loading, setLoading] = React.useState(true);
     const [notice, setNotice] = React.useState('');
+    const [payoutDestination, setPayoutDestination] = React.useState<PayoutDestination | null>(null);
+    const [payoutConsent, setPayoutConsent] = React.useState<PayoutDestinationConsent | null>(null);
+    const [payoutDestinationType, setPayoutDestinationType] = React.useState<PayoutDestinationType>('BANK');
+    const [payoutAccountHolder, setPayoutAccountHolder] = React.useState('');
+    const [payoutBankName, setPayoutBankName] = React.useState('');
+    const [payoutAccountNumber, setPayoutAccountNumber] = React.useState('');
+    const [payoutWalletNumber, setPayoutWalletNumber] = React.useState('');
+    const [payoutCurrentPassword, setPayoutCurrentPassword] = React.useState('');
+    const [payoutConsentAccepted, setPayoutConsentAccepted] = React.useState(false);
+    const [payoutDestinationLoading, setPayoutDestinationLoading] = React.useState(true);
+    const [savingPayoutDestination, setSavingPayoutDestination] = React.useState(false);
+    const [payoutDestinationMessage, setPayoutDestinationMessage] = React.useState('');
     const [locationPermission, setLocationPermission] = React.useState<'checking' | 'granted' | 'prompt' | 'denied' | 'unsupported'>('checking');
     const fileInputRef = React.useRef<HTMLInputElement>(null);
 
@@ -121,6 +147,21 @@ export function RiderAccountSettings({ user, onUserUpdated, onError }: {
     }, [onError]);
 
     React.useEffect(() => { void refreshSettings(); }, [refreshSettings]);
+
+    React.useEffect(() => {
+        let active = true;
+        api.get<{ destination: PayoutDestination | null; consent: PayoutDestinationConsent }>('/api/rider/payout-destination')
+            .then((response) => {
+                if (!active) return;
+                setPayoutDestination(response.data.destination);
+                setPayoutConsent(response.data.consent);
+            })
+            .catch((requestError: any) => {
+                if (active) onError(errorMessage(requestError, 'Payout destination could not be loaded.'));
+            })
+            .finally(() => { if (active) setPayoutDestinationLoading(false); });
+        return () => { active = false; };
+    }, [onError]);
 
     React.useEffect(() => {
         let mounted = true;
@@ -391,6 +432,38 @@ export function RiderAccountSettings({ user, onUserUpdated, onError }: {
         );
     }
 
+    async function savePayoutDestination(event: React.FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+        if (!payoutConsent || !payoutConsentAccepted) return;
+        setSavingPayoutDestination(true);
+        setPayoutDestinationMessage('');
+        try {
+            await initializeCsrf();
+            const response = await api.put<{ message: string; destination: PayoutDestination }>('/api/rider/payout-destination', {
+                destination_type: payoutDestinationType,
+                account_holder: payoutAccountHolder,
+                ...(payoutDestinationType === 'BANK'
+                    ? { bank_name: payoutBankName, account_number: payoutAccountNumber }
+                    : { wallet_number: payoutWalletNumber }),
+                current_password: payoutCurrentPassword,
+                consent_accepted: true,
+                consent_version: payoutConsent.version,
+            });
+            setPayoutDestination(response.data.destination);
+            setPayoutAccountHolder('');
+            setPayoutBankName('');
+            setPayoutAccountNumber('');
+            setPayoutWalletNumber('');
+            setPayoutCurrentPassword('');
+            setPayoutConsentAccepted(false);
+            setPayoutDestinationMessage(response.data.message);
+        } catch (requestError: any) {
+            onError(errorMessage(requestError, 'Payout destination could not be saved.'));
+        } finally {
+            setSavingPayoutDestination(false);
+        }
+    }
+
     function tabKeyDown(event: React.KeyboardEvent<HTMLButtonElement>, current: SettingsTab) {
         if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
         event.preventDefault();
@@ -508,6 +581,60 @@ export function RiderAccountSettings({ user, onUserUpdated, onError }: {
                 <label>Vehicle photos<input type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={(event) => { const files = validVehicleFiles(event.currentTarget.files, true); if (files?.length) { if (files.length + vehiclePhotos.length > 5) onError('Upload no more than 5 vehicle photos.'); else setVehiclePhotos((current) => [...current, ...files]); } event.currentTarget.value = ''; }} /><small>1 to 5 clear JPEG, PNG, or WebP photos, up to 10 MB each.</small>{vehiclePhotos.map((file, index) => <span className="rider-vehicle-photo-file" key={`${file.name}-${index}`}>{file.name}<button type="button" className="seller-text-action" onClick={() => setVehiclePhotos((current) => current.filter((_, fileIndex) => fileIndex !== index))}>Remove</button></span>)}</label>
                 {settings?.pending_vehicle_change?.status !== 'PENDING' && <button className="seller-inline-action" type="submit" disabled={settingsBusy}>{settingsBusy ? 'Submitting…' : 'Submit vehicle update'}</button>}
                 </form>
+            </section>
+            <section className="seller-settings-section rider-settings-panel" id="rider-settings-panel-payout" role="tabpanel" aria-labelledby="rider-settings-tab-payout" hidden={tab !== 'payout'} tabIndex={-1}>
+                <div className="seller-work-heading"><div><p className="eyebrow">Rider earnings</p><h3>Bank or GCash payout destination</h3></div></div>
+                <p>Provide the account where you want your delivery earnings paid. Farmgate stores account details encrypted and only displays masked values. A payout is not initiated when you submit these details.</p>
+                {payoutDestinationLoading ? <p className="seller-loading" role="status">Loading payout destination…</p> : <>
+                    {payoutDestination && <div className="seller-payout-destination-summary" aria-live="polite">
+                        <p><strong>Verification status:</strong> <span className="status-pill">{payoutDestination.status.replaceAll('_', ' ')}</span></p>
+                        <p><strong>Destination:</strong> {payoutDestination.destination_type === 'BANK' ? 'Bank transfer' : 'GCash'}</p>
+                        <p><strong>Account holder:</strong> {payoutDestination.account_holder_masked}</p>
+                        {payoutDestination.destination_type === 'BANK'
+                            ? <><p><strong>Bank:</strong> {payoutDestination.bank_name_masked}</p><p><strong>Account:</strong> {payoutDestination.account_number_masked}</p></>
+                            : <p><strong>GCash number:</strong> {payoutDestination.wallet_number_masked}</p>}
+                        <p>Updating the details sends them for administrator verification again. Pending payouts linked to the current destination must be resolved first.</p>
+                    </div>}
+                    {payoutConsent && <form className="seller-payout-destination-form" onSubmit={(event) => void savePayoutDestination(event)}>
+                        <div className="seller-payout-destination-notice" role="note">
+                            <strong>Operational notice · {payoutConsent.version}</strong>
+                            <p>{payoutConsent.notice}</p>
+                        </div>
+                        <label className="seller-payout-destination-consent">
+                            <input type="checkbox" checked={payoutConsentAccepted} onChange={(event) => setPayoutConsentAccepted(event.target.checked)} />
+                            <span>I have read and acknowledge this operational notice.</span>
+                        </label>
+                        <fieldset disabled={!payoutConsentAccepted || savingPayoutDestination}>
+                            <legend>Destination details</legend>
+                            <label>Destination type
+                                <select value={payoutDestinationType} onChange={(event) => setPayoutDestinationType(event.target.value as PayoutDestinationType)}>
+                                    <option value="BANK">Bank transfer</option>
+                                    <option value="GCASH">GCash</option>
+                                </select>
+                            </label>
+                            <label>Account holder name
+                                <input value={payoutAccountHolder} onChange={(event) => setPayoutAccountHolder(event.target.value)} autoComplete="off" maxLength={120} required />
+                            </label>
+                            {payoutDestinationType === 'BANK' ? <>
+                                <label>Bank name
+                                    <input value={payoutBankName} onChange={(event) => setPayoutBankName(event.target.value)} autoComplete="off" maxLength={100} required />
+                                </label>
+                                <label>Bank account number
+                                    <input value={payoutAccountNumber} onChange={(event) => setPayoutAccountNumber(event.target.value)} autoComplete="off" maxLength={40} required />
+                                </label>
+                            </> : <label>GCash mobile number
+                                <input value={payoutWalletNumber} onChange={(event) => setPayoutWalletNumber(event.target.value)} autoComplete="off" inputMode="tel" maxLength={24} required />
+                            </label>}
+                            <label>Confirm with your current password
+                                <input type="password" value={payoutCurrentPassword} onChange={(event) => setPayoutCurrentPassword(event.target.value)} autoComplete="current-password" required />
+                            </label>
+                            <button className="seller-payout-destination-submit" type="submit" disabled={savingPayoutDestination}>
+                                {savingPayoutDestination ? 'Saving…' : payoutDestination ? 'Save and request verification' : 'Save destination'}
+                            </button>
+                        </fieldset>
+                        {payoutDestinationMessage && <p role="status">{payoutDestinationMessage}</p>}
+                    </form>}
+                </>}
             </section>
             <section className="seller-settings-section rider-settings-panel" id="rider-settings-panel-notifications" role="tabpanel" aria-labelledby="rider-settings-tab-notifications" hidden={tab !== 'notifications'} tabIndex={-1}>
                 <div className="seller-work-heading"><div><p className="eyebrow">Communication controls</p><h3>Notification settings</h3></div></div>
