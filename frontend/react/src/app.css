@@ -1978,7 +1978,10 @@ label { display: grid; gap: 0.45rem; }
 .delivery-tracking-panel { background: var(--panel); border: 1px solid var(--line); margin-top: 1rem; min-width: 0; padding: 1rem; }
 .delivery-tracking-heading { align-items: center; }
 .rider-dashboard-heading, .rider-nearby-heading { align-items: center; display: flex; flex-wrap: wrap; gap: 1rem; justify-content: space-between; }
+.rider-dashboard { background: var(--panel); border: 1px solid var(--line); color: var(--ink); min-width: 0; padding: 1.35rem; }
+.rider-dashboard .eyebrow { color: var(--accent); }
 .rider-dashboard-heading h2, .rider-nearby-heading h2 { font: 400 1.7rem Georgia, serif; margin: 0; }
+.rider-dashboard-heading { border-bottom: 1px solid var(--line); margin-bottom: 1rem; padding-bottom: 1rem; }
 .rider-dashboard-heading p:not(.eyebrow), .rider-nearby-heading > div > p:not(.eyebrow) { color: var(--ink-soft); font-size: 0.78rem; margin: 0.35rem 0 0; }
 .rider-dashboard-actions, .rider-nearby-location { align-items: center; display: flex; flex-wrap: wrap; gap: 0.55rem; }
 .rider-dashboard-actions button, .rider-nearby-location button, .rider-analytics-controls > button { background: var(--ink); border: 0; color: white; font: inherit; font-size: 0.76rem; min-height: 42px; padding: 0.6rem 0.85rem; }
@@ -1988,21 +1991,22 @@ label { display: grid; gap: 0.45rem; }
 .rider-analytics-controls label { color: var(--ink-soft); display: grid; font-size: 0.7rem; gap: 0.3rem; min-width: 0; }
 .rider-analytics-controls input, .rider-analytics-controls select { background: white; border: 1px solid var(--line); color: var(--ink); font: inherit; min-height: 40px; min-width: 0; padding: 0.45rem 0.55rem; width: 100%; }
 .rider-metric-grid { display: grid; gap: 0.7rem; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 1rem 0; }
-.rider-metric-grid article { background: var(--panel); border: 1px solid var(--line); display: grid; gap: 0.45rem; min-width: 0; padding: 0.9rem; }
+.rider-metric-grid article { background: var(--paper); border: 1px solid var(--line); display: grid; gap: 0.45rem; min-width: 0; padding: 0.9rem; }
 .rider-metric-grid span { color: var(--ink-soft); font-size: 0.7rem; }
 .rider-metric-grid strong { font: 400 1.5rem Georgia, serif; overflow-wrap: anywhere; }
 .rider-analytics-layout { display: grid; gap: 0.8rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.rider-analytics-card, .rider-recent-deliveries { background: var(--panel); border: 1px solid var(--line); min-width: 0; padding: 1rem; }
+.rider-analytics-card, .rider-recent-deliveries { background: var(--paper); border: 1px solid var(--line); min-width: 0; padding: 1rem; }
 .rider-analytics-card h3, .rider-recent-deliveries h3 { font: 400 1.35rem Georgia, serif; margin: 0; }
 .rider-analytics-card .rider-work-heading, .rider-recent-deliveries .rider-work-heading { margin-bottom: 0.75rem; }
 .rider-analytics-card .rider-work-heading > span, .rider-recent-deliveries .rider-work-heading > span { color: var(--ink-soft); font-size: 0.72rem; }
 .rider-status-chart { display: grid; gap: 0.55rem; }
-.rider-status-bar { align-items: center; display: grid; font-size: 0.72rem; gap: 0.5rem; grid-template-columns: minmax(100px, 0.8fr) minmax(50px, 1fr) 2rem; }
+.rider-status-bar { align-items: center; display: grid; font-size: 0.72rem; gap: 0.5rem; grid-template-columns: minmax(100px, 0.8fr) minmax(70px, 1fr) 2rem 3rem; }
 .rider-status-bar > span { overflow-wrap: anywhere; }
-.rider-status-bar > i { background: #e5e9e2; display: block; height: 0.65rem; overflow: hidden; }
-.rider-status-bar > i b { background: var(--accent); display: block; height: 100%; }
+.rider-status-bar > i { background: var(--line); border-radius: 999px; display: block; height: 0.65rem; overflow: hidden; }
+.rider-status-bar > i b { background: var(--accent); border-radius: inherit; display: block; height: 100%; transition: width 180ms ease; }
+.rider-status-bar .rider-status-share { color: var(--ink-soft); font-size: 0.68rem; text-align: right; }
 .rider-activity-list { display: grid; gap: 0.55rem; list-style: none; margin: 0; padding: 0; }
-.rider-activity-list li { border-bottom: 1px solid var(--line); display: grid; font-size: 0.74rem; gap: 0.2rem; padding: 0.45rem 0; }
+.rider-activity-list li { border-bottom: 1px solid var(--line); display: grid; font-size: 0.74rem; gap: 0.2rem; min-width: 0; overflow-wrap: anywhere; padding: 0.45rem 0; }
 .rider-activity-list time { color: var(--ink-soft); font-size: 0.68rem; }
 .rider-recent-deliveries { margin-top: 0.8rem; }
 .rider-recent-table-wrap { overflow-x: auto; }
@@ -2044,18 +2048,20 @@ label { display: grid; gap: 0.45rem; }
 .rider-notification-empty, .rider-empty { color: var(--ink-soft); font-size: 0.74rem; }
 .report-sort-button { background: transparent; border: 0; color: inherit; font: inherit; font-weight: 700; min-height: 34px; padding: 0.25rem; text-align: left; }
 @media (max-width: 900px) {
+    .rider-shell .admin-content { padding-inline: 1.15rem; }
+    .rider-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .rider-analytics-layout { grid-template-columns: minmax(0, 1fr); }
     .rider-nearby-columns { grid-template-columns: minmax(0, 1fr); }
     .rider-order-notifications { order: -1; }
     .rider-analytics-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 640px) {
     .rider-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .rider-analytics-layout { grid-template-columns: minmax(0, 1fr); }
     .rider-analytics-controls { grid-template-columns: minmax(0, 1fr); }
     .rider-nearby-heading { align-items: start; }
     .rider-nearby-location { align-items: start; flex-direction: column; }
     .rider-nearby-map { height: 280px; }
-    .rider-status-bar { grid-template-columns: minmax(80px, 1fr) minmax(40px, 1fr) 1.5rem; }
+    .rider-status-bar { grid-template-columns: minmax(75px, 1fr) minmax(40px, 0.7fr) 1.5rem 2.5rem; }
 }
 .delivery-tracking-heading .eyebrow { margin: 0 0 0.25rem; }
 .delivery-tracking-heading > span { color: var(--ink-soft); font-size: 0.76rem; }

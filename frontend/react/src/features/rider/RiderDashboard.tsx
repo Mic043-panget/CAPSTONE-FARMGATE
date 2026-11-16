@@ -715,6 +715,7 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
     const [summaryError, setSummaryError] = React.useState('');
     const [statusCounts, setStatusCounts] = React.useState<Record<string, number>>({});
     const [recentActivity, setRecentActivity] = React.useState<RiderActivity[]>([]);
+    const summaryRequestIdRef = React.useRef(0);
     const [dashboardFrom, setDashboardFrom] = React.useState('');
     const [dashboardTo, setDashboardTo] = React.useState('');
     const [dashboardStatus, setDashboardStatus] = React.useState('');
@@ -755,6 +756,9 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
     const debouncedDashboardSearch = useDebouncedValue(dashboardSearch);
 
     const refreshSummary = React.useCallback(async (reportFailure: boolean) => {
+        const requestId = ++summaryRequestIdRef.current;
+        setSummaryLoading(true);
+        setSummaryError('');
         const [summaryResult, offersResult] = await Promise.allSettled([
             api.get<{
                     summary: RiderSummary;
@@ -773,6 +777,8 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
                     rider_location: { latitude: number; longitude: number; updated_at: string | null } | null;
                 }>('/api/riders/offers'),
         ]);
+        if (requestId !== summaryRequestIdRef.current) return;
+
         const errors: string[] = [];
 
         if (summaryResult.status === 'fulfilled') {
@@ -782,6 +788,9 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
             setSummaryLoading(false);
             setSummaryError('');
         } else {
+            setSummary(null);
+            setStatusCounts({});
+            setRecentActivity([]);
             setSummaryLoading(false);
             setSummaryError('Rider dashboard data could not be loaded.');
             errors.push('Rider dashboard data could not be loaded.');
@@ -1158,6 +1167,7 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
     const pageTitle = navigation.find((item) => item.id === page)?.label ?? 'Dashboard';
     const selectedScannerDelivery = scannerDeliveries.find((delivery) => delivery.id === selectedScannerDeliveryId) ?? null;
     const badgeCount = (id: RiderPage) => id === 'notifications' ? navigationCounts.notifications : id === 'chats' ? navigationCounts.chats : 0;
+    const statusTotal = Object.values(statusCounts).reduce((total, count) => total + count, 0);
 
     return <main className="admin-shell seller-shell rider-shell">
         <aside className={`admin-sidebar role-sidebar${mobileNavOpen ? ' mobile-open' : ''}`} onKeyDown={(event) => {
@@ -1179,7 +1189,7 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
         <section className="admin-content seller-content">
             <header className="admin-header"><div><p className="eyebrow">FARMGATE rider workspace</p><h1>{pageTitle}</h1><p>Manage your assigned deliveries and keep customers updated.</p></div><span className="admin-role">RIDER</span></header>
             {notice && <p className="rider-offer-notice" role="status">{notice}</p>}
-            {page === 'dashboard' && <section className="role-dashboard rider-dashboard">
+            {page === 'dashboard' && <section className="role-dashboard rider-dashboard" aria-busy={summaryLoading}>
                 <div className="rider-dashboard-heading">
                     <div><p className="eyebrow">Rider overview</p><h2>Delivery performance</h2><p>All totals and activity below use your assigned delivery records.</p></div>
                     <div className="rider-dashboard-actions">
@@ -1208,24 +1218,24 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
                     <article><span>Delivered with proof</span><strong>{summary?.delivered_with_proof ?? '—'}</strong></article>
                     <article><span>Delivered without proof</span><strong>{summary?.delivered_without_proof ?? '—'}</strong></article>
                     <article><span>Cancelled</span><strong>{summary?.cancellations ?? '—'}</strong></article>
-                    <article><span>Avg. verified delivery time</span><strong>{summary?.average_delivery_minutes === null || summary?.average_delivery_minutes === undefined ? 'Not enough data' : `${summary.average_delivery_minutes} min`}</strong></article>
+                    <article><span>Avg. verified delivery time</span><strong>{summary?.average_delivery_minutes === undefined ? '—' : summary.average_delivery_minutes === null ? 'Not enough data' : `${summary.average_delivery_minutes} min`}</strong></article>
                 </div>}
                 <div className="rider-analytics-layout">
                     <section className="rider-analytics-card" aria-labelledby="rider-status-chart-heading">
-                        <div className="rider-work-heading"><div><p className="eyebrow">Filtered deliveries</p><h3 id="rider-status-chart-heading">Status breakdown</h3></div><span>{summary?.filtered_deliveries ?? 0} records</span></div>
-                        {summaryLoading && !summary ? <LoadingSkeleton variant="list" count={3} label="Loading delivery status breakdown" /> : Object.keys(statusCounts).length === 0 ? <p className="rider-empty">No delivery activity for these filters.</p>
+                        <div className="rider-work-heading"><div><p className="eyebrow">Filtered deliveries</p><h3 id="rider-status-chart-heading">Status breakdown</h3></div><span>{summary ? `${summary.filtered_deliveries} ${summary.filtered_deliveries === 1 ? 'delivery' : 'deliveries'}` : '— deliveries'}</span></div>
+                        {summaryLoading && !summary ? <LoadingSkeleton variant="list" count={3} label="Loading delivery status breakdown" /> : !summary ? <p className="rider-empty">Couldn’t load the status breakdown. Try again above.</p> : Object.keys(statusCounts).length === 0 ? <p className="rider-empty">No delivery activity for these filters.</p>
                             : <div className="rider-status-chart" role="list" aria-label="Delivery counts by status">
                                 {Object.entries(statusCounts).sort(([first], [second]) => first.localeCompare(second)).map(([status, count]) => {
-                                    const maximum = Math.max(1, ...Object.values(statusCounts));
-                                    return <div className="rider-status-bar" role="listitem" key={status} aria-label={`${statusLabel(status)}: ${count}`}>
-                                        <span>{statusLabel(status)}</span><i><b style={{ width: `${count / maximum * 100}%` }} /></i><strong>{count}</strong>
+                                    const percentage = statusTotal ? count / statusTotal * 100 : 0;
+                                    return <div className="rider-status-bar" role="listitem" key={status} aria-label={`${statusLabel(status)}: ${count} deliveries, ${Math.round(percentage)}% of filtered total`}>
+                                        <span>{statusLabel(status)}</span><i aria-hidden="true"><b style={{ width: `${percentage}%` }} /></i><strong>{count}</strong><span className="rider-status-share">{Math.round(percentage)}%</span>
                                     </div>;
                                 })}
                             </div>}
                     </section>
                     <section className="rider-analytics-card" aria-labelledby="rider-recent-activity-heading">
                         <div className="rider-work-heading"><div><p className="eyebrow">Recorded events</p><h3 id="rider-recent-activity-heading">Recent activity</h3></div></div>
-                        {summaryLoading && !summary ? <LoadingSkeleton variant="list" count={3} label="Loading recent delivery activity" /> : recentActivity.length === 0 ? <p className="rider-empty">No status changes match these filters.</p>
+                        {summaryLoading && !summary ? <LoadingSkeleton variant="list" count={3} label="Loading recent delivery activity" /> : !summary ? <p className="rider-empty">Couldn’t load recent delivery activity. Try again above.</p> : recentActivity.length === 0 ? <p className="rider-empty">No status changes match these filters.</p>
                             : <ol className="rider-activity-list">{recentActivity.map((activity) => <li key={activity.id}>
                                 <span><strong>{activity.delivery_reference ?? activity.order_reference ?? 'Delivery'}</strong> · {statusLabel(activity.to_status)}</span>
                                 <time>{activity.created_at ? new Date(activity.created_at).toLocaleString() : '—'}</time>
