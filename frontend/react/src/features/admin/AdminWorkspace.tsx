@@ -16,6 +16,7 @@ import { AdminPromotionsPage } from './AdminPromotionsPage';
 import { AdminDeliveryDetails } from './AdminDeliveryDetails';
 import { AdminPaymentsPage } from './AdminPaymentsPage';
 import api from '../../lib/api';
+import { WorkspaceMobileHeader } from '../shared/WorkspaceMobileHeader';
 
 type Page = 'dashboard' | 'users' | 'listings' | 'orders' | 'transactions' | 'payments' | 'deliveries' | 'categories' | 'complaints' | 'reviews' | 'rider' | 'promotions' | 'notifications' | 'reports' | 'chats' | 'security' | 'settings';
 type AdminWorkspaceProps = { onError: (message: string) => void; onLogout: () => void; userName: string };
@@ -116,7 +117,18 @@ export function AdminWorkspace({ onError, onLogout, userName }: AdminWorkspacePr
     const [notificationAuditId, setNotificationAuditId] = React.useState<number | null>(null);
     const [notificationConversationId, setNotificationConversationId] = React.useState<number | null>(null);
     const [transactionsOpen, setTransactionsOpen] = React.useState(false);
+    const [mobileNavOpen, setMobileNavOpen] = React.useState(false);
     const transactionsRef = React.useRef<HTMLDivElement>(null);
+
+    React.useEffect(() => {
+        document.documentElement.classList.add('admin-workspace-open');
+        document.body.classList.add('admin-workspace-open');
+
+        return () => {
+            document.documentElement.classList.remove('admin-workspace-open');
+            document.body.classList.remove('admin-workspace-open');
+        };
+    }, []);
 
     React.useEffect(() => {
         function closeTransactions(event: MouseEvent) {
@@ -138,6 +150,7 @@ export function AdminWorkspace({ onError, onLogout, userName }: AdminWorkspacePr
     function navigate(nextPage: Page) {
         setPage(nextPage);
         setTransactionsOpen(false);
+        setMobileNavOpen(false);
     }
 
     function analyzeReport(report: ChatReportContext) {
@@ -173,7 +186,9 @@ export function AdminWorkspace({ onError, onLogout, userName }: AdminWorkspacePr
                 { label: 'Name', render: (row) => <strong>{row.name}</strong> },
                 { label: 'Email', render: (row) => row.email },
                 { label: 'Role', render: (row) => <span className="status-pill">{row.role}</span> },
-                { label: 'Verified', render: (row) => row.email_verified_at ? 'Verified' : 'Unverified' },
+                { label: 'Account verification', render: (row) => row.email_verified_at || row.phone_verified_at
+                    ? `Verified · ${row.email_verified_at && row.phone_verified_at ? 'email and mobile' : row.email_verified_at ? 'email' : 'mobile'}`
+                    : 'Not verified' },
                 { label: 'Account status', render: (row) => <span className={`status-pill${row.deleted_at ? ' user-account-inactive' : ''}`}>{row.deleted_at ? 'Inactive' : 'Active'}</span> },
                 { label: 'Joined', render: (row) => new Date(row.created_at).toLocaleDateString() },
                 { label: 'Actions', render: (row, refresh) => <UserAccountActions user={{
@@ -225,25 +240,30 @@ export function AdminWorkspace({ onError, onLogout, userName }: AdminWorkspacePr
     const navigationItems = primaryNavigation.filter((item) => !['orders', 'deliveries', 'categories'].includes(item.id));
 
     return <main className="admin-shell">
-        <aside className="admin-sidebar">
-            <a className="brand" href="/" aria-label="FARMGATE home">FARM<span>GATE</span></a>
-            <div className="admin-sidebar-label">ADMIN</div>
-            <nav className={transactionsOpen ? 'transactions-open' : undefined} aria-label="Admin navigation">
-                {navigationItems.map((item) => item.id === 'transactions'
-                    ? <div className="nav-dropdown" key={item.id} ref={transactionsRef}>
-                        <button className={['transactions', 'orders', 'deliveries'].includes(page) ? 'active' : ''} type="button" aria-expanded={transactionsOpen} aria-haspopup="menu" onClick={() => setTransactionsOpen((open) => !open)}>
-                            <span className="nav-icon">{item.icon}</span>{item.label}<span className="nav-chevron" aria-hidden="true">{transactionsOpen ? '▲' : '▼'}</span>
-                        </button>
-                        {transactionsOpen && <div className="nav-submenu" role="menu">
-                            <button className={page === 'orders' ? 'active' : ''} type="button" role="menuitem" onClick={() => navigate('orders')}>Orders</button>
-                            <button className={page === 'deliveries' ? 'active' : ''} type="button" role="menuitem" onClick={() => navigate('deliveries')}>Deliveries</button>
-                        </div>}
-                    </div>
-                    : <button className={page === item.id ? 'active' : ''} type="button" key={item.id} onClick={() => navigate(item.id)}>
-                        <span className="nav-icon">{item.icon}</span>{item.label}
-                    </button>)}
-            </nav>
-            <button className="sidebar-logout" type="button" onClick={onLogout}>Log out <span>↗</span></button>
+        <aside className={`admin-sidebar role-sidebar${mobileNavOpen ? ' mobile-open' : ''}`} onKeyDown={(event) => {
+            if (event.key === 'Escape') setMobileNavOpen(false);
+        }}>
+            <WorkspaceMobileHeader role="admin" menuOpen={mobileNavOpen} controlsId="admin-mobile-navigation" onToggle={() => setMobileNavOpen((open) => !open)} />
+            <div className="role-mobile-menu-panel" id="admin-mobile-navigation">
+                <a className="brand" href="/" aria-label="FARMGATE home">FARM<span>GATE</span></a>
+                <div className="admin-sidebar-label">ADMIN</div>
+                <nav className={transactionsOpen ? 'transactions-open' : undefined} aria-label="Admin navigation">
+                    {navigationItems.map((item) => item.id === 'transactions'
+                        ? <div className="nav-dropdown" key={item.id} ref={transactionsRef}>
+                            <button className={['transactions', 'orders', 'deliveries'].includes(page) ? 'active' : ''} type="button" aria-expanded={transactionsOpen} aria-haspopup="menu" onClick={() => setTransactionsOpen((open) => !open)}>
+                                <span className="nav-icon">{item.icon}</span>{item.label}<span className="nav-chevron" aria-hidden="true">{transactionsOpen ? '▲' : '▼'}</span>
+                            </button>
+                            {transactionsOpen && <div className="nav-submenu" role="menu">
+                                <button className={page === 'orders' ? 'active' : ''} type="button" role="menuitem" onClick={() => navigate('orders')}>Orders</button>
+                                <button className={page === 'deliveries' ? 'active' : ''} type="button" role="menuitem" onClick={() => navigate('deliveries')}>Deliveries</button>
+                            </div>}
+                        </div>
+                        : <button className={page === item.id ? 'active' : ''} type="button" key={item.id} onClick={() => navigate(item.id)}>
+                            <span className="nav-icon">{item.icon}</span>{item.label}
+                        </button>)}
+                </nav>
+                <button className="sidebar-logout" type="button" onClick={onLogout}>Log out <span>↗</span></button>
+            </div>
         </aside>
         <section className="admin-content">
             <header className="admin-header"><div><p className="eyebrow">FARMGATE control room</p><h1>{primaryNavigation.find((item) => item.id === page)?.label ?? page}</h1><p>Govern marketplace activity with scoped access and clear operational history.</p></div><span className="admin-role">ADMIN</span></header>

@@ -27,19 +27,26 @@ class DashboardTest extends TestCase
     public function test_admin_user_listing_can_filter_verified_accounts_with_role_filter(): void
     {
         $admin = User::factory()->create(['role' => Role::ADMIN]);
-        $verifiedBuyer = User::factory()->create(['role' => Role::BUYER]);
-        User::factory()->unverified()->create(['role' => Role::BUYER]);
+        $verifiedEmailBuyer = User::factory()->create(['role' => Role::BUYER]);
+        $verifiedMobileBuyer = User::factory()->unverified()->create([
+            'role' => Role::BUYER,
+            'phone_number' => '+639171234567',
+            'phone_verified_at' => now(),
+        ]);
+        $unverifiedBuyer = User::factory()->unverified()->create(['role' => Role::BUYER]);
         User::factory()->create(['role' => Role::SELLER]);
 
         $verifiedResponse = $this->actingAs($admin)->getJson('/api/admin/users?role=BUYER&verified=1')
             ->assertOk()
-            ->assertJsonCount(1, 'users.data');
-        $this->assertSame($verifiedBuyer->id, $verifiedResponse->json('users.data.0.id'));
-        $this->assertNotNull($verifiedResponse->json('users.data.0.email_verified_at'));
+            ->assertJsonCount(2, 'users.data');
+        $verifiedIds = array_column($verifiedResponse->json('users.data'), 'id');
+        $this->assertContains($verifiedEmailBuyer->id, $verifiedIds);
+        $this->assertContains($verifiedMobileBuyer->id, $verifiedIds);
+        $this->assertNotContains($unverifiedBuyer->id, $verifiedIds);
 
         $this->actingAs($admin)->getJson('/api/admin/users?role=BUYER')
             ->assertOk()
-            ->assertJsonCount(2, 'users.data');
+            ->assertJsonCount(3, 'users.data');
     }
 
     public function test_seller_dashboard_returns_metrics(): void

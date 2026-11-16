@@ -46,6 +46,7 @@ type ChatConversation = {
     id: number;
     kind: ChatKind;
     title: string | null;
+    last_message_preview?: string | null;
     report_context: Omit<ChatReportContext, 'title' | 'requestId'> | null;
     needs_human_attention: boolean;
     ai_paused: boolean;
@@ -67,11 +68,8 @@ type DirectChatResponse = {
 };
 
 type ChatOrderContext = {
-    id: number;
     order_reference: string;
-    status: string;
-    seller?: { name: string } | null;
-    items: { quantity: number; listing?: { name: string } | null }[];
+    items: { quantity: number; listing?: { name: string; image_url: string | null } | null }[];
 };
 
 const roleCopy: Record<UserRole, { welcome: string; suggestions: string[] }> = {
@@ -216,6 +214,14 @@ export function AIChatPage({ role, reportContext: incomingReport, onBack, initia
     const [input, setInput] = React.useState('');
     const [loading, setLoading] = React.useState(false);
     const [loadingHistory, setLoadingHistory] = React.useState(true);
+    const [loadingMoreHistory, setLoadingMoreHistory] = React.useState(false);
+    const [historyError, setHistoryError] = React.useState('');
+    const [conversationSearch, setConversationSearch] = React.useState('');
+    const [historyPage, setHistoryPage] = React.useState(1);
+    const [historyLastPage, setHistoryLastPage] = React.useState(1);
+    const [mobileThreadOpen, setMobileThreadOpen] = React.useState(false);
+    const [conversationLoading, setConversationLoading] = React.useState(false);
+    const [orderContextError, setOrderContextError] = React.useState('');
     const [messagesHaveMore, setMessagesHaveMore] = React.useState(false);
     const [loadingOlder, setLoadingOlder] = React.useState(false);
     const [error, setError] = React.useState('');
@@ -228,30 +234,72 @@ export function AIChatPage({ role, reportContext: incomingReport, onBack, initia
     const [recipientError, setRecipientError] = React.useState('');
     const [orderContext, setOrderContext] = React.useState<ChatOrderContext | null>(null);
     const [orderContextLoading, setOrderContextLoading] = React.useState(false);
+    const [contextCardDismissed, setContextCardDismissed] = React.useState(false);
     const messagesPaneRef = React.useRef<HTMLDivElement>(null);
+    const messageInputRef = React.useRef<HTMLTextAreaElement>(null);
     const shouldScrollToLatestRef = React.useRef(true);
     const prependScrollHeightRef = React.useRef<number | null>(null);
     const requestLock = React.useRef(false);
     const pendingDirectAttempt = React.useRef<{ content: string; id: string } | null>(null);
+    const conversationRequestId = React.useRef(0);
+    const historyRequestVersion = React.useRef(0);
     const listingContextStarted = React.useRef(false);
     const lastReportRequest = React.useRef<number | string | null>(null);
     const lastInitialConversation = React.useRef<number | null>(null);
     const sendRef = React.useRef<(text: string, context?: ChatReportContext | null, conversation?: ChatConversation | null) => Promise<void>>(async () => {});
     const copy = roleCopy[role];
 
-    const loadConversations = React.useCallback(async () => {
-        const response = await api.get<{ data: ChatConversation[] }>('/api/chat/conversations');
-        setConversations(response.data.data);
-    }, []);
+    const fetchConversations = React.useCallback((search: string, page = 1) => api.get<{
+        data: ChatConversation[];
+        current_page: number;
+        last_page: number;
+    }>('/api/chat/conversations', { params: { page, ...(search ? { search } : {}) } }), []);
+
+    const loadConversations = React.useCallback(async (search = conversationSearch.trim(), page = 1, append = false) => {
+        const requestVersion = ++historyRequestVersion.current;
+        try {
+            const response = await fetchConversations(search, page);
+            if (requestVersion !== historyRequestVersion.current) return;
+            setConversations((current) => append
+                ? [...current, ...response.data.data.filter((conversation) => !current.some((item) => item.id === conversation.id))]
+                : response.data.data);
+            setHistoryPage(response.data.current_page);
+            setHistoryLastPage(response.data.last_page);
+            setHistoryError('');
+        } finally {
+            if (requestVersion === historyRequestVersion.current) {
+                setLoadingHistory(false);
+                setLoadingMoreHistory(false);
+            }
+        }
+    }, [conversationSearch, fetchConversations]);
 
     React.useEffect(() => {
         let active = true;
-        api.get<{ data: ChatConversation[] }>('/api/chat/conversations')
-            .then((response) => { if (active) setConversations(response.data.data); })
-            .catch((requestError: { userMessage?: string }) => { if (active) setError(requestError.userMessage ?? 'Conversation history could not be loaded.'); })
-            .finally(() => { if (active) setLoadingHistory(false); });
-        return () => { active = false; };
-    }, []);
+        const requestVersion = ++historyRequestVersion.current;
+        setLoadingMoreHistory(false);
+        const timer = window.setTimeout(() => {
+            setLoadingHistory(true);
+            setHistoryError('');
+            fetchConversations(conversationSearch.trim())
+                .then((response) => {
+                    if (!active || requestVersion !== historyRequestVersion.current) return;
+                    setConversations(response.data.data);
+                    setHistoryPage(response.data.current_page);
+                    setHistoryLastPage(response.data.last_page);
+                })
+                .catch((requestError: { userMessage?: string }) => {
+                    if (active && requestVersion === historyRequestVersion.current) setHistoryError(requestError.userMessage ?? 'Conversation history could not be loaded.');
+                })
+                .finally(() => {
+                    if (active && requestVersion === historyRequestVersion.current) setLoadingHistory(false);
+                });
+        }, conversationSearch.trim() ? 250 : 0);
+        return () => {
+            active = false;
+            window.clearTimeout(timer);
+        };
+    }, [conversationSearch, fetchConversations]);
 
     React.useEffect(() => {
         if (!recipientPickerOpen || recipientSearch.trim().length < 2) {
@@ -289,8 +337,18 @@ export function AIChatPage({ role, reportContext: incomingReport, onBack, initia
         }
         if (!shouldScrollToLatestRef.current) return;
         shouldScrollToLatestRef.current = false;
-        pane.scrollTo({ top: pane.scrollHeight, behavior: 'smooth' });
+        const behavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+        pane.scrollTo({ top: pane.scrollHeight, behavior });
     }, [messages]);
+
+    React.useLayoutEffect(() => {
+        const textarea = messageInputRef.current;
+        if (!textarea) return;
+        textarea.style.height = 'auto';
+        const height = Math.min(textarea.scrollHeight, 128);
+        textarea.style.height = `${height}px`;
+        textarea.style.overflowY = textarea.scrollHeight > 128 ? 'auto' : 'hidden';
+    }, [input]);
 
     const sendMessage = React.useCallback(async (text: string, context: ChatReportContext | null = report, conversation: ChatConversation | null = selected) => {
         const trimmed = text.trim();
@@ -309,7 +367,7 @@ export function AIChatPage({ role, reportContext: incomingReport, onBack, initia
                 const response = await api.post<DirectChatResponse>(`/api/chat/conversations/${conversation.id}/messages`, {
                     message: trimmed,
                     client_message_id: attempt.id,
-                    ...(orderContext ? { order_id: orderContext.id } : {}),
+                    ...(orderContext && orderId !== undefined ? { order_id: orderId } : {}),
                 });
                 pendingDirectAttempt.current = null;
                 setSelected(response.data.conversation);
@@ -349,7 +407,8 @@ export function AIChatPage({ role, reportContext: incomingReport, onBack, initia
                 setMessages((current) => [...current, response.data.user_message, response.data.assistant_message]);
                 if (!conversation) setReport(context);
             }
-            void loadConversations().catch(() => setError('Your message was sent, but conversation history could not be refreshed.'));
+            setInput((current) => current.trim() === trimmed ? '' : current);
+            void loadConversations().catch(() => setHistoryError('Your message was sent, but conversation history could not be refreshed.'));
         } catch (requestError: any) {
             setError(requestError.userMessage ?? requestError.response?.data?.message ?? requestError.message ?? 'Your message could not be sent. Please try again.');
             setFailedMessage(trimmed);
@@ -357,7 +416,7 @@ export function AIChatPage({ role, reportContext: incomingReport, onBack, initia
             requestLock.current = false;
             setLoading(false);
         }
-    }, [contextCleared, loadConversations, mode, orderContext, report, selected]);
+    }, [contextCleared, loadConversations, mode, orderContext, orderId, report, selected]);
     sendRef.current = sendMessage;
 
     React.useEffect(() => {
@@ -365,21 +424,32 @@ export function AIChatPage({ role, reportContext: incomingReport, onBack, initia
         const key = incomingReport.requestId ?? JSON.stringify(incomingReport);
         if (lastReportRequest.current === key) return;
         lastReportRequest.current = key;
+        setMobileThreadOpen(true);
         setMode('ai');
         setSelected(null);
         shouldScrollToLatestRef.current = true;
         setMessages([]);
         setReport(incomingReport);
         setContextCleared(false);
+        setContextCardDismissed(false);
         void sendRef.current('Please analyze the selected report. Explain the verified data, key patterns, and any limitations without assuming causes.', incomingReport, null);
     }, [incomingReport]);
 
     async function openConversation(conversationId: number) {
-        setLoading(true);
+        const requestId = ++conversationRequestId.current;
+        const summary = conversations.find((item) => item.id === conversationId);
+        setMobileThreadOpen(true);
+        setConversationLoading(true);
         setError('');
         setFailedMessage('');
+        setMessages([]);
+        if (summary) {
+            setSelected(summary);
+            setMode(summary.kind);
+        }
         try {
             const response = await api.get<{ conversation: ChatConversation; messages: ChatMessage[]; messages_has_more: boolean }>(`/api/chat/conversations/${conversationId}`);
+            if (requestId !== conversationRequestId.current) return;
             setSelected(response.data.conversation);
             setMode(response.data.conversation.kind);
             shouldScrollToLatestRef.current = true;
@@ -391,12 +461,43 @@ export function AIChatPage({ role, reportContext: incomingReport, onBack, initia
                 ? { ...response.data.conversation.report_context, title: `${response.data.conversation.report_context.type[0].toUpperCase()}${response.data.conversation.report_context.type.slice(1)} report` }
                 : null);
             setContextCleared(false);
+            setContextCardDismissed(false);
             setRecipientPickerOpen(false);
             pendingDirectAttempt.current = null;
         } catch (requestError: any) {
-            setError(requestError.userMessage ?? 'This conversation could not be loaded.');
+            if (requestId === conversationRequestId.current) setError(requestError.userMessage ?? 'This conversation could not be loaded.');
         } finally {
-            setLoading(false);
+            if (requestId === conversationRequestId.current) setConversationLoading(false);
+        }
+    }
+
+    async function loadMoreConversations() {
+        if (loadingMoreHistory || historyPage >= historyLastPage) return;
+        const requestVersion = ++historyRequestVersion.current;
+        setLoadingMoreHistory(true);
+        setHistoryError('');
+        try {
+            const response = await fetchConversations(conversationSearch.trim(), historyPage + 1);
+            if (requestVersion !== historyRequestVersion.current) return;
+            setConversations((current) => [...current, ...response.data.data.filter((conversation) => !current.some((item) => item.id === conversation.id))]);
+            setHistoryPage(response.data.current_page);
+            setHistoryLastPage(response.data.last_page);
+        } catch (requestError: any) {
+            if (requestVersion === historyRequestVersion.current) setHistoryError(requestError.userMessage ?? 'More conversations could not be loaded.');
+        } finally {
+            if (requestVersion === historyRequestVersion.current) setLoadingMoreHistory(false);
+        }
+    }
+
+    async function retryConversationHistory() {
+        setLoadingHistory(true);
+        setHistoryError('');
+        try {
+            await loadConversations(conversationSearch.trim());
+        } catch (requestError: any) {
+            setHistoryError(requestError.userMessage ?? 'Conversation history could not be loaded.');
+        } finally {
+            setLoadingHistory(false);
         }
     }
 
@@ -442,22 +543,29 @@ export function AIChatPage({ role, reportContext: incomingReport, onBack, initia
     }, [initialConversationId]);
 
     React.useEffect(() => {
+        setContextCardDismissed(false);
+    }, [selected?.id, orderId]);
+
+    React.useEffect(() => {
         if (!orderId) {
             setOrderContext(null);
+            setOrderContextError('');
+            setOrderContextLoading(false);
             return undefined;
         }
 
         let active = true;
         setOrderContext(null);
+        setOrderContextError('');
         setOrderContextLoading(true);
-        api.get<{ order: ChatOrderContext }>(`/api/orders/${orderId}`)
+        api.get<{ order: ChatOrderContext }>(`/api/orders/${orderId}/chat-context`)
             .then((response) => {
                 if (!active) return;
                 setOrderContext(response.data.order);
                 setInput((current) => current || `Hi, I have a concern about order ${response.data.order.order_reference}. `);
             })
             .catch((requestError: { userMessage?: string }) => {
-                if (active) setError(requestError.userMessage ?? 'The order context could not be loaded.');
+                if (active) setOrderContextError(requestError.userMessage ?? 'The order context could not be loaded.');
             })
             .finally(() => { if (active) setOrderContextLoading(false); });
 
@@ -465,6 +573,9 @@ export function AIChatPage({ role, reportContext: incomingReport, onBack, initia
     }, [orderId]);
 
     function startNewAIChat() {
+        conversationRequestId.current += 1;
+        setConversationLoading(false);
+        setMobileThreadOpen(true);
         setSelected(null);
         setMode('ai');
         shouldScrollToLatestRef.current = true;
@@ -472,6 +583,7 @@ export function AIChatPage({ role, reportContext: incomingReport, onBack, initia
         setMessagesHaveMore(false);
         setReport(null);
         setContextCleared(false);
+        setContextCardDismissed(false);
         setInput('');
         setError('');
         setFailedMessage('');
@@ -487,6 +599,7 @@ export function AIChatPage({ role, reportContext: incomingReport, onBack, initia
     }
 
     async function startDirectConversation(recipient: ChatPeer, listingId?: number) {
+        setMobileThreadOpen(true);
         setLoading(true);
         setError('');
         try {
@@ -555,7 +668,6 @@ export function AIChatPage({ role, reportContext: incomingReport, onBack, initia
         event.preventDefault();
         const text = input.trim();
         if (!text || loading) return;
-        setInput('');
         void sendMessage(text);
     }
 
@@ -563,29 +675,53 @@ export function AIChatPage({ role, reportContext: incomingReport, onBack, initia
     const selectedPeer = selected?.kind === 'direct' ? selected.peer : null;
     const threadTitle = mode === 'direct' ? selectedPeer?.name ?? 'New message' : selected?.title || 'FARMGATE AI';
 
-    return <section className="ai-chat-page" aria-label="FARMGATE conversations">
+    return <section className={`ai-chat-page${mobileThreadOpen ? ' mobile-thread-open' : ''}`} aria-label="FARMGATE conversations">
         <aside className="ai-chat-sidebar">
             <div className="ai-chat-sidebar-heading"><h2>Messages</h2></div>
             <div className="chat-start-actions">
                 <button type="button" onClick={startNewAIChat}>New AI chat</button>
                 <button type="button" onClick={startDirectDraft}>New message</button>
             </div>
-            {loadingHistory ? <p className="ai-chat-history-note">Loading history...</p> : conversations.length ? <nav aria-label="Chat history" tabIndex={0}>
-                {conversations.map((conversation) => <button type="button" key={conversation.id} className={conversation.id === selected?.id ? 'active' : ''} onClick={() => void openConversation(conversation.id)}>
+            <label className="ai-chat-search">
+                <span className="sr-only">Search conversations</span>
+                <input type="search" value={conversationSearch} onChange={(event) => setConversationSearch(event.target.value)} placeholder="Search conversations" autoComplete="off" />
+                {conversationSearch && <button type="button" aria-label="Clear conversation search" onClick={() => setConversationSearch('')}>×</button>}
+            </label>
+            {historyError ? <div className="ai-chat-history-error" role="alert">
+                <p>{historyError}</p>
+                <button type="button" onClick={() => void retryConversationHistory()}>Try again</button>
+            </div> : loadingHistory ? <p className="ai-chat-history-note" role="status">Loading conversations...</p> : conversations.length ? <nav aria-label="Chat history" aria-busy={loadingMoreHistory} tabIndex={0}>
+                {conversations.map((conversation) => <button type="button" key={conversation.id} className={`${conversation.id === selected?.id ? 'active' : ''}${conversation.kind === 'ai' ? ' ai-conversation' : ''}`} aria-current={conversation.id === selected?.id ? 'true' : undefined} onClick={() => void openConversation(conversation.id)}>
                     <span className={`ai-chat-conversation-avatar${conversation.kind === 'ai' ? ' ai' : ''}`} aria-hidden="true">
                         {conversation.kind === 'ai' ? 'AI' : conversationInitials(conversationLabel(conversation))}
                     </span>
                     <span className="ai-chat-conversation-copy">
                         <strong>{conversationLabel(conversation)}</strong>
-                        <small>{conversation.kind === 'direct' ? `${conversation.peer?.role ?? 'Direct message'} · ` : 'FARMGATE AI · '}{new Date(conversation.updated_at).toLocaleDateString()}</small>
+                        <small>{conversation.last_message_preview || (conversation.kind === 'ai' ? 'FARMGATE AI conversation' : `${conversation.peer?.role ?? 'Direct message'} conversation`)}</small>
+                        <span className="ai-chat-conversation-meta">
+                            <span>{conversation.kind === 'direct' ? conversation.peer?.role ?? 'Direct message' : 'FARMGATE AI'}</span>
+                            <time dateTime={conversation.updated_at}>{new Date(conversation.updated_at).toLocaleDateString()}</time>
+                        </span>
                         {conversation.unread && <span className="ai-chat-unread" aria-label="Unread messages">Unread</span>}
                     </span>
                 </button>)}
-            </nav> : <p className="ai-chat-history-note">Saved AI and direct conversations will appear here.</p>}
+                {historyPage < historyLastPage && <button type="button" className="ai-chat-load-more" disabled={loadingMoreHistory} onClick={() => void loadMoreConversations()}>{loadingMoreHistory ? 'Loading more...' : 'Load more conversations'}</button>}
+            </nav> : conversationSearch.trim() ? <div className="ai-chat-history-empty">
+                <p>No conversations match “{conversationSearch.trim()}”.</p>
+                <button type="button" onClick={() => setConversationSearch('')}>Clear search</button>
+            </div> : <div className="ai-chat-history-empty">
+                <p>Your conversations will appear here.</p>
+                <span>Start an AI chat or message someone to get started.</span>
+            </div>}
         </aside>
         <div className="ai-chat-panel">
             <header className="ai-chat-header">
                 <div className="ai-chat-header-identity">
+                    <button type="button" className="ai-chat-mobile-back" aria-label="Back to messages" title="Back to messages" onClick={() => setMobileThreadOpen(false)}>
+                        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none">
+                            <path d="M19 12H5m7 7-7-7 7-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                    </button>
                     <span className={`ai-chat-header-avatar${mode === 'ai' ? ' ai' : ''}`} aria-hidden="true">
                         {mode === 'direct' ? conversationInitials(selectedPeer?.name ?? 'Direct message') : 'AI'}
                     </span>
@@ -604,20 +740,27 @@ export function AIChatPage({ role, reportContext: incomingReport, onBack, initia
                 </div>}
             </header>
             <div className="ai-chat-contexts">
-            {orderId && <aside className="ai-chat-order-context" aria-label="Order being discussed">
-                {orderContextLoading ? <p role="status">Loading order context...</p> : orderContext ? <>
-                    <strong>Discussing order {orderContext.order_reference}</strong>
-                    <span>{orderContext.seller?.name ?? 'Seller'} · {orderContext.status.replaceAll('_', ' ')}</span>
-                    <small>{orderContext.items.map((item) => `${item.quantity} × ${item.listing?.name ?? 'Removed listing'}`).join(', ')}</small>
-                    <small>Farmgate AI can answer questions using this order’s saved status and payment or delivery updates. Other questions are sent to the seller.</small>
-                    <small>Add your concern to the draft message below before sending.</small>
-                </> : <p>Order context is unavailable.</p>}
+            {orderId && orderContextLoading && <p className="ai-chat-context-loading" role="status">Loading order context...</p>}
+            {orderId && !orderContextLoading && !orderContext && <p className="ai-chat-context-error" role="alert">{orderContextError || 'Order context is unavailable. You can still chat without it.'}</p>}
+            {!contextCardDismissed && orderId && orderContext && <aside className="ai-chat-order-context" aria-label="Order context">
+                <div className="ai-chat-context-copy">
+                    {orderContext.items[0]?.listing?.image_url
+                        ? <img src={orderContext.items[0].listing.image_url} alt="" />
+                        : <span className="ai-chat-context-placeholder" aria-hidden="true">FG</span>}
+                    <span>
+                        <small>ORDER CONTEXT</small>
+                        <strong>{orderContext.items[0]?.listing?.name ?? 'Livestock order'}</strong>
+                        <em>Order {orderContext.order_reference}{orderContext.items.length > 1 ? ` · ${orderContext.items.length} listings` : ''}</em>
+                    </span>
+                </div>
+                <button type="button" className="ai-chat-context-dismiss" aria-label="Dismiss order context" onClick={() => setContextCardDismissed(true)}>×</button>
             </aside>}
-            {selected?.kind === 'direct' && selected.listing && <aside className="ai-chat-listing-context" aria-label="Listing being discussed">
+            {!contextCardDismissed && !orderId && selected?.kind === 'direct' && selected.listing && <aside className="ai-chat-listing-context" aria-label="Listing context">
                 <a href={selected.listing.href} aria-label={`Open listing: ${selected.listing.name}`}>
                     {selected.listing.image_url ? <img src={selected.listing.image_url} alt="" /> : <span aria-hidden="true">{selected.listing.name.slice(0, 1)}</span>}
-                    <span><small>Listing context</small><strong>{selected.listing.name}</strong><em>View listing</em></span>
+                    <span><small>LISTING CONTEXT</small><strong>{selected.listing.name}</strong><em>Open listing</em></span>
                 </a>
+                <button type="button" className="ai-chat-context-dismiss" aria-label="Dismiss listing context" onClick={() => setContextCardDismissed(true)}>×</button>
             </aside>}
             {selected?.kind === 'direct' && selected.listing && role === 'SELLER' && selected.peer?.role === 'BUYER' && <aside className="ai-chat-product-ai-control" aria-label="Product chat assistant settings">
                 <p>{selected.ai_paused ? 'Farmgate AI is paused. You are handling buyer replies.' : 'Farmgate AI can answer listing questions and hand off when seller input is needed.'}</p>
@@ -637,9 +780,10 @@ export function AIChatPage({ role, reportContext: incomingReport, onBack, initia
             {report && selectedAI && <aside className="ai-chat-report-context"><strong>Analyzing: {reportTitle(report)}</strong><small>Farmgate rechecks report access and calculates summary data on the server.</small></aside>}
             {selected?.needs_human_attention && <aside className="ai-chat-attention" role="status">This conversation needs human attention. Farmgate AI does not make refund, complaint, or other policy decisions.</aside>}
             </div>
-            <div ref={messagesPaneRef} className="ai-chat-messages" role="log" aria-live="polite" aria-label="Conversation messages" tabIndex={0}>
+            <div ref={messagesPaneRef} className="ai-chat-messages" role="log" aria-live="polite" aria-label="Conversation messages" aria-busy={conversationLoading || loading} tabIndex={0}>
                 {messagesHaveMore && <button className="ai-chat-load-older" type="button" disabled={loadingOlder} onClick={() => void loadOlderMessages()}>{loadingOlder ? 'Loading earlier messages…' : 'Load earlier messages'}</button>}
-                {!messages.length && <div className="ai-chat-welcome"><span className="ai-chat-ai-mark" aria-hidden="true">{mode === 'ai' ? 'AI' : 'DM'}</span><h2>{mode === 'ai' ? 'How can I help?' : selected?.peer ? `Message ${selected.peer.name}` : 'Choose a conversation'}</h2><p>{mode === 'ai' ? copy.welcome : selected ? 'Messages are visible to the conversation participants.' : 'Start a new message or select a conversation from your inbox.'}</p>{mode === 'ai' && <div className="ai-chat-suggestions">{copy.suggestions.map((suggestion) => <button type="button" key={suggestion} disabled={loading} onClick={() => void sendMessage(suggestion)}>{suggestion}</button>)}</div>}</div>}
+                {conversationLoading && <div className="ai-chat-loading-state" role="status">Loading conversation...</div>}
+                {!conversationLoading && !messages.length && <div className="ai-chat-welcome"><span className={`ai-chat-ai-mark${mode === 'direct' ? ' direct' : ''}`} aria-hidden="true">{mode === 'ai' ? 'AI' : 'DM'}</span><h2>{mode === 'ai' ? 'How can I help?' : selected?.peer ? `Message ${selected.peer.name}` : 'Choose a conversation'}</h2><p>{mode === 'ai' ? copy.welcome : selected ? 'Messages are visible to the conversation participants.' : 'Start a new message or select a conversation from your inbox.'}</p>{mode === 'ai' && <div className="ai-chat-suggestions">{copy.suggestions.map((suggestion) => <button type="button" key={suggestion} disabled={loading} onClick={() => void sendMessage(suggestion)}>{suggestion}</button>)}</div>}</div>}
                 {messages.map((message) => {
                     const orderPreviews = message.order_previews ?? [];
                     return <article key={message.id} className={`ai-chat-message ${message.is_mine ? 'user' : 'assistant'}${message.role === 'assistant' && mode === 'direct' ? ' ai-chat-product-answer' : ''}`}>
@@ -651,17 +795,17 @@ export function AIChatPage({ role, reportContext: incomingReport, onBack, initia
                         <time dateTime={message.created_at}>{new Date(message.created_at).toLocaleString()}</time>
                     </article>;
                 })}
-                {loading && <div className="ai-chat-typing" role="status">{mode === 'ai' ? 'FARMGATE AI is thinking...' : 'Sending message...'}</div>}
+                {loading && <div className="ai-chat-typing" role="status">{recipientPickerOpen ? 'Starting conversation...' : mode === 'ai' ? 'FARMGATE AI is thinking...' : 'Sending message...'}</div>}
                 {error && <div className="ai-chat-error" role="alert"><span>{error}</span>{failedMessage && <button type="button" disabled={loading} onClick={() => void sendMessage(failedMessage)}>Retry</button>}</div>}
             </div>
             <form className="ai-chat-composer" onSubmit={submit}>
-                <textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => {
-                    if (event.key === 'Enter' && !event.shiftKey) {
+                <textarea ref={messageInputRef} value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => {
+                    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
                         event.preventDefault();
                         event.currentTarget.form?.requestSubmit();
                     }
-                }} placeholder={mode === 'ai' ? 'Ask FARMGATE AI... (Enter to send, Shift+Enter for a new line)' : 'Write a message... (Enter to send, Shift+Enter for a new line)'} maxLength={2000} rows={2} disabled={loading || (mode === 'direct' && (!selected || (orderId !== undefined && !orderContext)))} aria-label={mode === 'ai' ? 'Message to FARMGATE AI' : 'Direct message'} />
-                <button type="submit" disabled={loading || !input.trim() || (mode === 'direct' && (!selected || (orderId !== undefined && !orderContext)))}>{loading ? 'Sending...' : 'Send'}</button>
+                }} placeholder={mode === 'ai' ? 'Ask FARMGATE AI… (Enter to send, Shift+Enter for a new line)' : 'Write a message… (Enter to send, Shift+Enter for a new line)'} maxLength={2000} rows={2} disabled={loading || conversationLoading || orderContextLoading || (mode === 'direct' && (!selected || (orderId !== undefined && !orderContext)))} aria-label={mode === 'ai' ? 'Message to FARMGATE AI' : 'Direct message'} />
+                <button type="submit" aria-label={loading ? 'Sending message' : 'Send message'} disabled={loading || conversationLoading || !input.trim() || (mode === 'direct' && (!selected || (orderId !== undefined && !orderContext)))}>{loading ? 'Sending…' : 'Send'}</button>
             </form>
         </div>
     </section>;

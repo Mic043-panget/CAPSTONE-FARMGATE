@@ -81,7 +81,7 @@ class PublicSellerShopTest extends TestCase
         $response = $this->getJson("/api/sellers/{$seller->id}/shop")
             ->assertOk()
             ->assertJsonPath('seller.business_name', 'Bongabong Livestock')
-            ->assertJsonPath('seller.is_verified', true)
+            ->assertJsonPath('seller.is_verified', false)
             ->assertJsonPath('listings.total', 1)
             ->assertJsonPath('listings.data.0.id', $listing->id)
             ->assertJsonPath('listings.data.0.current_price', '108.00')

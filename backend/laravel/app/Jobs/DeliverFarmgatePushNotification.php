@@ -167,6 +167,7 @@ class DeliverFarmgatePushNotification implements ShouldQueue
             'calendar_event' => $data['title'] ?? 'Farmgate event update',
             'promotion_changed' => $data['title'] ?? 'Farmgate promotion update',
             'listing_moderation_updated' => ($data['listing_name'] ?? 'Listing').' review update',
+            'seller_verification_status' => 'Seller verification '.strtolower(str_replace('_', ' ', (string) ($data['status'] ?? 'updated'))),
             default => 'Farmgate update',
         };
     }

@@ -6,10 +6,12 @@ use App\Enums\ListingStatus;
 use App\Http\Controllers\Controller;
 use App\Models\LivestockListing;
 use App\Models\SellerPromotion;
+use App\Models\User;
 use App\Services\PromotionPricingService;
 use App\Services\SystemSettingsService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 
 class PromotionPageController extends Controller
 {
@@ -22,7 +24,7 @@ class PromotionPageController extends Controller
         $now = now();
         $expirationDays = max(0, $settings->getInt('listing_expiration_days'));
         $promotions = SellerPromotion::query()
-            ->with('seller:id,name')
+            ->with(['seller:id,name', 'seller.sellerProfile:user_id,shop_name,business_name,shop_image_path,verification_status'])
             ->where('status', 'ACTIVE')
             ->where('ends_at', '>=', $now)
             ->when(($filters['category'] ?? null) === 'discounts', fn ($query) => $query->where('discount_type', 'PERCENTAGE'))
@@ -86,7 +88,7 @@ class PromotionPageController extends Controller
                 'starts_at' => $promotion->starts_at->toIso8601String(),
                 'ends_at' => $promotion->ends_at->toIso8601String(),
                 'status' => $promotion->starts_at->gt($now) ? 'SCHEDULED' : 'ACTIVE',
-                'seller' => ['id' => $promotion->seller->id, 'name' => $promotion->seller->name],
+                'seller' => $this->publicSellerPayload($promotion->seller),
                 'listings' => $listings->map(fn (LivestockListing $listing): array => [
                     'id' => $listing->id,
                     'name' => $listing->name,
@@ -130,6 +132,7 @@ class PromotionPageController extends Controller
             });
         }
 
+        $promotion->load(['seller:id,name', 'seller.sellerProfile:user_id,shop_name,business_name,shop_image_path,verification_status']);
         $listings = $listingsQuery->orderBy('name')->get();
         $pricing->attach($listings);
         $scheduled = $promotion->starts_at->gt($now);
@@ -145,7 +148,7 @@ class PromotionPageController extends Controller
             'starts_at' => $promotion->starts_at->toIso8601String(),
             'ends_at' => $promotion->ends_at->toIso8601String(),
             'status' => $scheduled ? 'SCHEDULED' : 'ACTIVE',
-            'seller' => $promotion->seller()->select(['id', 'name'])->first(['id', 'name']),
+            'seller' => $this->publicSellerPayload($promotion->seller),
             'listings' => $listings->map(fn (LivestockListing $listing): array => [
                 'id' => $listing->id,
                 'name' => $listing->name,
@@ -176,5 +179,21 @@ class PromotionPageController extends Controller
                 });
             })
             ->exists();
+    }
+
+    /**
+     * @return array{id: int, name: string, shop_name: ?string, shop_image_url: ?string, is_verified: bool}
+     */
+    private function publicSellerPayload(User $seller): array
+    {
+        $profile = $seller->sellerProfile;
+
+        return [
+            'id' => $seller->id,
+            'name' => $seller->name,
+            'shop_name' => filled($profile?->shop_name) ? $profile->shop_name : $profile?->business_name,
+            'shop_image_url' => $profile?->shop_image_path ? Storage::disk('public')->url($profile->shop_image_path) : null,
+            'is_verified' => $profile?->verification_status === 'VERIFIED',
+        ];
     }
 }

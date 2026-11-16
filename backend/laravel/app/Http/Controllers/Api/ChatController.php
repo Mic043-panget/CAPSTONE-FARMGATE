@@ -20,11 +20,16 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 
 class ChatController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
+        $filters = $request->validate(['search' => ['nullable', 'string', 'max:100']]);
+        $search = trim($filters['search'] ?? '');
+        $actorId = (int) $request->user()->id;
+        $conversationTable = (new ChatConversation())->getTable();
         $unreadConversationIds = $request->user()->unreadNotifications()
             ->where('data->type', 'chat_message')
             ->get(['data'])
@@ -35,6 +40,13 @@ class ChatController extends Controller
             ->unique()
             ->flip();
         $conversations = ChatConversation::query()
+            ->addSelect([
+                'last_message_preview' => ChatMessage::query()
+                    ->select('content')
+                    ->whereColumn('chat_messages.conversation_id', "{$conversationTable}.id")
+                    ->latest('id')
+                    ->limit(1),
+            ])
             ->where(function (Builder $query) use ($request): void {
                 $query->where(function (Builder $ai) use ($request): void {
                     $ai->where('kind', 'ai')->where('user_id', $request->user()->id);
@@ -46,6 +58,15 @@ class ChatController extends Controller
                         });
                 });
             })
+            ->when($search !== '', function (Builder $query) use ($search, $actorId): void {
+                $like = "%{$search}%";
+                $query->where(function (Builder $matches) use ($like, $actorId): void {
+                    $matches->where('title', 'like', $like)
+                        ->orWhereHas('messages', fn (Builder $messages): Builder => $messages->where('content', 'like', $like))
+                        ->orWhereHas('user', fn (Builder $users): Builder => $users->where('id', '<>', $actorId)->where('name', 'like', $like))
+                        ->orWhereHas('recipient', fn (Builder $users): Builder => $users->where('id', '<>', $actorId)->where('name', 'like', $like));
+                });
+            })
             ->withCount('messages')
             ->latest('updated_at')
             ->paginate(20);
@@ -55,6 +76,9 @@ class ChatController extends Controller
             'data' => $conversations->getCollection()->map(fn (ChatConversation $conversation): array => $this->conversationData($conversation, $request->user()) + [
                 'messages_count' => $conversation->messages_count,
                 'unread' => $unreadConversationIds->has($conversation->id),
+                'last_message_preview' => $conversation->last_message_preview === null
+                    ? null
+                    : Str::limit($conversation->last_message_preview, 120),
             ])->all(),
         ]);
     }

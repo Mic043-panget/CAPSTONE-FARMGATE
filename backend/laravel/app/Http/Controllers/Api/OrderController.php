@@ -111,6 +111,25 @@ class OrderController extends Controller
         return response()->json(['order' => $order]);
     }
 
+    public function chatContext(Request $request, Order $order): JsonResponse
+    {
+        $this->authorizeOrder($request, $order);
+        $order->load(['items.listing.images' => fn ($query) => $query->orderBy('sort_order')->orderBy('id')]);
+
+        return response()->json([
+            'order' => [
+                'order_reference' => $order->order_reference,
+                'items' => $order->items->map(fn ($item): array => [
+                    'quantity' => $item->quantity,
+                    'listing' => $item->listing === null ? null : [
+                        'name' => $item->listing->name,
+                        'image_url' => $item->listing->images->first()?->url,
+                    ],
+                ])->values(),
+            ],
+        ]);
+    }
+
     public function requestUpdate(Request $request, Order $order): JsonResponse
     {
         abort_unless($request->user()->role === Role::BUYER, 403);

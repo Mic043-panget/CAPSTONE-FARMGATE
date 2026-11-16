@@ -15,11 +15,13 @@ import { SellerPromotions } from './SellerPromotions';
 import { NotificationsPage } from '../buyer/NotificationsPage';
 import { NavigationBadge, navigationBadgeLabel } from '../../shared/components/NavigationBadge';
 import { SellerPayouts } from './SellerPayouts';
+import { WorkspaceMobileHeader } from '../shared/WorkspaceMobileHeader';
+import { SellerShopProfileSettings } from './SellerShopProfileSettings';
 
 const LocationMap = React.lazy(() => import('../../shared/components/LocationMap').then((module) => ({ default: module.LocationMap })));
 
 type SellerPage = 'dashboard' | 'orders' | 'payouts' | 'notifications' | 'listings' | 'promotions' | 'interests' | 'complaints' | 'reviews' | 'reports' | 'chats' | 'location' | 'account';
-type SellerSettingsTab = 'profile' | 'password' | 'phone' | 'preferences' | 'pickup';
+type SellerSettingsTab = 'profile' | 'shop' | 'password' | 'phone' | 'preferences' | 'pickup';
 type SellerNavigationBadge = 'orders' | 'notifications' | 'complaints' | 'chats';
 type SellerAccountPreference = 'order_notifications' | 'chat_notifications' | 'allow_direct_messages';
 type SellerWorkspaceProps = {
@@ -91,6 +93,7 @@ const interestStatuses = ['INTERESTED', 'CONTACTED', 'NEGOTIATING', 'PURCHASED',
 
 export function SellerWorkspace({ categories, error, user, onError, onUserUpdated, onLogout }: SellerWorkspaceProps) {
     const [page, setPage] = React.useState<SellerPage>(() => window.location.hash === '#notifications' ? 'notifications' : 'dashboard');
+    const [mobileNavOpen, setMobileNavOpen] = React.useState(false);
     const [notificationCaseReference, setNotificationCaseReference] = React.useState<string | null>(null);
     const [notificationOrderId, setNotificationOrderId] = React.useState<number | null>(null);
     const [settingsTab, setSettingsTab] = React.useState<SellerSettingsTab>('profile');
@@ -752,6 +755,7 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
             <div className="seller-settings-tabs" role="tablist" aria-label="Seller settings">
                 {([
                     ['profile', 'Profile & business'],
+                    ['shop', 'Shop profile'],
                     ['password', 'Password'],
                     ['phone', 'Phone security'],
                     ['preferences', 'Notifications & privacy'],
@@ -769,7 +773,7 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
                     onKeyDown={(event) => {
                         if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
                         event.preventDefault();
-                        const tabs: SellerSettingsTab[] = ['profile', 'password', 'phone', 'preferences', 'pickup'];
+                        const tabs: SellerSettingsTab[] = ['profile', 'shop', 'password', 'phone', 'preferences', 'pickup'];
                         const current = tabs.indexOf(tab);
                         const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (current + (event.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length;
                         setSettingsTab(tabs[next]);
@@ -785,12 +789,16 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
                         <label>Account name<input type="text" autoComplete="name" maxLength={120} required value={sellerName} onChange={(event) => setSellerName(event.target.value)} /></label>
                         <label>Username<input type="text" autoComplete="username" minLength={3} maxLength={32} pattern="[A-Za-z0-9_\-]+" required value={sellerUsername} onChange={(event) => setSellerUsername(event.target.value)} /></label>
                         <label>Email address<input type="email" autoComplete="email" maxLength={255} required value={sellerEmail} onChange={(event) => setSellerEmail(event.target.value)} /></label>
+                        <p className="seller-email-verification" role="status">Contact verification: {user.email_verified_at || user.phone_verified_at ? 'Verified' : 'Not verified'}. A verified email or mobile number allows you to add livestock listings.</p>
                         <p className="seller-email-verification">Email status: {user.email_verified_at ? 'Verified' : 'Not verified'}{!user.email_verified_at && <> · <button type="button" className="seller-text-action" disabled={emailVerificationBusy} onClick={() => void resendSellerEmailVerification()}>{emailVerificationBusy ? 'Sending...' : 'Resend verification email'}</button></>}</p>
                         <label>Business name<input type="text" autoComplete="organization" maxLength={255} value={businessName} onChange={(event) => setBusinessName(event.target.value)} /></label>
                         <label>Business contact phone<input type="tel" autoComplete="tel" inputMode="tel" maxLength={30} value={businessPhone} onChange={(event) => setBusinessPhone(event.target.value)} /><small>This business contact is separate from your verified account phone number.</small></label>
                         <label>Business address<textarea autoComplete="street-address" maxLength={2000} value={businessAddress} onChange={(event) => setBusinessAddress(event.target.value)} /></label>
                         <button className="seller-inline-action" type="submit" disabled={profileSaving}>{profileSaving ? 'Saving details...' : 'Save account details'}</button>
                     </form>
+                </section>
+                <section className="seller-settings-section" id="seller-settings-panel-shop" role="tabpanel" aria-labelledby="seller-settings-tab-shop" hidden={settingsTab !== 'shop'} tabIndex={-1}>
+                    <SellerShopProfileSettings defaultShopName={user.name} />
                 </section>
                 <section className="seller-settings-section" id="seller-settings-panel-password" role="tabpanel" aria-labelledby="seller-settings-tab-password" hidden={settingsTab !== 'password'} tabIndex={-1}>
                     <div className="seller-work-heading"><div><p className="eyebrow">Profile protection</p><h3 id="seller-password-settings-heading">Change password</h3></div></div>
@@ -857,7 +865,11 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
     const pageTitle = page === 'location' || page === 'account' ? 'Settings' : activeNavigation?.label ?? (page === 'interests' ? 'Buyer interest' : '');
 
     return <main className={`admin-shell seller-shell${page === 'dashboard' ? ' seller-dashboard-open' : ''}`}>
-        <aside className="admin-sidebar">
+        <aside className={`admin-sidebar role-sidebar${mobileNavOpen ? ' mobile-open' : ''}`} onKeyDown={(event) => {
+            if (event.key === 'Escape') setMobileNavOpen(false);
+        }}>
+            <WorkspaceMobileHeader role="seller" menuOpen={mobileNavOpen} controlsId="seller-mobile-navigation" onToggle={() => setMobileNavOpen((open) => !open)} />
+            <div className="role-mobile-menu-panel" id="seller-mobile-navigation">
             <a className="brand" href="/">FARM<span>GATE</span></a>
             <div className="admin-sidebar-label">SELLER PORTAL</div>
             <nav aria-label="Seller navigation">{navigation.map((item) => {
@@ -872,11 +884,12 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
                                 ? navigationBadgeLabel(badgeCount, 'unread message', 'unread messages')
                                 : '';
                 const selected = page === item.id || (page === 'location' && item.id === 'account');
-                return <button type="button" key={item.id} className={selected ? 'active' : ''} aria-current={selected ? 'page' : undefined} aria-label={badgeCount > 0 ? `${item.label}, ${badgeDescription}${item.badge === 'orders' ? '. Separate from unread notifications.' : ''}` : item.label} title={badgeCount > 0 ? `${item.label}, ${badgeDescription}${item.badge === 'orders' ? ' (separate from unread notifications)' : ''}` : item.label} onClick={() => { setPage(item.id); setNotice(null); }}><span className="nav-icon" aria-hidden="true">{item.id === 'notifications' ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg> : item.icon}</span><span className="seller-nav-label">{item.label}</span>{item.badge === 'orders' && badgeCount > 0
+                return <button type="button" key={item.id} className={selected ? 'active' : ''} aria-current={selected ? 'page' : undefined} aria-label={badgeCount > 0 ? `${item.label}, ${badgeDescription}${item.badge === 'orders' ? '. Separate from unread notifications.' : ''}` : item.label} title={badgeCount > 0 ? `${item.label}, ${badgeDescription}${item.badge === 'orders' ? ' (separate from unread notifications)' : ''}` : item.label} onClick={() => { setPage(item.id); setNotice(null); setMobileNavOpen(false); }}><span className="nav-icon" aria-hidden="true">{item.id === 'notifications' ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg> : item.icon}</span><span className="seller-nav-label">{item.label}</span>{item.badge === 'orders' && badgeCount > 0
                     ? <span className="seller-orders-pending-badge" aria-hidden="true">{badgeCount > 99 ? '99+' : Math.floor(badgeCount)} pending</span>
                     : <NavigationBadge count={badgeCount} />}</button>;
             })}</nav>
             <button className="sidebar-logout" type="button" onClick={onLogout}>Log out <span>↗</span></button>
+            </div>
         </aside>
         <section className={`admin-content seller-content${page === 'dashboard' ? ' seller-content-dashboard' : ''}`}>
             <header className="admin-header"><div><p className="eyebrow">FARMGATE seller workspace</p><h1>{pageTitle}</h1><p>Manage your listings, orders, and buyer relationships.</p></div><span className="admin-role">SELLER</span></header>

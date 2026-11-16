@@ -26,14 +26,16 @@ class OverviewController extends Controller
     {
         $this->admin($request);
         $query = User::withTrashed()
-            ->select(['id', 'name', 'email', 'role', 'email_verified_at', 'created_at', 'deleted_at'])
+            ->select(['id', 'name', 'email', 'role', 'email_verified_at', 'phone_verified_at', 'created_at', 'deleted_at'])
             ->withCount('moderationViolations')
             ->latest();
         if ($request->filled('role')) {
             $query->where('role', $request->input('role'));
         }
         if ($request->boolean('verified')) {
-            $query->whereNotNull('email_verified_at');
+            $query->where(fn (Builder $users) => $users
+                ->whereNotNull('email_verified_at')
+                ->orWhereNotNull('phone_verified_at'));
         }
         if ($request->filled('search')) {
             $query->where(fn ($builder) => $builder->where('name', 'like', '%'.$request->input('search').'%')->orWhere('email', 'like', '%'.$request->input('search').'%'));
