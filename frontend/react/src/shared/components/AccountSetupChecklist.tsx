@@ -19,61 +19,64 @@ export type AccountSetupGroup = {
     steps: AccountSetupStep[];
 };
 
-export function AccountSetupChecklist({ title, description, groups }: {
+export function AccountSetupProgress({ title, groups, loading, error, onRetry, onReviewTutorial }: {
     title: string;
-    description: string;
     groups: AccountSetupGroup[];
+    loading: boolean;
+    error: string;
+    onRetry: () => void;
+    onReviewTutorial: () => void;
 }) {
+    const [expanded, setExpanded] = React.useState(false);
+    if (loading) return <aside className="account-setup-progress account-setup-progress--status" role="status">Loading {title.toLowerCase()} progress…</aside>;
+    if (error) return <aside className="account-setup-progress account-setup-progress--status" role="alert">
+        <strong>Couldn’t load {title.toLowerCase()} progress.</strong>
+        <span>{error}</span>
+        <button type="button" className="seller-text-action" onClick={onRetry}>Retry</button>
+    </aside>;
+
     const steps = groups.flatMap((group) => group.steps);
     const completed = steps.filter((step) => step.status === 'Complete').length;
     const nextStep = steps.find((step) => step.status === 'In progress')
         ?? steps.find((step) => step.status === 'Not started')
-        ?? steps.find((step) => step.status === 'Waiting for review')
-        ?? steps[0];
+        ?? steps.find((step) => step.status === 'Waiting for review');
 
-    return <section className="account-setup-checklist" aria-labelledby="account-setup-checklist-title">
-        <div className="account-setup-heading">
-            <div>
-                <p className="eyebrow">Setup guide</p>
-                <h3 id="account-setup-checklist-title">{title}</h3>
-                <p>{description}</p>
-            </div>
-            <button type="button" className="seller-inline-action" onClick={nextStep.onAction}>
-                {completed === steps.length ? 'Review setup' : 'Continue setup'}
+    return <aside className={`account-setup-progress${expanded ? ' is-expanded' : ''}`} aria-label={`${title} progress`}>
+        <div className="account-setup-progress-heading">
+            <div><span>Setup progress</span><strong>{completed} of {steps.length} complete</strong></div>
+            <button type="button" className="account-setup-progress-toggle" aria-expanded={expanded} aria-controls="account-setup-progress-details" onClick={() => setExpanded((value) => !value)}>
+                {expanded ? 'Close' : 'Details'}
             </button>
         </div>
-        <div className="account-setup-overall-progress">
-            <progress value={completed} max={steps.length} aria-label={`${completed} of ${steps.length} setup steps complete`} />
-            <strong>{completed} of {steps.length} steps complete</strong>
+        <progress value={completed} max={Math.max(steps.length, 1)} aria-label={`${completed} of ${steps.length} setup steps complete`} />
+        <div className="account-setup-progress-actions">
+            {nextStep && <button type="button" className="seller-inline-action" onClick={nextStep.onAction}>Continue: {nextStep.title}</button>}
+            <button type="button" className="seller-text-action" aria-haspopup="dialog" onClick={onReviewTutorial}>Take a guided tour</button>
         </div>
-        {groups.map((group) => {
-            const groupComplete = group.steps.filter((step) => step.status === 'Complete').length;
-
-            return <section className="account-setup-group" key={group.title} aria-label={group.title}>
-                <div className="account-setup-group-heading">
-                    <h4>{group.title}</h4>
-                    <span>{groupComplete} of {group.steps.length} complete</span>
-                </div>
-                <progress value={groupComplete} max={group.steps.length} aria-label={`${group.title}: ${groupComplete} of ${group.steps.length} complete`} />
-                <ol className="account-setup-steps">
-                    {group.steps.map((step) => <li className="account-setup-step" key={step.id}>
-                        <div className="account-setup-step-copy">
-                            <strong>{step.title}</strong>
-                            <p>{step.description}</p>
-                        </div>
-                        <span className={`account-setup-status account-setup-status--${step.status.toLowerCase().replaceAll(' ', '-')}`} role="status">{step.status}</span>
-                        <div className="account-setup-step-actions">
-                            <button type="button" className="seller-text-action" onClick={step.onAction}>{step.actionLabel}</button>
-                            {step.secondaryActionLabel && step.onSecondaryAction && <button
-                                type="button"
-                                className="seller-text-action"
-                                disabled={step.secondaryActionBusy}
-                                onClick={step.onSecondaryAction}
-                            >{step.secondaryActionBusy ? 'Saving…' : step.secondaryActionLabel}</button>}
-                        </div>
-                    </li>)}
-                </ol>
-            </section>;
-        })}
-    </section>;
+        <div id="account-setup-progress-details" className="account-setup-progress-details" hidden={!expanded}>
+            {groups.map((group) => {
+                const groupComplete = group.steps.filter((step) => step.status === 'Complete').length;
+                return <section className="account-setup-group" key={group.title} aria-label={group.title}>
+                    <div className="account-setup-group-heading"><h4>{group.title}</h4><span>{groupComplete} of {group.steps.length}</span></div>
+                    <progress value={groupComplete} max={Math.max(group.steps.length, 1)} aria-label={`${group.title}: ${groupComplete} of ${group.steps.length} complete`} />
+                    <ol className="account-setup-steps">
+                        {group.steps.map((step) => <li className="account-setup-step" key={step.id}>
+                            <span className="account-setup-step-title">{step.title}</span>
+                            <span className={`account-setup-status account-setup-status--${step.status.toLowerCase().replaceAll(' ', '-')}`} role="status">{step.status}</span>
+                            <p className="account-setup-step-description">{step.description}</p>
+                            <div className="account-setup-step-actions">
+                                <button type="button" className="seller-text-action" onClick={step.onAction}>{step.actionLabel}</button>
+                                {step.secondaryActionLabel && step.onSecondaryAction && <button
+                                    type="button"
+                                    className="seller-text-action"
+                                    disabled={step.secondaryActionBusy}
+                                    onClick={step.onSecondaryAction}
+                                >{step.secondaryActionBusy ? 'Saving…' : step.secondaryActionLabel}</button>}
+                            </div>
+                        </li>)}
+                    </ol>
+                </section>;
+            })}
+        </div>
+    </aside>;
 }

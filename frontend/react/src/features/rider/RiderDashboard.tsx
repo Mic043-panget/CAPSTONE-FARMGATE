@@ -709,7 +709,7 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
     const [page, setPage] = React.useState<RiderPage>(() => window.location.hash === '#notifications' ? 'notifications' : 'dashboard');
     const [mobileNavOpen, setMobileNavOpen] = React.useState(false);
     const [deliveryTab, setDeliveryTab] = React.useState<RiderDeliveryTab>('nearby');
-    const [deliveryTutorialOpen, setDeliveryTutorialOpen] = React.useState(true);
+    const [deliveryTutorialOpen, setDeliveryTutorialOpen] = React.useState(false);
     const [summary, setSummary] = React.useState<RiderSummary | null>(null);
     const [summaryLoading, setSummaryLoading] = React.useState(true);
     const [summaryError, setSummaryError] = React.useState('');
@@ -1252,18 +1252,19 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
                     value={deliveryTab}
                     onChange={(value) => setDeliveryTab(value as RiderDeliveryTab)}
                     options={[
-                        { value: 'nearby', label: 'Nearby Orders' },
-                        { value: 'assigned', label: 'My Deliveries' },
-                        { value: 'scanner', label: 'QR Scanner' },
-                        { value: 'history', label: 'Delivery History' },
+                        { value: 'nearby', label: 'Nearby Orders', id: 'rider-delivery-tab-nearby' },
+                        { value: 'assigned', label: 'My Deliveries', id: 'rider-delivery-tab-assigned' },
+                        { value: 'scanner', label: 'QR Scanner', id: 'rider-delivery-tab-scanner' },
+                        { value: 'history', label: 'Delivery History', id: 'rider-delivery-tab-history' },
                     ]}
                 />
                 <RiderDeliveryTutorial
                     open={deliveryTutorialOpen}
                     onToggle={() => setDeliveryTutorialOpen((open) => !open)}
                     onDismiss={() => setDeliveryTutorialOpen(false)}
+                    onDeliveryTabChange={setDeliveryTab}
                 />
-                {deliveryTab === 'nearby' && <section className="rider-nearby-workspace" aria-labelledby="rider-offers-title" aria-live="polite">
+                {deliveryTab === 'nearby' && <section id="rider-nearby-workspace" className="rider-nearby-workspace" aria-labelledby="rider-offers-title" aria-live="polite">
                     <div className="rider-nearby-heading">
                         <div><p className="eyebrow">New assignments</p><h2 id="rider-offers-title">Nearby orders</h2><p>{offers.length} currently available to you</p></div>
                         <div className="rider-nearby-location">
@@ -1343,7 +1344,7 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
                         </aside>
                     </div>
                 </section>}
-                {deliveryTab === 'assigned' && <>
+                {deliveryTab === 'assigned' && <section id="rider-assigned-deliveries" className="rider-assigned-deliveries" aria-label="My assigned deliveries">
                     <RiderRemittancePanel key={deliveryRevision} onSubmitted={() => setDeliveryRevision((revision) => revision + 1)} />
                     <div className="rider-delivery-filters" role="search" aria-label="Filter my deliveries">
                         <label>Search deliveries<input type="search" value={deliverySearch} onChange={(event) => { setDeliverySearch(event.target.value); setDeliveryPage(1); }} placeholder="Delivery or order reference, buyer, or seller" /></label>
@@ -1389,7 +1390,7 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
                             </section>;
                         })}</div>}
                     {!deliveriesLoading && deliveryTotal > 0 && <div className="rider-delivery-pagination"><span>Page {deliveryPage} of {deliveryLastPage} · {deliveryTotal} deliveries</span>{deliveryLastPage > 1 && <Pagination page={deliveryPage} lastPage={deliveryLastPage} onChange={setDeliveryPage} />}</div>}
-                </>}
+                </section>}
                 {deliveryTab === 'scanner' && <section className="rider-qr-scanner" aria-labelledby="rider-qr-scanner-title">
                     <div className="rider-work-heading"><div><p className="eyebrow">Assigned deliveries only</p><h3 id="rider-qr-scanner-title">QR Scanner</h3><p>Choose an active assignment to verify pickup or delivery.</p></div><button type="button" className="seller-inline-action" disabled={scannerLoading} aria-busy={scannerLoading} onClick={refreshDeliveries}>{scannerLoading ? 'Refreshing…' : 'Refresh assignments'}</button></div>
                     {scannerError && <p className="rider-delivery-error" role="alert">{scannerError}</p>}
@@ -1409,7 +1410,7 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
                                 </article>}
                             </div>}
                 </section>}
-                {deliveryTab === 'history' && <ReportPanel role="RIDER" onError={onError} title="Delivery History" hideTypeSelector />}
+                {deliveryTab === 'history' && <div id="rider-delivery-history"><ReportPanel role="RIDER" onError={onError} title="Delivery History" hideTypeSelector /></div>}
             </section>}
             {page === 'chats' && <AIChatPage role="RIDER" initialConversationId={activeConversationId} onBack={() => setPage('dashboard')} />}
             {page === 'reports' && <ReportPanel role="RIDER" onError={onError} />}

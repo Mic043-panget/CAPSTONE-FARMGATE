@@ -2074,54 +2074,62 @@ label { display: grid; gap: 0.45rem; }
 .rider-account-settings { background: var(--panel); border: 1px solid var(--line); min-width: 0; padding: 1.35rem; }
 .rider-settings-intro, .rider-settings-panel > p { color: var(--ink-soft); font-size: 0.8rem; line-height: 1.5; max-width: 78ch; }
 .rider-settings-notice { background: var(--mint); color: var(--ink); margin: 0.7rem 0; padding: 0.7rem 0.85rem; }
-.account-setup-checklist { background: #fbfaf6; border: 1px solid var(--line); margin: 1rem 0; min-width: 0; padding: 1rem; }
-.account-setup-heading { align-items: start; display: flex; flex-wrap: wrap; gap: 0.75rem; justify-content: space-between; }
-.account-setup-heading h3, .rider-delivery-tutorial h3 { font: 400 1.35rem Georgia, serif; margin: 0; }
-.account-setup-heading p:not(.eyebrow) { color: var(--ink-soft); font-size: 0.78rem; line-height: 1.45; margin: 0.35rem 0 0; max-width: 72ch; }
-.account-setup-overall-progress { align-items: center; display: grid; gap: 0.4rem; grid-template-columns: minmax(100px, 1fr) auto; margin: 1rem 0; }
-.account-setup-overall-progress progress, .account-setup-group > progress { accent-color: #52754b; height: 0.6rem; width: 100%; }
-.account-setup-overall-progress strong, .account-setup-group-heading span { color: var(--ink-soft); font-size: 0.72rem; }
-.account-setup-group { border-top: 1px solid var(--line); margin-top: 1rem; padding-top: 0.9rem; }
+.account-setup-progress { background: #fbfaf6; border: 1px solid var(--line); border-radius: 0.5rem; bottom: 1rem; box-shadow: 0 12px 36px #172a2030; display: grid; gap: 0.65rem; max-height: min(76vh, 760px); max-width: 390px; overflow: hidden; padding: 0.85rem; position: fixed; right: 1rem; width: min(360px, calc(100vw - 2rem)); z-index: 9500; }
+.account-setup-progress--status { align-items: start; gap: 0.4rem; }
+.account-setup-progress--status > span { color: var(--ink-soft); font-size: 0.72rem; line-height: 1.4; }
+.account-setup-progress-heading { align-items: center; display: flex; gap: 0.6rem; justify-content: space-between; }
+.account-setup-progress-heading > div { display: grid; gap: 0.12rem; }
+.account-setup-progress-heading > div > span { color: var(--ink-soft); font-size: 0.7rem; }
+.account-setup-progress-heading strong { font-size: 0.86rem; }
+.account-setup-progress progress, .account-setup-group > progress { accent-color: #52754b; height: 0.55rem; width: 100%; }
+.account-setup-progress-toggle { background: transparent; border: 1px solid var(--line); border-radius: 999px; color: var(--ink); cursor: pointer; font-size: 0.7rem; font-weight: 700; padding: 0.35rem 0.65rem; }
+.account-setup-progress-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 0.25rem 0.7rem; }
+.account-setup-progress-actions .seller-inline-action { font-size: 0.72rem; }
+.account-setup-progress-actions .seller-text-action { font-size: 0.7rem; }
+.account-setup-progress-details { max-height: calc(76vh - 135px); min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.account-setup-group { border-top: 1px solid var(--line); margin-top: 0.6rem; padding-top: 0.55rem; }
+.account-setup-group:first-child { margin-top: 0; }
 .account-setup-group-heading { align-items: baseline; display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; justify-content: space-between; }
-.account-setup-group-heading h4 { font-size: 0.9rem; margin: 0; }
-.account-setup-group > progress { display: block; height: 0.35rem; margin: 0.55rem 0; }
+.account-setup-group-heading h4 { font-size: 0.76rem; margin: 0; }
+.account-setup-group-heading span { color: var(--ink-soft); font-size: 0.68rem; }
+.account-setup-group > progress { display: block; height: 0.3rem; margin: 0.35rem 0; }
 .account-setup-steps { list-style: none; margin: 0; padding: 0; }
-.account-setup-step { align-items: center; border-top: 1px solid #e5e3db; display: grid; gap: 0.55rem 0.8rem; grid-template-columns: minmax(0, 1fr) auto; padding: 0.75rem 0; }
+.account-setup-step { align-items: center; border-top: 1px solid #e5e3db; display: grid; gap: 0.4rem 0.55rem; grid-template-columns: minmax(0, 1fr) auto; padding: 0.5rem 0; }
 .account-setup-step:first-child { border-top: 0; }
-.account-setup-step-copy { min-width: 0; }
-.account-setup-step-copy strong { font-size: 0.82rem; }
-.account-setup-step-copy p { color: var(--ink-soft); font-size: 0.72rem; line-height: 1.45; margin: 0.2rem 0 0; }
-.account-setup-status { border-radius: 999px; font-size: 0.68rem; font-weight: 700; justify-self: end; padding: 0.25rem 0.55rem; white-space: nowrap; }
+.account-setup-step-title { font-size: 0.74rem; min-width: 0; }
+.account-setup-step-description { color: var(--ink-soft); font-size: 0.68rem; grid-column: 1 / -1; line-height: 1.4; margin: 0; }
+.account-setup-status { border-radius: 999px; font-size: 0.64rem; font-weight: 700; justify-self: end; padding: 0.22rem 0.45rem; white-space: nowrap; }
 .account-setup-status--complete { background: #e2eee3; color: #235d38; }
 .account-setup-status--waiting-for-review { background: #fff0d4; color: #744700; }
 .account-setup-status--in-progress { background: #e8eee8; color: #405f44; }
 .account-setup-status--not-started { background: #ecece8; color: #62675f; }
-.account-setup-step-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; grid-column: 1 / -1; }
+.account-setup-step-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 0.35rem 0.8rem; grid-column: 1 / -1; }
 .account-setup-step-actions button:disabled { cursor: wait; opacity: 0.65; }
-.account-setup-checklist button:focus-visible, .rider-delivery-tutorial button:focus-visible { outline: 3px solid #d38655; outline-offset: 3px; }
-.account-setup-error { align-items: center; background: #fff3f1; border: 1px solid #e0b7ad; color: #7d3026; display: flex; flex-wrap: wrap; gap: 0.6rem; margin: 1rem 0; padding: 0.8rem; }
-.account-setup-loading { margin: 1rem 0; }
+.account-setup-progress button:focus-visible, .guided-walkthrough-card button:focus-visible, .rider-delivery-tutorial-launch button:focus-visible { outline: 3px solid #d38655; outline-offset: 3px; }
 .rider-setup-guide { min-width: 0; }
 .rider-application-review { background: #f5f4ee; border-left: 3px solid #52754b; margin: 1rem 0 0; padding: 0.8rem 1rem; }
 .rider-application-review strong { display: block; font-size: 0.82rem; }
 .rider-application-review p:not(.eyebrow) { color: var(--ink-soft); font-size: 0.74rem; line-height: 1.45; margin: 0.25rem 0 0; }
 .rider-guide-actions { display: flex; justify-content: flex-end; margin-top: 0.5rem; }
-.rider-delivery-tutorial { background: #fbfaf6; border: 1px solid var(--line); margin: 0.85rem 0 1rem; padding: 0.9rem 1rem; }
-.rider-delivery-tutorial-heading { align-items: center; display: flex; flex-wrap: wrap; gap: 0.75rem; justify-content: space-between; }
-.rider-delivery-tutorial-content { color: var(--ink-soft); font-size: 0.76rem; line-height: 1.55; margin-top: 0.65rem; max-width: 90ch; }
-.rider-delivery-tutorial-content ol { display: grid; gap: 0.55rem; margin: 0; padding-left: 1.35rem; }
-.rider-delivery-tutorial-content li { padding-left: 0.15rem; }
-.rider-delivery-tutorial-content strong, .rider-delivery-tutorial-content b { color: var(--ink); }
-.rider-delivery-tutorial-content code { background: #ecece8; border-radius: 0.2rem; color: var(--ink); font-size: 0.7rem; padding: 0.08rem 0.25rem; }
-.rider-delivery-tutorial-content > p { margin: 0.7rem 0; }
-.rider-delivery-tutorial-content button { font-size: 0.75rem; }
+.rider-delivery-tutorial-launch { display: flex; justify-content: flex-end; margin: 0.6rem 0 1rem; }
+.guided-walkthrough-backdrop { background: rgb(17 34 29 / 62%); inset: 0; position: fixed; z-index: 10000; }
+.guided-walkthrough-spotlight { border-radius: 0.35rem; box-shadow: 0 0 0 9999px rgb(17 34 29 / 62%); outline: 3px solid #e9b46b; outline-offset: 3px; pointer-events: none !important; position: relative !important; z-index: 10001 !important; }
+.guided-walkthrough-card { background: var(--panel); border: 1px solid var(--line); border-radius: 0.6rem; box-shadow: 0 18px 55px #10231b66; color: var(--ink); left: 50%; max-height: min(65vh, 360px); overflow-y: auto; padding: 1rem; position: fixed; top: 50%; transform: translate(-50%, -50%); width: min(380px, calc(100vw - 2rem)); z-index: 10002; }
+.guided-walkthrough-card.is-positioned { transform: none; }
+.guided-walkthrough-card-heading { align-items: center; color: var(--ink-soft); display: flex; font-size: 0.7rem; font-weight: 700; justify-content: space-between; }
+.guided-walkthrough-close { align-items: center; background: transparent; border: 0; border-radius: 50%; color: var(--ink); cursor: pointer; display: inline-flex; font-size: 1.3rem; height: 2rem; justify-content: center; width: 2rem; }
+.guided-walkthrough-card h2 { font: 400 1.3rem Georgia, serif; margin: 0.5rem 0; }
+.guided-walkthrough-card > p { color: var(--ink-soft); font-size: 0.78rem; line-height: 1.5; margin: 0; }
+.guided-walkthrough-actions { align-items: center; border-top: 1px solid var(--line); display: flex; gap: 0.5rem; justify-content: space-between; margin-top: 0.9rem; padding-top: 0.7rem; }
+.guided-walkthrough-actions > div { display: flex; gap: 0.45rem; }
+.guided-walkthrough-actions button { background: transparent; border: 1px solid var(--line); border-radius: 999px; color: var(--ink); cursor: pointer; font-size: 0.72rem; font-weight: 700; padding: 0.45rem 0.7rem; }
+.guided-walkthrough-actions button.seller-inline-action { background: #315449; border-color: #315449; color: var(--panel); }
+.guided-walkthrough-actions button:disabled { cursor: not-allowed; opacity: 0.5; }
+.guided-walkthrough-actions .guided-walkthrough-skip { border: 0; color: var(--ink-soft); }
 @media (max-width: 620px) {
-    .account-setup-checklist { padding: 0.75rem; }
-    .account-setup-overall-progress { align-items: start; grid-template-columns: 1fr; }
-    .account-setup-step { align-items: start; grid-template-columns: minmax(0, 1fr); }
-    .account-setup-status { justify-self: start; }
-    .account-setup-step-actions { grid-column: 1; }
-    .rider-delivery-tutorial { padding: 0.75rem; }
+    .account-setup-progress { bottom: calc(0.5rem + env(safe-area-inset-bottom)); max-height: 75vh; right: 0.5rem; width: calc(100vw - 1rem); }
+    .account-setup-progress-details { max-height: calc(75vh - 135px); }
+    .guided-walkthrough-card { max-height: 70vh; }
 }
 .rider-settings-tabs { gap: 0.2rem; overflow-x: auto; flex-wrap: nowrap; scrollbar-width: thin; }
 .rider-settings-tabs .seller-settings-tab { flex: 0 0 auto; white-space: nowrap; }
