@@ -101,10 +101,15 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .buyer-notification-device-alerts button { background: #17612e; border: 0; border-radius: 9px; color: white; cursor: pointer; font: inherit; font-weight: 700; min-height: 44px; padding: 0.6rem 1rem; }
 .buyer-notification-device-alerts button:disabled { cursor: default; opacity: 0.72; }
 .buyer-notification-device-alerts p { color: var(--ink-soft); flex: 1 1 260px; font-size: 0.82rem; margin: 0; }
-.buyer-notification-filters, .buyer-notification-content { background: var(--panel); border: 1px solid var(--line); box-shadow: 0 3px 14px rgba(24, 59, 50, 0.08); }
-.buyer-notification-filters { align-items: center; border-radius: 14px; display: flex; gap: 0.4rem; min-height: 76px; padding: 0.8rem; }
+.buyer-notification-filter-bar, .buyer-notification-content { background: var(--panel); border: 1px solid var(--line); box-shadow: 0 3px 14px rgba(24, 59, 50, 0.08); }
+.buyer-notification-filter-bar { align-items: center; border-radius: 14px; display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; justify-content: space-between; min-height: 76px; padding: 0.8rem; }
+.buyer-notification-filters { align-items: center; display: flex; flex: 1 1 auto; flex-wrap: wrap; gap: 0.4rem; }
 .buyer-notification-filters button { background: transparent; border: 0; border-radius: 9px; color: var(--ink-soft); font-weight: 700; min-width: 84px; min-height: 52px; padding: 0.7rem 1rem; }
 .buyer-notification-filters button.active { background: linear-gradient(135deg, #2c873c, #17612e); box-shadow: 0 4px 10px rgba(26, 105, 48, 0.24); color: white; }
+.buyer-notification-settings { align-items: center; background: transparent; border: 1px solid var(--line); border-radius: 9px; color: var(--ink); cursor: pointer; display: inline-flex; flex: 0 0 auto; font: inherit; font-weight: 700; gap: 0.45rem; justify-content: center; min-height: 44px; padding: 0.55rem 0.8rem; }
+.buyer-notification-settings:hover { background: #edf2e8; }
+.buyer-notification-settings svg { height: 1.1rem; width: 1.1rem; }
+.buyer-notification-filter-bar button:focus-visible { outline: 3px solid #d38655; outline-offset: 3px; }
 .buyer-notification-bulk-actions { align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; display: flex; flex-wrap: wrap; gap: 0.75rem 1rem; justify-content: space-between; padding: 0.75rem 1rem; }
 .buyer-notification-bulk-actions p { color: var(--ink-soft); font-size: 0.82rem; margin: 0; }
 .buyer-notification-bulk-actions button { background: #17612e; border: 0; border-radius: 8px; color: white; cursor: pointer; font: inherit; font-weight: 700; min-height: 44px; padding: 0.55rem 0.9rem; }
@@ -2062,6 +2067,55 @@ label { display: grid; gap: 0.45rem; }
 .rider-account-settings { background: var(--panel); border: 1px solid var(--line); min-width: 0; padding: 1.35rem; }
 .rider-settings-intro, .rider-settings-panel > p { color: var(--ink-soft); font-size: 0.8rem; line-height: 1.5; max-width: 78ch; }
 .rider-settings-notice { background: var(--mint); color: var(--ink); margin: 0.7rem 0; padding: 0.7rem 0.85rem; }
+.account-setup-checklist { background: #fbfaf6; border: 1px solid var(--line); margin: 1rem 0; min-width: 0; padding: 1rem; }
+.account-setup-heading { align-items: start; display: flex; flex-wrap: wrap; gap: 0.75rem; justify-content: space-between; }
+.account-setup-heading h3, .rider-delivery-tutorial h3 { font: 400 1.35rem Georgia, serif; margin: 0; }
+.account-setup-heading p:not(.eyebrow) { color: var(--ink-soft); font-size: 0.78rem; line-height: 1.45; margin: 0.35rem 0 0; max-width: 72ch; }
+.account-setup-overall-progress { align-items: center; display: grid; gap: 0.4rem; grid-template-columns: minmax(100px, 1fr) auto; margin: 1rem 0; }
+.account-setup-overall-progress progress, .account-setup-group > progress { accent-color: #52754b; height: 0.6rem; width: 100%; }
+.account-setup-overall-progress strong, .account-setup-group-heading span { color: var(--ink-soft); font-size: 0.72rem; }
+.account-setup-group { border-top: 1px solid var(--line); margin-top: 1rem; padding-top: 0.9rem; }
+.account-setup-group-heading { align-items: baseline; display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; justify-content: space-between; }
+.account-setup-group-heading h4 { font-size: 0.9rem; margin: 0; }
+.account-setup-group > progress { display: block; height: 0.35rem; margin: 0.55rem 0; }
+.account-setup-steps { list-style: none; margin: 0; padding: 0; }
+.account-setup-step { align-items: center; border-top: 1px solid #e5e3db; display: grid; gap: 0.55rem 0.8rem; grid-template-columns: minmax(0, 1fr) auto; padding: 0.75rem 0; }
+.account-setup-step:first-child { border-top: 0; }
+.account-setup-step-copy { min-width: 0; }
+.account-setup-step-copy strong { font-size: 0.82rem; }
+.account-setup-step-copy p { color: var(--ink-soft); font-size: 0.72rem; line-height: 1.45; margin: 0.2rem 0 0; }
+.account-setup-status { border-radius: 999px; font-size: 0.68rem; font-weight: 700; justify-self: end; padding: 0.25rem 0.55rem; white-space: nowrap; }
+.account-setup-status--complete { background: #e2eee3; color: #235d38; }
+.account-setup-status--waiting-for-review { background: #fff0d4; color: #744700; }
+.account-setup-status--in-progress { background: #e8eee8; color: #405f44; }
+.account-setup-status--not-started { background: #ecece8; color: #62675f; }
+.account-setup-step-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; grid-column: 1 / -1; }
+.account-setup-step-actions button:disabled { cursor: wait; opacity: 0.65; }
+.account-setup-checklist button:focus-visible, .rider-delivery-tutorial button:focus-visible { outline: 3px solid #d38655; outline-offset: 3px; }
+.account-setup-error { align-items: center; background: #fff3f1; border: 1px solid #e0b7ad; color: #7d3026; display: flex; flex-wrap: wrap; gap: 0.6rem; margin: 1rem 0; padding: 0.8rem; }
+.account-setup-loading { margin: 1rem 0; }
+.rider-setup-guide { min-width: 0; }
+.rider-application-review { background: #f5f4ee; border-left: 3px solid #52754b; margin: 1rem 0 0; padding: 0.8rem 1rem; }
+.rider-application-review strong { display: block; font-size: 0.82rem; }
+.rider-application-review p:not(.eyebrow) { color: var(--ink-soft); font-size: 0.74rem; line-height: 1.45; margin: 0.25rem 0 0; }
+.rider-guide-actions { display: flex; justify-content: flex-end; margin-top: 0.5rem; }
+.rider-delivery-tutorial { background: #fbfaf6; border: 1px solid var(--line); margin: 0.85rem 0 1rem; padding: 0.9rem 1rem; }
+.rider-delivery-tutorial-heading { align-items: center; display: flex; flex-wrap: wrap; gap: 0.75rem; justify-content: space-between; }
+.rider-delivery-tutorial-content { color: var(--ink-soft); font-size: 0.76rem; line-height: 1.55; margin-top: 0.65rem; max-width: 90ch; }
+.rider-delivery-tutorial-content ol { display: grid; gap: 0.55rem; margin: 0; padding-left: 1.35rem; }
+.rider-delivery-tutorial-content li { padding-left: 0.15rem; }
+.rider-delivery-tutorial-content strong, .rider-delivery-tutorial-content b { color: var(--ink); }
+.rider-delivery-tutorial-content code { background: #ecece8; border-radius: 0.2rem; color: var(--ink); font-size: 0.7rem; padding: 0.08rem 0.25rem; }
+.rider-delivery-tutorial-content > p { margin: 0.7rem 0; }
+.rider-delivery-tutorial-content button { font-size: 0.75rem; }
+@media (max-width: 620px) {
+    .account-setup-checklist { padding: 0.75rem; }
+    .account-setup-overall-progress { align-items: start; grid-template-columns: 1fr; }
+    .account-setup-step { align-items: start; grid-template-columns: minmax(0, 1fr); }
+    .account-setup-status { justify-self: start; }
+    .account-setup-step-actions { grid-column: 1; }
+    .rider-delivery-tutorial { padding: 0.75rem; }
+}
 .rider-settings-tabs { gap: 0.2rem; overflow-x: auto; flex-wrap: nowrap; scrollbar-width: thin; }
 .rider-settings-tabs .seller-settings-tab { flex: 0 0 auto; white-space: nowrap; }
 .rider-settings-panel { background: white; border: 1px solid var(--line); margin-top: 1rem; min-width: 0; padding: 1rem; }

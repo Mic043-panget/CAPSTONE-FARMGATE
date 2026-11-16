@@ -9,6 +9,7 @@ export type User = {
     phone_number?: string | null;
     phone_verified_at?: string | null;
     email_verified_at?: string | null;
+    password_setup_complete?: boolean;
     created_at?: string | null;
     profile_photo_url?: string | null;
     rider_profile?: {

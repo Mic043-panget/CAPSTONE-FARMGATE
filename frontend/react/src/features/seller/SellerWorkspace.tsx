@@ -17,6 +17,7 @@ import { NavigationBadge, navigationBadgeLabel } from '../../shared/components/N
 import { SellerPayouts } from './SellerPayouts';
 import { WorkspaceMobileHeader } from '../shared/WorkspaceMobileHeader';
 import { SellerShopProfileSettings } from './SellerShopProfileSettings';
+import { SellerSetupGuide } from './SellerSetupGuide';
 
 const LocationMap = React.lazy(() => import('../../shared/components/LocationMap').then((module) => ({ default: module.LocationMap })));
 
@@ -97,6 +98,7 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
     const [notificationCaseReference, setNotificationCaseReference] = React.useState<string | null>(null);
     const [notificationOrderId, setNotificationOrderId] = React.useState<number | null>(null);
     const [settingsTab, setSettingsTab] = React.useState<SellerSettingsTab>('profile');
+    const [setupRefreshKey, setSetupRefreshKey] = React.useState(0);
     const [navigationCounts, setNavigationCounts] = React.useState<Record<SellerNavigationBadge, number>>({
         orders: 0,
         notifications: 0,
@@ -392,6 +394,7 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
                 [preference]: enabled,
             });
             setAccountPreferences(response.data.preferences);
+            setSetupRefreshKey((revision) => revision + 1);
             showSuccess('Account preference saved.');
         } catch (requestError: any) {
             onError(requestError.userMessage ?? requestError.response?.data?.message ?? 'The account preference could not be saved.');
@@ -426,6 +429,7 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
             setSellerName(response.data.user.name);
             setSellerUsername(response.data.user.username ?? response.data.user.email.split('@')[0]);
             setSellerEmail(response.data.user.email);
+            setSetupRefreshKey((revision) => revision + 1);
             showSuccess(response.data.email_verification_required
                 ? 'Seller details saved. Verify your new email address using the link we sent.'
                 : 'Seller account and business details saved.');
@@ -438,18 +442,25 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
 
     async function changeSellerPassword(event: React.FormEvent<HTMLFormElement>) {
         event.preventDefault();
-        if (!await confirmAction({ title: 'Change your password?', text: 'Your current password is required to confirm this change.', confirmText: 'Change password' })) return;
+        const hasPassword = user.password_setup_complete;
+        if (!await confirmAction({
+            title: hasPassword ? 'Change your password?' : 'Set a password?',
+            text: hasPassword ? 'Your current password is required to confirm this change.' : 'You can set a password for this signed-in account now.',
+            confirmText: hasPassword ? 'Change password' : 'Set password',
+        })) return;
         setPasswordSaving(true);
         try {
             await initializeCsrf();
-            await api.put('/api/profile/password', {
-                current_password: currentPassword,
+            const response = await api.put<{ user: User }>('/api/profile/password', {
+                ...(hasPassword ? { current_password: currentPassword } : {}),
                 password: newPassword,
                 password_confirmation: passwordConfirmation,
             });
+            onUserUpdated(response.data.user);
             setCurrentPassword('');
             setNewPassword('');
             setPasswordConfirmation('');
+            setSetupRefreshKey((revision) => revision + 1);
             showSuccess('Password updated.');
         } catch (requestError: any) {
             onError(requestError.userMessage ?? requestError.response?.data?.message ?? 'The password could not be changed.');
@@ -603,6 +614,7 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
             await initializeCsrf();
             await api.put('/api/seller/profile/location', pickupLocation);
             setPickupLocationConfirmed(true);
+            setSetupRefreshKey((revision) => revision + 1);
             setNotice('Pickup location saved. Delivery distance will be calculated from this map pin.');
             showSuccess('Pickup location saved.');
         } catch (requestError: any) {
@@ -752,6 +764,18 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
         />;
         if (page === 'account' || page === 'location') return <section className="seller-work-section seller-settings-page">
             <div className="seller-work-heading"><div><p className="eyebrow">Seller portal settings</p><h2>Settings</h2></div></div>
+            <SellerSetupGuide
+                user={user}
+                refreshKey={setupRefreshKey}
+                onOpenSection={(section) => {
+                    if (section === 'payouts') {
+                        setPage('payouts');
+                        return;
+                    }
+                    setPage('account');
+                    setSettingsTab(section);
+                }}
+            />
             <div className="seller-settings-tabs" role="tablist" aria-label="Seller settings">
                 {([
                     ['profile', 'Profile & business'],
@@ -798,15 +822,17 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
                     </form>
                 </section>
                 <section className="seller-settings-section" id="seller-settings-panel-shop" role="tabpanel" aria-labelledby="seller-settings-tab-shop" hidden={settingsTab !== 'shop'} tabIndex={-1}>
-                    <SellerShopProfileSettings defaultShopName={user.name} />
+                    <SellerShopProfileSettings defaultShopName={user.name} onSaved={() => setSetupRefreshKey((revision) => revision + 1)} />
                 </section>
                 <section className="seller-settings-section" id="seller-settings-panel-password" role="tabpanel" aria-labelledby="seller-settings-tab-password" hidden={settingsTab !== 'password'} tabIndex={-1}>
-                    <div className="seller-work-heading"><div><p className="eyebrow">Profile protection</p><h3 id="seller-password-settings-heading">Change password</h3></div></div>
+                    <div className="seller-work-heading"><div><p className="eyebrow">Profile protection</p><h3 id="seller-password-settings-heading">{user.password_setup_complete ? 'Change password' : 'Set a password'}</h3></div></div>
                     <form className="seller-account-form" onSubmit={changeSellerPassword}>
-                        <label>Current password<input type="password" autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} required /></label>
+                        {user.password_setup_complete
+                            ? <label>Current password<input type="password" autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} required /></label>
+                            : <p>No password is set yet. Set one to enable password sign-in for your account.</p>}
                         <label>New password<input type="password" autoComplete="new-password" minLength={8} value={newPassword} onChange={(event) => setNewPassword(event.target.value)} required /></label>
                         <label>Confirm new password<input type="password" autoComplete="new-password" minLength={8} value={passwordConfirmation} onChange={(event) => setPasswordConfirmation(event.target.value)} required /></label>
-                        <button className="seller-inline-action" type="submit" disabled={passwordSaving}>{passwordSaving ? 'Updating password...' : 'Update password'}</button>
+                        <button className="seller-inline-action" type="submit" disabled={passwordSaving}>{passwordSaving ? 'Saving password...' : user.password_setup_complete ? 'Update password' : 'Set password'}</button>
                     </form>
                 </section>
                 <section className="seller-settings-section" id="seller-settings-panel-phone" role="tabpanel" aria-labelledby="seller-settings-tab-phone" hidden={settingsTab !== 'phone'} tabIndex={-1}>

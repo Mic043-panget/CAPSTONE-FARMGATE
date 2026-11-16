@@ -61,6 +61,7 @@ class AuthController extends Controller
                     'name' => $validated['name'],
                     'email' => $validated['email'],
                     'password' => $validated['password'],
+                    'password_set_at' => now(),
                     'phone_number' => $validated['phone_number'],
                     'role' => $role,
                 ]);
@@ -290,15 +291,26 @@ class AuthController extends Controller
 
     public function updatePassword(Request $request, SystemSettingsService $settings): JsonResponse
     {
-        abort_unless(in_array($request->user()?->role, [Role::BUYER, Role::SELLER, Role::RIDER], true), 403);
-        $data = $request->validate([
-            'current_password' => ['required', 'current_password:web'],
+        $user = $request->user();
+        abort_unless($user instanceof User && in_array($user->role, [Role::BUYER, Role::SELLER, Role::RIDER], true), 403);
+
+        $rules = [
             'password' => ['required', 'string', 'min:'.$settings->getInt('minimum_password_length'), 'confirmed'],
+        ];
+        if ($user->password_set_at !== null) {
+            $rules['current_password'] = ['required', 'current_password:web'];
+        }
+        $data = $request->validate($rules);
+
+        $user->forceFill([
+            'password' => $data['password'],
+            'password_set_at' => now(),
+        ])->save();
+
+        return response()->json([
+            'message' => 'Password updated.',
+            'user' => $this->userPayload($user->refresh()),
         ]);
-
-        $request->user()->forceFill(['password' => $data['password']])->save();
-
-        return response()->json(['message' => 'Password updated.']);
     }
 
     public function updatePhoto(Request $request): JsonResponse
@@ -346,7 +358,10 @@ class AuthController extends Controller
         ]);
 
         $status = Password::reset($validated, function (User $user, string $password): void {
-            $user->forceFill(['password' => $password])->save();
+            $user->forceFill([
+                'password' => $password,
+                'password_set_at' => now(),
+            ])->save();
             $user->tokens()->delete();
         });
 
@@ -375,6 +390,7 @@ class AuthController extends Controller
             'phone_number' => $user->phone_number,
             'phone_verified_at' => $user->phone_verified_at,
             'email_verified_at' => $user->email_verified_at,
+            'password_setup_complete' => $user->password_set_at !== null,
             'created_at' => $user->created_at,
             'profile_photo_url' => $profilePhotoUrl,
             'role' => $user->role->value,
