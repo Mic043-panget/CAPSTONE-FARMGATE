@@ -500,10 +500,14 @@ export function RiderAccountSettings({ user, onUserUpdated, onError, onReviewTut
         <RiderSetupGuide
             user={user}
             refreshKey={setupRefreshKey}
-            onOpenSection={(section, focusTab = true) => {
+            onOpenSection={(section, focusTarget = true, targetId) => {
                 setTab(section);
-                if (focusTab) {
-                    window.requestAnimationFrame(() => document.getElementById(`rider-settings-tab-${section}`)?.focus());
+                if (focusTarget) {
+                    window.requestAnimationFrame(() => {
+                        const target = document.getElementById(targetId ?? `rider-settings-panel-${section}`);
+                        target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        target?.focus({ preventScroll: true });
+                    });
                 }
             }}
             onReviewTutorial={onReviewTutorial}
@@ -541,7 +545,7 @@ export function RiderAccountSettings({ user, onUserUpdated, onError, onReviewTut
                     <p className="rider-settings-field-note">Email status: {user.email_verified_at ? 'Verified' : 'Not verified'}. Changing your email requires verification.</p>
                     <button className="seller-inline-action" type="submit" disabled={profileBusy}>{profileBusy ? 'Saving profile…' : 'Save profile'}</button>
                 </form>
-                <section className="rider-phone-settings" aria-labelledby="rider-phone-title">
+                <section id="rider-phone-settings" className="rider-phone-settings" aria-labelledby="rider-phone-title" tabIndex={-1}>
                     <div><p className="eyebrow">Contact security</p><h3 id="rider-phone-title">Verified phone number</h3></div>
                     <p>{user.phone_number || 'No number added'} · {user.phone_verified_at ? 'Verified' : 'Not verified'}</p>
                     <label>Philippine mobile number<input type="tel" inputMode="tel" autoComplete="tel" maxLength={30} pattern="(09[0-9]{9}|\\+639[0-9]{9})" placeholder="09XXXXXXXXX or +639XXXXXXXXX" value={phone} onChange={(event) => setPhone(event.target.value)} /></label>

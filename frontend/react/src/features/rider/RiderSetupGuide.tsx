@@ -80,7 +80,7 @@ function applicationReviewLabel(status: string | undefined, verified: boolean): 
 
 function applicationReviewMessage(status: string | undefined, verified: boolean): string {
     if (status === 'APPROVED' || verified) {
-        return 'Applicant review is complete. The setup progress below tracks account settings separately.';
+        return 'Applicant review is complete. The floating progress control tracks account settings separately.';
     }
     if (status === 'SUBMITTED' || status === 'UNDER_REVIEW') {
         return 'Your documents and eligibility are under admin review. Application review is separate from account setup.';
@@ -101,7 +101,7 @@ function applicationReviewMessage(status: string | undefined, verified: boolean)
 export function RiderSetupGuide({ user, refreshKey, onOpenSection, onReviewTutorial }: {
     user: User;
     refreshKey: number;
-    onOpenSection: (section: SettingsSection, focusTab?: boolean) => void;
+    onOpenSection: (section: SettingsSection, focusTarget?: boolean, targetId?: string) => void;
     onReviewTutorial: () => void;
 }) {
     const [data, setData] = React.useState<SetupData | null>(null);
@@ -228,7 +228,7 @@ export function RiderSetupGuide({ user, refreshKey, onOpenSection, onReviewTutor
                             : 'Add a phone number and verify it with a one-time code.',
                     status: stepStatus(Boolean(user.phone_number && user.phone_verified_at), Boolean(user.phone_number)),
                     actionLabel: 'Open phone settings',
-                    onAction: () => onOpenSection('profile'),
+                    onAction: () => onOpenSection('profile', true, 'rider-phone-settings'),
                 },
                 {
                     id: 'identity-documents',
