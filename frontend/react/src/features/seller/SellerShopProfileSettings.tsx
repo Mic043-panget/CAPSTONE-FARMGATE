@@ -46,7 +46,7 @@ const verificationLabels: Record<VerificationStatus, string> = {
     REJECTED: 'Rejected',
 };
 
-export function SellerShopProfileSettings({ defaultShopName }: { defaultShopName: string }) {
+export function SellerShopProfileSettings({ defaultShopName, onSaved }: { defaultShopName: string; onSaved?: () => void }) {
     const [profile, setProfile] = React.useState<ShopProfile | null>(null);
     const [shopName, setShopName] = React.useState(defaultShopName);
     const [shopImage, setShopImage] = React.useState<File | null>(null);
@@ -123,6 +123,7 @@ export function SellerShopProfileSettings({ defaultShopName }: { defaultShopName
             setShopName(data.profile.shop_name?.trim() || '');
             setShopImage(null);
             setNotice('Shop profile saved.');
+            onSaved?.();
         } catch (error: unknown) {
             setShopError(requestErrorMessage(error, 'Your shop profile could not be saved.'));
         } finally {
@@ -163,6 +164,7 @@ export function SellerShopProfileSettings({ defaultShopName }: { defaultShopName
             setProfile(data.profile);
             setIdentityDocument(null);
             setNotice('Identity document submitted. Your status is Pending review; no Verified badge is shown until an admin approves it.');
+            onSaved?.();
         } catch (error: unknown) {
             setVerificationError(requestErrorMessage(error, 'Your identity document could not be submitted.'));
         } finally {

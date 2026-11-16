@@ -27,16 +27,22 @@ class AccountSettingsController extends Controller
             'chat_notifications' => ['sometimes', 'boolean'],
             'event_notifications' => ['sometimes', 'boolean'],
             'allow_direct_messages' => ['sometimes', 'boolean'],
+            'mark_reviewed' => ['sometimes', 'boolean'],
         ]);
-        abort_if($validated === [], 422, 'Choose at least one setting to update.');
+        $markReviewed = (bool) ($validated['mark_reviewed'] ?? false);
+        unset($validated['mark_reviewed']);
+        abort_if($validated === [] && ! $markReviewed, 422, 'Choose at least one setting to update.');
 
         $user = $request->user();
-        $preferences = array_merge(
-            self::DEFAULT_PREFERENCES,
-            $user->account_preferences ?? [],
-            $validated,
-        );
-        $user->forceFill(['account_preferences' => $preferences])->save();
+        $updates = ['account_preferences_reviewed_at' => now()];
+        if ($validated !== []) {
+            $updates['account_preferences'] = array_merge(
+                self::DEFAULT_PREFERENCES,
+                $user->account_preferences ?? [],
+                $validated,
+            );
+        }
+        $user->forceFill($updates)->save();
 
         return response()->json($this->settingsPayload($request));
     }
@@ -58,6 +64,7 @@ class AccountSettingsController extends Controller
         return [
             'email' => $user->email,
             'email_verified_at' => $user->email_verified_at?->toISOString(),
+            'preferences_reviewed_at' => $user->account_preferences_reviewed_at?->toISOString(),
             'preferences' => array_merge(
                 self::DEFAULT_PREFERENCES,
                 $user->account_preferences ?? [],

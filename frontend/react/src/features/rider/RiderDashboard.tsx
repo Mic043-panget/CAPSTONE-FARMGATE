@@ -17,6 +17,7 @@ import { SystemCalendar } from '../shared/SystemCalendar';
 import { LoadingSkeleton } from '../../shared/components/LoadingSkeleton';
 import { RiderEarningsPanel } from './RiderEarningsPanel';
 import { WorkspaceMobileHeader } from '../shared/WorkspaceMobileHeader';
+import { RiderDeliveryTutorial } from './RiderDeliveryTutorial';
 
 const NearbyOrdersMap = React.lazy(() => import('./NearbyOrdersMap').then((module) => ({ default: module.NearbyOrdersMap })));
 
@@ -708,6 +709,7 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
     const [page, setPage] = React.useState<RiderPage>(() => window.location.hash === '#notifications' ? 'notifications' : 'dashboard');
     const [mobileNavOpen, setMobileNavOpen] = React.useState(false);
     const [deliveryTab, setDeliveryTab] = React.useState<RiderDeliveryTab>('nearby');
+    const [deliveryTutorialOpen, setDeliveryTutorialOpen] = React.useState(true);
     const [summary, setSummary] = React.useState<RiderSummary | null>(null);
     const [summaryLoading, setSummaryLoading] = React.useState(true);
     const [summaryError, setSummaryError] = React.useState('');
@@ -1246,6 +1248,11 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
                         { value: 'history', label: 'Delivery History' },
                     ]}
                 />
+                <RiderDeliveryTutorial
+                    open={deliveryTutorialOpen}
+                    onToggle={() => setDeliveryTutorialOpen((open) => !open)}
+                    onDismiss={() => setDeliveryTutorialOpen(false)}
+                />
                 {deliveryTab === 'nearby' && <section className="rider-nearby-workspace" aria-labelledby="rider-offers-title" aria-live="polite">
                     <div className="rider-nearby-heading">
                         <div><p className="eyebrow">New assignments</p><h2 id="rider-offers-title">Nearby orders</h2><p>{offers.length} currently available to you</p></div>
@@ -1398,7 +1405,16 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
             {page === 'reports' && <ReportPanel role="RIDER" onError={onError} />}
             {page === 'events' && <SystemCalendar role="RIDER" onError={onError} onOpenDelivery={(_, orderReference) => openRiderDeliveries(orderReference ?? '')} />}
             {page === 'notifications' && <NotificationsPage role="RIDER" onOpenOrder={(orderId, orderReference) => openRiderDeliveries(orderReference ?? orderId)} onOpenConversation={openConversation} onOpenEvent={(eventId) => { window.history.pushState({}, '', `#calendar/event/${eventId}`); setPage('events'); }} onNotificationsRead={refreshNavigationCounts} />}
-            {page === 'account' && <RiderAccountSettings user={user} onUserUpdated={onUserUpdated} onError={onError} />}
+            {page === 'account' && <RiderAccountSettings
+                user={user}
+                onUserUpdated={onUserUpdated}
+                onError={onError}
+                onReviewTutorial={() => {
+                    setDeliveryTab('nearby');
+                    setDeliveryTutorialOpen(true);
+                    setPage('deliveries');
+                }}
+            />}
             {isChat && <span className="sr-only" aria-live="polite">Rider chats workspace</span>}
         </section>
     </main>;

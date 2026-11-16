@@ -2,6 +2,7 @@ import React from 'react';
 import api, { initializeCsrf } from '../../lib/api';
 import { confirmAction, showSuccess } from '../../lib/alerts';
 import type { User } from '../../shared/types';
+import { RiderSetupGuide } from './RiderSetupGuide';
 
 type SettingsTab = 'profile' | 'password' | 'delivery' | 'vehicle' | 'payout' | 'notifications' | 'location';
 type PayoutDestinationType = 'BANK' | 'GCASH';
@@ -69,10 +70,11 @@ function errorMessage(error: any, fallback: string): string {
     return error.userMessage ?? error.response?.data?.message ?? fallback;
 }
 
-export function RiderAccountSettings({ user, onUserUpdated, onError }: {
+export function RiderAccountSettings({ user, onUserUpdated, onError, onReviewTutorial }: {
     user: User;
     onUserUpdated: (user: User) => void;
     onError: (message: string) => void;
+    onReviewTutorial: () => void;
 }) {
     const [tab, setTab] = React.useState<SettingsTab>('profile');
     const [name, setName] = React.useState(user.name);
@@ -88,6 +90,7 @@ export function RiderAccountSettings({ user, onUserUpdated, onError }: {
     const [passwordConfirmation, setPasswordConfirmation] = React.useState('');
     const [photoBusy, setPhotoBusy] = React.useState(false);
     const [settings, setSettings] = React.useState<RiderSettings | null>(null);
+    const [setupRefreshKey, setSetupRefreshKey] = React.useState(0);
     const [settingsBusy, setSettingsBusy] = React.useState(false);
     const [vehicleFields, setVehicleFields] = React.useState<VehicleChangeFields>({
         plate_number: '', vehicle_type: '', vehicle_make_model: '', vehicle_color: '',
@@ -259,23 +262,26 @@ export function RiderAccountSettings({ user, onUserUpdated, onError }: {
 
     async function changePassword(event: React.FormEvent<HTMLFormElement>) {
         event.preventDefault();
+        const hasPassword = user.password_setup_complete;
         if (!await confirmAction({
-            title: 'Change your password?',
-            text: 'Your current password is required. You will use the new password for future sign-ins.',
-            confirmText: 'Change password',
+            title: hasPassword ? 'Change your password?' : 'Set a password?',
+            text: hasPassword ? 'Your current password is required. You will use the new password for future sign-ins.' : 'You can set a password for this signed-in account now.',
+            confirmText: hasPassword ? 'Change password' : 'Set password',
         })) return;
         setPasswordBusy(true);
         try {
             await initializeCsrf();
-            await api.put('/api/profile/password', {
-                current_password: currentPassword,
+            const response = await api.put<{ user: User }>('/api/profile/password', {
+                ...(hasPassword ? { current_password: currentPassword } : {}),
                 password: newPassword,
                 password_confirmation: passwordConfirmation,
             });
+            onUserUpdated(response.data.user);
             setCurrentPassword('');
             setNewPassword('');
             setPasswordConfirmation('');
             setNotice('Password updated.');
+            setSetupRefreshKey((revision) => revision + 1);
             showSuccess('Password updated.');
         } catch (requestError: any) {
             onError(errorMessage(requestError, 'The password could not be changed.'));
@@ -345,6 +351,7 @@ export function RiderAccountSettings({ user, onUserUpdated, onError }: {
             setVehicleRegistration(null);
             setVehiclePhotos([]);
             setNotice('Vehicle update submitted. Your current approved vehicle remains active until an admin approves the change.');
+            setSetupRefreshKey((revision) => revision + 1);
             showSuccess('Vehicle update submitted for admin review.');
             await refreshSettings();
         } catch (requestError: any) {
@@ -404,6 +411,7 @@ export function RiderAccountSettings({ user, onUserUpdated, onError }: {
             await initializeCsrf();
             const response = await api.put<{ preferences: AccountPreferences }>('/api/profile/settings', { [key]: checked });
             setPreferences({ ...defaultPreferences, ...response.data.preferences });
+            setSetupRefreshKey((revision) => revision + 1);
             showSuccess('Notification settings saved.');
         } catch (requestError: any) {
             setPreferences(previous);
@@ -450,6 +458,7 @@ export function RiderAccountSettings({ user, onUserUpdated, onError }: {
                 consent_version: payoutConsent.version,
             });
             setPayoutDestination(response.data.destination);
+            setSetupRefreshKey((revision) => revision + 1);
             setPayoutAccountHolder('');
             setPayoutBankName('');
             setPayoutAccountNumber('');
@@ -488,6 +497,15 @@ export function RiderAccountSettings({ user, onUserUpdated, onError }: {
         <div className="seller-work-heading"><div><p className="eyebrow">Private account workspace</p><h2 id="rider-account-settings-title">Account settings</h2></div></div>
         <p className="rider-settings-intro">Only your signed-in account can view and update these settings. Changes to phone number require verification.</p>
         {notice && <p className="rider-settings-notice" role="status">{notice}</p>}
+        <RiderSetupGuide
+            user={user}
+            refreshKey={setupRefreshKey}
+            onOpenSection={(section) => {
+                setTab(section);
+                window.requestAnimationFrame(() => document.getElementById(`rider-settings-tab-${section}`)?.focus());
+            }}
+            onReviewTutorial={onReviewTutorial}
+        />
         <div className="seller-settings-tabs rider-settings-tabs" role="tablist" aria-label="Rider account settings">
             {tabs.map((item) => <button
                 key={item.id}
@@ -534,12 +552,14 @@ export function RiderAccountSettings({ user, onUserUpdated, onError }: {
                 </section>
             </section>
             <section className="seller-settings-section rider-settings-panel" id="rider-settings-panel-password" role="tabpanel" aria-labelledby="rider-settings-tab-password" hidden={tab !== 'password'} tabIndex={-1}>
-                <div className="seller-work-heading"><div><p className="eyebrow">Profile protection</p><h3>Change password</h3></div></div>
+                <div className="seller-work-heading"><div><p className="eyebrow">Profile protection</p><h3>{user.password_setup_complete ? 'Change password' : 'Set a password'}</h3></div></div>
                 <form className="seller-account-form rider-password-form" onSubmit={(event) => void changePassword(event)}>
-                    <label>Current password<input type="password" autoComplete="current-password" required value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} /></label>
+                    {user.password_setup_complete
+                        ? <label>Current password<input type="password" autoComplete="current-password" required value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} /></label>
+                        : <p>No password is set yet. Set one to enable password sign-in for your account.</p>}
                     <label>New password<input type="password" autoComplete="new-password" minLength={8} required value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /></label>
                     <label>Confirm new password<input type="password" autoComplete="new-password" minLength={8} required value={passwordConfirmation} onChange={(event) => setPasswordConfirmation(event.target.value)} /></label>
-                    <button className="seller-inline-action" type="submit" disabled={passwordBusy}>{passwordBusy ? 'Updating password…' : 'Update password'}</button>
+                    <button className="seller-inline-action" type="submit" disabled={passwordBusy}>{passwordBusy ? 'Saving password…' : user.password_setup_complete ? 'Update password' : 'Set password'}</button>
                 </form>
             </section>
             <section className="seller-settings-section rider-settings-panel" id="rider-settings-panel-delivery" role="tabpanel" aria-labelledby="rider-settings-tab-delivery" hidden={tab !== 'delivery'} tabIndex={-1}>
