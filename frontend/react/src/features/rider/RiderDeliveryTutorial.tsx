@@ -34,7 +34,7 @@ export function RiderDeliveryTutorial({ open, onToggle, onDismiss, onDeliveryTab
     return <>
         <div className="rider-delivery-tutorial-launch">
             <button type="button" className="seller-inline-action" aria-expanded={open} aria-controls={open ? 'guided-walkthrough-title' : undefined} aria-haspopup="dialog" onClick={onToggle}>
-                {open ? 'Close delivery tour' : 'How deliveries work · Start tour'}
+                {open ? 'Close delivery tour' : 'How deliveries work'}
             </button>
         </div>
         <GuidedWalkthrough
