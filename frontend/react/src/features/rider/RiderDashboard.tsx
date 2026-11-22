@@ -1246,7 +1246,15 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
             </section>}
             {page === 'earnings' && <RiderEarningsPage onError={onError} />}
             {page === 'deliveries' && <section className="rider-deliveries" aria-labelledby="rider-deliveries-title">
-                <div className="rider-work-heading"><div><p className="eyebrow">Rider workspace</p><h2 id="rider-deliveries-title">Deliveries</h2></div></div>
+                <div className="rider-work-heading">
+                    <div><p className="eyebrow">Rider workspace</p><h2 id="rider-deliveries-title">Deliveries</h2></div>
+                    <RiderDeliveryTutorial
+                        open={deliveryTutorialOpen}
+                        onToggle={() => setDeliveryTutorialOpen((open) => !open)}
+                        onDismiss={() => setDeliveryTutorialOpen(false)}
+                        onDeliveryTabChange={setDeliveryTab}
+                    />
+                </div>
                 <TabNav
                     label="Delivery workspace"
                     className="rider-delivery-tabs"
@@ -1258,12 +1266,6 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
                         { value: 'scanner', label: 'QR Scanner', id: 'rider-delivery-tab-scanner' },
                         { value: 'history', label: 'Delivery History', id: 'rider-delivery-tab-history' },
                     ]}
-                />
-                <RiderDeliveryTutorial
-                    open={deliveryTutorialOpen}
-                    onToggle={() => setDeliveryTutorialOpen((open) => !open)}
-                    onDismiss={() => setDeliveryTutorialOpen(false)}
-                    onDeliveryTabChange={setDeliveryTab}
                 />
                 {deliveryTab === 'nearby' && <section id="rider-nearby-workspace" className="rider-nearby-workspace" aria-labelledby="rider-offers-title" aria-live="polite">
                     <div className="rider-nearby-heading">
