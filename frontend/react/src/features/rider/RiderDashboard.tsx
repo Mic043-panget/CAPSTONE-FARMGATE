@@ -16,10 +16,12 @@ import type { User } from '../../shared/types';
 import { SystemCalendar } from '../shared/SystemCalendar';
 import { LoadingSkeleton } from '../../shared/components/LoadingSkeleton';
 import { RiderEarningsPage } from './RiderEarningsPage';
+import { WorkspaceMobileHeader } from '../shared/WorkspaceMobileHeader';
+import { RiderDeliveryTutorial } from './RiderDeliveryTutorial';
 
 const NearbyOrdersMap = React.lazy(() => import('./NearbyOrdersMap').then((module) => ({ default: module.NearbyOrdersMap })));
 
-type RiderPage = 'dashboard' | 'deliveries' | 'earnings' | 'events' | 'chats' | 'reports' | 'notifications' | 'account';
+type RiderPage = 'dashboard' | 'earnings' | 'deliveries' | 'events' | 'chats' | 'reports' | 'notifications' | 'account';
 type RiderDeliveryTab = 'nearby' | 'assigned' | 'scanner' | 'history';
 type RiderSummary = {
     availability: string;
@@ -97,6 +99,7 @@ const activeStatuses = new Set(['RIDER_ACCEPTED', 'PICKUP_PENDING', 'PICKED_UP',
 const riderStatuses = ['RIDER_ACCEPTED', 'PICKUP_PENDING', 'PICKED_UP', 'IN_TRANSIT', 'DELIVERED', 'FAILED', 'CANCELLED'];
 const navigation: { id: RiderPage; label: string; icon: string }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: '◈' },
+    { id: 'earnings', label: 'Earnings', icon: '₱' },
     { id: 'deliveries', label: 'Deliveries', icon: '▣' },
     { id: 'earnings', label: 'Earnings', icon: '₱' },
     { id: 'events', label: 'Events', icon: '◷' },
@@ -705,12 +708,15 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
     onLogout: () => void;
 }) {
     const [page, setPage] = React.useState<RiderPage>(() => window.location.hash === '#notifications' ? 'notifications' : 'dashboard');
+    const [mobileNavOpen, setMobileNavOpen] = React.useState(false);
     const [deliveryTab, setDeliveryTab] = React.useState<RiderDeliveryTab>('nearby');
+    const [deliveryTutorialOpen, setDeliveryTutorialOpen] = React.useState(false);
     const [summary, setSummary] = React.useState<RiderSummary | null>(null);
     const [summaryLoading, setSummaryLoading] = React.useState(true);
     const [summaryError, setSummaryError] = React.useState('');
     const [statusCounts, setStatusCounts] = React.useState<Record<string, number>>({});
     const [recentActivity, setRecentActivity] = React.useState<RiderActivity[]>([]);
+    const summaryRequestIdRef = React.useRef(0);
     const [dashboardFrom, setDashboardFrom] = React.useState('');
     const [dashboardTo, setDashboardTo] = React.useState('');
     const [dashboardStatus, setDashboardStatus] = React.useState('');
@@ -751,6 +757,9 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
     const debouncedDashboardSearch = useDebouncedValue(dashboardSearch);
 
     const refreshSummary = React.useCallback(async (reportFailure: boolean) => {
+        const requestId = ++summaryRequestIdRef.current;
+        setSummaryLoading(true);
+        setSummaryError('');
         const [summaryResult, offersResult] = await Promise.allSettled([
             api.get<{
                     summary: RiderSummary;
@@ -769,6 +778,8 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
                     rider_location: { latitude: number; longitude: number; updated_at: string | null } | null;
                 }>('/api/riders/offers'),
         ]);
+        if (requestId !== summaryRequestIdRef.current) return;
+
         const errors: string[] = [];
 
         if (summaryResult.status === 'fulfilled') {
@@ -778,6 +789,9 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
             setSummaryLoading(false);
             setSummaryError('');
         } else {
+            setSummary(null);
+            setStatusCounts({});
+            setRecentActivity([]);
             setSummaryLoading(false);
             setSummaryError('Rider dashboard data could not be loaded.');
             errors.push('Rider dashboard data could not be loaded.');
@@ -1154,23 +1168,29 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
     const pageTitle = navigation.find((item) => item.id === page)?.label ?? 'Dashboard';
     const selectedScannerDelivery = scannerDeliveries.find((delivery) => delivery.id === selectedScannerDeliveryId) ?? null;
     const badgeCount = (id: RiderPage) => id === 'notifications' ? navigationCounts.notifications : id === 'chats' ? navigationCounts.chats : 0;
+    const statusTotal = Object.values(statusCounts).reduce((total, count) => total + count, 0);
 
     return <main className="admin-shell seller-shell rider-shell">
-        <aside className="admin-sidebar">
+        <aside className={`admin-sidebar role-sidebar${mobileNavOpen ? ' mobile-open' : ''}`} onKeyDown={(event) => {
+            if (event.key === 'Escape') setMobileNavOpen(false);
+        }}>
+            <WorkspaceMobileHeader role="rider" menuOpen={mobileNavOpen} controlsId="rider-mobile-navigation" onToggle={() => setMobileNavOpen((open) => !open)} />
+            <div className="role-mobile-menu-panel" id="rider-mobile-navigation">
             <a className="brand" href="/">FARM<span>GATE</span></a>
             <div className="admin-sidebar-label">RIDER PORTAL</div>
             <nav aria-label="Rider navigation">{navigation.map((item) => {
                 const count = badgeCount(item.id);
-                return <button type="button" key={item.id} className={page === item.id ? 'active' : ''} aria-current={page === item.id ? 'page' : undefined} aria-label={count ? `${item.label}, ${count} unread` : item.label} onClick={() => { setPage(item.id); setNotice(''); }}>
+                return <button type="button" key={item.id} className={page === item.id ? 'active' : ''} aria-current={page === item.id ? 'page' : undefined} aria-label={count ? `${item.label}, ${count} unread` : item.label} onClick={() => { setPage(item.id); setNotice(''); setMobileNavOpen(false); }}>
                     <span className="nav-icon" aria-hidden="true">{item.icon}</span><span className="seller-nav-label">{item.label}</span><NavigationBadge count={count} />
                 </button>;
             })}</nav>
             <button className="sidebar-logout" type="button" onClick={() => void confirmLogout()}>Log out <span>↗</span></button>
+            </div>
         </aside>
         <section className="admin-content seller-content">
             <header className="admin-header"><div><p className="eyebrow">FARMGATE rider workspace</p><h1>{pageTitle}</h1><p>Manage your assigned deliveries and keep customers updated.</p></div><span className="admin-role">RIDER</span></header>
             {notice && <p className="rider-offer-notice" role="status">{notice}</p>}
-            {page === 'dashboard' && <section className="role-dashboard rider-dashboard">
+            {page === 'dashboard' && <section className="role-dashboard rider-dashboard" aria-busy={summaryLoading}>
                 <div className="rider-dashboard-heading">
                     <div><p className="eyebrow">Rider overview</p><h2>Delivery performance</h2><p>All totals and activity below use your assigned delivery records.</p></div>
                     <div className="rider-dashboard-actions">
@@ -1199,24 +1219,24 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
                     <article><span>Delivered with proof</span><strong>{summary?.delivered_with_proof ?? '—'}</strong></article>
                     <article><span>Delivered without proof</span><strong>{summary?.delivered_without_proof ?? '—'}</strong></article>
                     <article><span>Cancelled</span><strong>{summary?.cancellations ?? '—'}</strong></article>
-                    <article><span>Avg. verified delivery time</span><strong>{summary?.average_delivery_minutes === null || summary?.average_delivery_minutes === undefined ? 'Not enough data' : `${summary.average_delivery_minutes} min`}</strong></article>
+                    <article><span>Avg. verified delivery time</span><strong>{summary?.average_delivery_minutes === undefined ? '—' : summary.average_delivery_minutes === null ? 'Not enough data' : `${summary.average_delivery_minutes} min`}</strong></article>
                 </div>}
                 <div className="rider-analytics-layout">
                     <section className="rider-analytics-card" aria-labelledby="rider-status-chart-heading">
-                        <div className="rider-work-heading"><div><p className="eyebrow">Filtered deliveries</p><h3 id="rider-status-chart-heading">Status breakdown</h3></div><span>{summary?.filtered_deliveries ?? 0} records</span></div>
-                        {summaryLoading && !summary ? <LoadingSkeleton variant="list" count={3} label="Loading delivery status breakdown" /> : Object.keys(statusCounts).length === 0 ? <p className="rider-empty">No delivery activity for these filters.</p>
+                        <div className="rider-work-heading"><div><p className="eyebrow">Filtered deliveries</p><h3 id="rider-status-chart-heading">Status breakdown</h3></div><span>{summary ? `${summary.filtered_deliveries} ${summary.filtered_deliveries === 1 ? 'delivery' : 'deliveries'}` : '— deliveries'}</span></div>
+                        {summaryLoading && !summary ? <LoadingSkeleton variant="list" count={3} label="Loading delivery status breakdown" /> : !summary ? <p className="rider-empty">Couldn’t load the status breakdown. Try again above.</p> : Object.keys(statusCounts).length === 0 ? <p className="rider-empty">No delivery activity for these filters.</p>
                             : <div className="rider-status-chart" role="list" aria-label="Delivery counts by status">
                                 {Object.entries(statusCounts).sort(([first], [second]) => first.localeCompare(second)).map(([status, count]) => {
-                                    const maximum = Math.max(1, ...Object.values(statusCounts));
-                                    return <div className="rider-status-bar" role="listitem" key={status} aria-label={`${statusLabel(status)}: ${count}`}>
-                                        <span>{statusLabel(status)}</span><i><b style={{ width: `${count / maximum * 100}%` }} /></i><strong>{count}</strong>
+                                    const percentage = statusTotal ? count / statusTotal * 100 : 0;
+                                    return <div className="rider-status-bar" role="listitem" key={status} aria-label={`${statusLabel(status)}: ${count} deliveries, ${Math.round(percentage)}% of filtered total`}>
+                                        <span>{statusLabel(status)}</span><i aria-hidden="true"><b style={{ width: `${percentage}%` }} /></i><strong>{count}</strong><span className="rider-status-share">{Math.round(percentage)}%</span>
                                     </div>;
                                 })}
                             </div>}
                     </section>
                     <section className="rider-analytics-card" aria-labelledby="rider-recent-activity-heading">
                         <div className="rider-work-heading"><div><p className="eyebrow">Recorded events</p><h3 id="rider-recent-activity-heading">Recent activity</h3></div></div>
-                        {summaryLoading && !summary ? <LoadingSkeleton variant="list" count={3} label="Loading recent delivery activity" /> : recentActivity.length === 0 ? <p className="rider-empty">No status changes match these filters.</p>
+                        {summaryLoading && !summary ? <LoadingSkeleton variant="list" count={3} label="Loading recent delivery activity" /> : !summary ? <p className="rider-empty">Couldn’t load recent delivery activity. Try again above.</p> : recentActivity.length === 0 ? <p className="rider-empty">No status changes match these filters.</p>
                             : <ol className="rider-activity-list">{recentActivity.map((activity) => <li key={activity.id}>
                                 <span><strong>{activity.delivery_reference ?? activity.order_reference ?? 'Delivery'}</strong> · {statusLabel(activity.to_status)}</span>
                                 <time>{activity.created_at ? new Date(activity.created_at).toLocaleString() : '—'}</time>
@@ -1224,6 +1244,7 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
                     </section>
                 </div>
             </section>}
+            {page === 'earnings' && <RiderEarningsPage onError={onError} />}
             {page === 'deliveries' && <section className="rider-deliveries" aria-labelledby="rider-deliveries-title">
                 <div className="rider-work-heading"><div><p className="eyebrow">Rider workspace</p><h2 id="rider-deliveries-title">Deliveries</h2></div></div>
                 <TabNav
@@ -1232,13 +1253,19 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
                     value={deliveryTab}
                     onChange={(value) => setDeliveryTab(value as RiderDeliveryTab)}
                     options={[
-                        { value: 'nearby', label: 'Nearby Orders' },
-                        { value: 'assigned', label: 'My Deliveries' },
-                        { value: 'scanner', label: 'QR Scanner' },
-                        { value: 'history', label: 'Delivery History' },
+                        { value: 'nearby', label: 'Nearby Orders', id: 'rider-delivery-tab-nearby' },
+                        { value: 'assigned', label: 'My Deliveries', id: 'rider-delivery-tab-assigned' },
+                        { value: 'scanner', label: 'QR Scanner', id: 'rider-delivery-tab-scanner' },
+                        { value: 'history', label: 'Delivery History', id: 'rider-delivery-tab-history' },
                     ]}
                 />
-                {deliveryTab === 'nearby' && <section className="rider-nearby-workspace" aria-labelledby="rider-offers-title" aria-live="polite">
+                <RiderDeliveryTutorial
+                    open={deliveryTutorialOpen}
+                    onToggle={() => setDeliveryTutorialOpen((open) => !open)}
+                    onDismiss={() => setDeliveryTutorialOpen(false)}
+                    onDeliveryTabChange={setDeliveryTab}
+                />
+                {deliveryTab === 'nearby' && <section id="rider-nearby-workspace" className="rider-nearby-workspace" aria-labelledby="rider-offers-title" aria-live="polite">
                     <div className="rider-nearby-heading">
                         <div><p className="eyebrow">New assignments</p><h2 id="rider-offers-title">Nearby orders</h2><p>{offers.length} currently available to you</p></div>
                         <div className="rider-nearby-location">
@@ -1318,7 +1345,7 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
                         </aside>
                     </div>
                 </section>}
-                {deliveryTab === 'assigned' && <>
+                {deliveryTab === 'assigned' && <section id="rider-assigned-deliveries" className="rider-assigned-deliveries" aria-label="My assigned deliveries">
                     <RiderRemittancePanel key={deliveryRevision} onSubmitted={() => setDeliveryRevision((revision) => revision + 1)} />
                     <div className="rider-delivery-filters" role="search" aria-label="Filter my deliveries">
                         <label>Search deliveries<input type="search" value={deliverySearch} onChange={(event) => { setDeliverySearch(event.target.value); setDeliveryPage(1); }} placeholder="Delivery or order reference, buyer, or seller" /></label>
@@ -1364,7 +1391,7 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
                             </section>;
                         })}</div>}
                     {!deliveriesLoading && deliveryTotal > 0 && <div className="rider-delivery-pagination"><span>Page {deliveryPage} of {deliveryLastPage} · {deliveryTotal} deliveries</span>{deliveryLastPage > 1 && <Pagination page={deliveryPage} lastPage={deliveryLastPage} onChange={setDeliveryPage} />}</div>}
-                </>}
+                </section>}
                 {deliveryTab === 'scanner' && <section className="rider-qr-scanner" aria-labelledby="rider-qr-scanner-title">
                     <div className="rider-work-heading"><div><p className="eyebrow">Assigned deliveries only</p><h3 id="rider-qr-scanner-title">QR Scanner</h3><p>Choose an active assignment to verify pickup or delivery.</p></div><button type="button" className="seller-inline-action" disabled={scannerLoading} aria-busy={scannerLoading} onClick={refreshDeliveries}>{scannerLoading ? 'Refreshing…' : 'Refresh assignments'}</button></div>
                     {scannerError && <p className="rider-delivery-error" role="alert">{scannerError}</p>}
@@ -1384,14 +1411,22 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
                                 </article>}
                             </div>}
                 </section>}
-                {deliveryTab === 'history' && <ReportPanel role="RIDER" onError={onError} title="Delivery History" hideTypeSelector />}
+                {deliveryTab === 'history' && <div id="rider-delivery-history"><ReportPanel role="RIDER" onError={onError} title="Delivery History" hideTypeSelector /></div>}
             </section>}
-            {page === 'earnings' && <RiderEarningsPage onError={onError} />}
             {page === 'chats' && <AIChatPage role="RIDER" initialConversationId={activeConversationId} onBack={() => setPage('dashboard')} />}
             {page === 'reports' && <ReportPanel role="RIDER" onError={onError} />}
             {page === 'events' && <SystemCalendar role="RIDER" onError={onError} onOpenDelivery={(_, orderReference) => openRiderDeliveries(orderReference ?? '')} />}
             {page === 'notifications' && <NotificationsPage role="RIDER" onOpenOrder={(orderId, orderReference) => openRiderDeliveries(orderReference ?? orderId)} onOpenConversation={openConversation} onOpenEvent={(eventId) => { window.history.pushState({}, '', `#calendar/event/${eventId}`); setPage('events'); }} onNotificationsRead={refreshNavigationCounts} />}
-            {page === 'account' && <RiderAccountSettings user={user} onUserUpdated={onUserUpdated} onError={onError} />}
+            {page === 'account' && <RiderAccountSettings
+                user={user}
+                onUserUpdated={onUserUpdated}
+                onError={onError}
+                onReviewTutorial={() => {
+                    setDeliveryTab('nearby');
+                    setDeliveryTutorialOpen(true);
+                    setPage('deliveries');
+                }}
+            />}
             {isChat && <span className="sr-only" aria-live="polite">Rider chats workspace</span>}
         </section>
     </main>;

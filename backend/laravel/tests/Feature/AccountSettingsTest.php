@@ -51,6 +51,23 @@ class AccountSettingsTest extends TestCase
         $this->assertSame(false, $user->fresh()->account_preferences['allow_direct_messages']);
     }
 
+    public function test_preferences_are_marked_reviewed_only_after_an_explicit_saved_action(): void
+    {
+        $user = User::factory()->create(['account_preferences' => null]);
+
+        $this->actingAs($user)->getJson('/api/profile/settings')
+            ->assertOk()
+            ->assertJsonPath('preferences_reviewed_at', null);
+        $this->assertNull($user->fresh()->account_preferences_reviewed_at);
+
+        $response = $this->actingAs($user)->putJson('/api/profile/settings', ['mark_reviewed' => true])
+            ->assertOk();
+
+        $this->assertNotEmpty($response->json('preferences_reviewed_at'));
+        $this->assertNotNull($user->fresh()->account_preferences_reviewed_at);
+        $this->assertNull($user->fresh()->account_preferences);
+    }
+
     public function test_seller_can_update_supported_account_preferences_without_changing_other_preferences(): void
     {
         $seller = User::factory()->create([
@@ -120,6 +137,11 @@ class AccountSettingsTest extends TestCase
             ->assertJsonPath('email_verification_required', true);
 
         $this->actingAs($rider)->putJson('/api/profile/password', [
+            'password' => 'new-rider-password',
+            'password_confirmation' => 'new-rider-password',
+        ])->assertUnprocessable();
+
+        $this->actingAs($rider)->putJson('/api/profile/password', [
             'current_password' => 'password',
             'password' => 'new-rider-password',
             'password_confirmation' => 'new-rider-password',
@@ -128,6 +150,28 @@ class AccountSettingsTest extends TestCase
         $this->assertSame('Rider Updated', $rider->fresh()->name);
         $this->assertSame('rider-other', $otherRider->fresh()->username);
         $this->assertTrue(password_verify('new-rider-password', $rider->fresh()->password));
+        $this->assertNotNull($rider->fresh()->password_set_at);
+        $this->actingAs($rider)->getJson('/api/auth/user')
+            ->assertOk()
+            ->assertJsonPath('user.password_setup_complete', true);
+    }
+
+    public function test_signed_in_oauth_user_can_set_an_initial_password_without_a_current_password(): void
+    {
+        $rider = User::factory()->create([
+            'role' => Role::RIDER,
+            'google_id' => 'google-oauth-user',
+            'password_set_at' => null,
+        ]);
+
+        $this->actingAs($rider)->putJson('/api/profile/password', [
+            'password' => 'new-rider-password',
+            'password_confirmation' => 'new-rider-password',
+        ])->assertOk()
+            ->assertJsonPath('user.password_setup_complete', true);
+
+        $this->assertTrue(password_verify('new-rider-password', $rider->fresh()->password));
+        $this->assertNotNull($rider->fresh()->password_set_at);
     }
 
     public function test_rider_profile_validation_and_non_rider_authorization_are_enforced(): void

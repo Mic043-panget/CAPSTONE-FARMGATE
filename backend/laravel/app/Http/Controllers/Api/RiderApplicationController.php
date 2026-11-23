@@ -266,6 +266,7 @@ class RiderApplicationController extends Controller
                 'name' => trim($data['name']),
                 'email' => strtolower(trim($data['email'])),
                 'password' => $data['password'],
+                'password_set_at' => now(),
                 'phone_number' => $phone,
                 'role' => Role::RIDER,
             ]);

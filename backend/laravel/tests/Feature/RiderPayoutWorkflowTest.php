@@ -61,13 +61,20 @@ class RiderPayoutWorkflowTest extends TestCase
         $verifier = User::factory()->create(['role' => Role::ADMIN]);
         $rider = $this->rider();
         $method = $this->activeMethod($admin, $verifier, 'BANK');
-
-        $this->actingAs($rider)->putJson('/api/rider/payout-destination', [
+        $destinationInput = [
             'current_password' => 'password',
             'destination_type' => 'BANK',
             'account_holder' => 'Rider Example',
             'bank_name' => 'Sample Bank',
             'account_number' => '1234567890123456',
+        ];
+
+        $this->actingAs($rider)->putJson('/api/rider/payout-destination', $destinationInput)
+            ->assertUnprocessable();
+        $this->actingAs($rider)->putJson('/api/rider/payout-destination', [
+            ...$destinationInput,
+            'consent_accepted' => true,
+            'consent_version' => 'rider-payout-ops-v1',
         ])->assertOk()
             ->assertJsonPath('destination.status', 'PENDING_VERIFICATION')
             ->assertJsonPath('destination.account_number_masked', '•••• 3456')
@@ -115,6 +122,9 @@ class RiderPayoutWorkflowTest extends TestCase
             'bank_name' => 'Sample Bank',
             'account_number' => '1234567890123456',
             'status' => 'VERIFIED',
+            'is_current' => true,
+            'consent_version' => 'rider-payout-ops-v1',
+            'consent_accepted_at' => now(),
             'verified_by' => $confirmer->id,
             'verified_at' => now(),
         ]);
@@ -241,6 +251,8 @@ class RiderPayoutWorkflowTest extends TestCase
             'account_holder' => 'Rider Example',
             'bank_name' => 'Sample Bank',
             'account_number' => '1234567890123456',
+            'consent_accepted' => true,
+            'consent_version' => 'rider-payout-ops-v1',
         ])->assertStatus(409);
 
         $actors = $this->completedDelivery();

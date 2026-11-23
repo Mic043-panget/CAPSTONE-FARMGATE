@@ -20,7 +20,7 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 
-#[Fillable(['name', 'email', 'password', 'role', 'username', 'phone_number', 'profile_photo_path', 'google_id'])]
+#[Fillable(['name', 'email', 'password', 'password_set_at', 'role', 'username', 'phone_number', 'profile_photo_path', 'google_id'])]
 #[Hidden(['password', 'remember_token'])]
 class User extends Authenticatable implements CanResetPassword, MustVerifyEmail
 {
@@ -112,6 +112,8 @@ class User extends Authenticatable implements CanResetPassword, MustVerifyEmail
         return [
             'email_verified_at' => 'datetime',
             'phone_verified_at' => 'datetime',
+            'password_set_at' => 'datetime',
+            'account_preferences_reviewed_at' => 'datetime',
             'account_preferences' => 'array',
             'password' => 'hashed',
             'role' => Role::class,
@@ -123,5 +125,10 @@ class User extends Authenticatable implements CanResetPassword, MustVerifyEmail
         $preferences = $this->account_preferences ?? [];
 
         return (bool) ($preferences[$preference] ?? true);
+    }
+
+    public function hasVerifiedContactMethod(): bool
+    {
+        return $this->email_verified_at !== null || $this->phone_verified_at !== null;
     }
 }

@@ -15,11 +15,14 @@ import { SellerPromotions } from './SellerPromotions';
 import { NotificationsPage } from '../buyer/NotificationsPage';
 import { NavigationBadge, navigationBadgeLabel } from '../../shared/components/NavigationBadge';
 import { SellerPayouts } from './SellerPayouts';
+import { WorkspaceMobileHeader } from '../shared/WorkspaceMobileHeader';
+import { SellerShopProfileSettings } from './SellerShopProfileSettings';
+import { SellerSetupGuide } from './SellerSetupGuide';
 
 const LocationMap = React.lazy(() => import('../../shared/components/LocationMap').then((module) => ({ default: module.LocationMap })));
 
 type SellerPage = 'dashboard' | 'orders' | 'payouts' | 'notifications' | 'listings' | 'promotions' | 'interests' | 'complaints' | 'reviews' | 'reports' | 'chats' | 'location' | 'account';
-type SellerSettingsTab = 'profile' | 'password' | 'phone' | 'preferences' | 'pickup';
+type SellerSettingsTab = 'profile' | 'shop' | 'password' | 'phone' | 'preferences' | 'pickup';
 type SellerNavigationBadge = 'orders' | 'notifications' | 'complaints' | 'chats';
 type SellerAccountPreference = 'order_notifications' | 'chat_notifications' | 'allow_direct_messages';
 type SellerWorkspaceProps = {
@@ -91,9 +94,11 @@ const interestStatuses = ['INTERESTED', 'CONTACTED', 'NEGOTIATING', 'PURCHASED',
 
 export function SellerWorkspace({ categories, error, user, onError, onUserUpdated, onLogout }: SellerWorkspaceProps) {
     const [page, setPage] = React.useState<SellerPage>(() => window.location.hash === '#notifications' ? 'notifications' : 'dashboard');
+    const [mobileNavOpen, setMobileNavOpen] = React.useState(false);
     const [notificationCaseReference, setNotificationCaseReference] = React.useState<string | null>(null);
     const [notificationOrderId, setNotificationOrderId] = React.useState<number | null>(null);
     const [settingsTab, setSettingsTab] = React.useState<SellerSettingsTab>('profile');
+    const [setupRefreshKey, setSetupRefreshKey] = React.useState(0);
     const [navigationCounts, setNavigationCounts] = React.useState<Record<SellerNavigationBadge, number>>({
         orders: 0,
         notifications: 0,
@@ -389,6 +394,7 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
                 [preference]: enabled,
             });
             setAccountPreferences(response.data.preferences);
+            setSetupRefreshKey((revision) => revision + 1);
             showSuccess('Account preference saved.');
         } catch (requestError: any) {
             onError(requestError.userMessage ?? requestError.response?.data?.message ?? 'The account preference could not be saved.');
@@ -423,6 +429,7 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
             setSellerName(response.data.user.name);
             setSellerUsername(response.data.user.username ?? response.data.user.email.split('@')[0]);
             setSellerEmail(response.data.user.email);
+            setSetupRefreshKey((revision) => revision + 1);
             showSuccess(response.data.email_verification_required
                 ? 'Seller details saved. Verify your new email address using the link we sent.'
                 : 'Seller account and business details saved.');
@@ -435,18 +442,25 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
 
     async function changeSellerPassword(event: React.FormEvent<HTMLFormElement>) {
         event.preventDefault();
-        if (!await confirmAction({ title: 'Change your password?', text: 'Your current password is required to confirm this change.', confirmText: 'Change password' })) return;
+        const hasPassword = user.password_setup_complete;
+        if (!await confirmAction({
+            title: hasPassword ? 'Change your password?' : 'Set a password?',
+            text: hasPassword ? 'Your current password is required to confirm this change.' : 'You can set a password for this signed-in account now.',
+            confirmText: hasPassword ? 'Change password' : 'Set password',
+        })) return;
         setPasswordSaving(true);
         try {
             await initializeCsrf();
-            await api.put('/api/profile/password', {
-                current_password: currentPassword,
+            const response = await api.put<{ user: User }>('/api/profile/password', {
+                ...(hasPassword ? { current_password: currentPassword } : {}),
                 password: newPassword,
                 password_confirmation: passwordConfirmation,
             });
+            onUserUpdated(response.data.user);
             setCurrentPassword('');
             setNewPassword('');
             setPasswordConfirmation('');
+            setSetupRefreshKey((revision) => revision + 1);
             showSuccess('Password updated.');
         } catch (requestError: any) {
             onError(requestError.userMessage ?? requestError.response?.data?.message ?? 'The password could not be changed.');
@@ -600,6 +614,7 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
             await initializeCsrf();
             await api.put('/api/seller/profile/location', pickupLocation);
             setPickupLocationConfirmed(true);
+            setSetupRefreshKey((revision) => revision + 1);
             setNotice('Pickup location saved. Delivery distance will be calculated from this map pin.');
             showSuccess('Pickup location saved.');
         } catch (requestError: any) {
@@ -749,9 +764,29 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
         />;
         if (page === 'account' || page === 'location') return <section className="seller-work-section seller-settings-page">
             <div className="seller-work-heading"><div><p className="eyebrow">Seller portal settings</p><h2>Settings</h2></div></div>
+            <SellerSetupGuide
+                user={user}
+                refreshKey={setupRefreshKey}
+                onOpenSection={(section, focusTarget = true) => {
+                    if (section === 'payouts') {
+                        setPage('payouts');
+                        return;
+                    }
+                    setPage('account');
+                    setSettingsTab(section);
+                    if (focusTarget) {
+                        window.requestAnimationFrame(() => {
+                            const target = document.getElementById(`seller-settings-panel-${section}`);
+                            target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            target?.focus({ preventScroll: true });
+                        });
+                    }
+                }}
+            />
             <div className="seller-settings-tabs" role="tablist" aria-label="Seller settings">
                 {([
                     ['profile', 'Profile & business'],
+                    ['shop', 'Shop profile'],
                     ['password', 'Password'],
                     ['phone', 'Phone security'],
                     ['preferences', 'Notifications & privacy'],
@@ -769,7 +804,7 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
                     onKeyDown={(event) => {
                         if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
                         event.preventDefault();
-                        const tabs: SellerSettingsTab[] = ['profile', 'password', 'phone', 'preferences', 'pickup'];
+                        const tabs: SellerSettingsTab[] = ['profile', 'shop', 'password', 'phone', 'preferences', 'pickup'];
                         const current = tabs.indexOf(tab);
                         const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (current + (event.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length;
                         setSettingsTab(tabs[next]);
@@ -785,6 +820,7 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
                         <label>Account name<input type="text" autoComplete="name" maxLength={120} required value={sellerName} onChange={(event) => setSellerName(event.target.value)} /></label>
                         <label>Username<input type="text" autoComplete="username" minLength={3} maxLength={32} pattern="[A-Za-z0-9_\-]+" required value={sellerUsername} onChange={(event) => setSellerUsername(event.target.value)} /></label>
                         <label>Email address<input type="email" autoComplete="email" maxLength={255} required value={sellerEmail} onChange={(event) => setSellerEmail(event.target.value)} /></label>
+                        <p className="seller-email-verification" role="status">Contact verification: {user.email_verified_at || user.phone_verified_at ? 'Verified' : 'Not verified'}. A verified email or mobile number allows you to add livestock listings.</p>
                         <p className="seller-email-verification">Email status: {user.email_verified_at ? 'Verified' : 'Not verified'}{!user.email_verified_at && <> · <button type="button" className="seller-text-action" disabled={emailVerificationBusy} onClick={() => void resendSellerEmailVerification()}>{emailVerificationBusy ? 'Sending...' : 'Resend verification email'}</button></>}</p>
                         <label>Business name<input type="text" autoComplete="organization" maxLength={255} value={businessName} onChange={(event) => setBusinessName(event.target.value)} /></label>
                         <label>Business contact phone<input type="tel" autoComplete="tel" inputMode="tel" maxLength={30} value={businessPhone} onChange={(event) => setBusinessPhone(event.target.value)} /><small>This business contact is separate from your verified account phone number.</small></label>
@@ -792,13 +828,18 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
                         <button className="seller-inline-action" type="submit" disabled={profileSaving}>{profileSaving ? 'Saving details...' : 'Save account details'}</button>
                     </form>
                 </section>
+                <section className="seller-settings-section" id="seller-settings-panel-shop" role="tabpanel" aria-labelledby="seller-settings-tab-shop" hidden={settingsTab !== 'shop'} tabIndex={-1}>
+                    <SellerShopProfileSettings defaultShopName={user.name} onSaved={() => setSetupRefreshKey((revision) => revision + 1)} />
+                </section>
                 <section className="seller-settings-section" id="seller-settings-panel-password" role="tabpanel" aria-labelledby="seller-settings-tab-password" hidden={settingsTab !== 'password'} tabIndex={-1}>
-                    <div className="seller-work-heading"><div><p className="eyebrow">Profile protection</p><h3 id="seller-password-settings-heading">Change password</h3></div></div>
+                    <div className="seller-work-heading"><div><p className="eyebrow">Profile protection</p><h3 id="seller-password-settings-heading">{user.password_setup_complete ? 'Change password' : 'Set a password'}</h3></div></div>
                     <form className="seller-account-form" onSubmit={changeSellerPassword}>
-                        <label>Current password<input type="password" autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} required /></label>
+                        {user.password_setup_complete
+                            ? <label>Current password<input type="password" autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} required /></label>
+                            : <p>No password is set yet. Set one to enable password sign-in for your account.</p>}
                         <label>New password<input type="password" autoComplete="new-password" minLength={8} value={newPassword} onChange={(event) => setNewPassword(event.target.value)} required /></label>
                         <label>Confirm new password<input type="password" autoComplete="new-password" minLength={8} value={passwordConfirmation} onChange={(event) => setPasswordConfirmation(event.target.value)} required /></label>
-                        <button className="seller-inline-action" type="submit" disabled={passwordSaving}>{passwordSaving ? 'Updating password...' : 'Update password'}</button>
+                        <button className="seller-inline-action" type="submit" disabled={passwordSaving}>{passwordSaving ? 'Saving password...' : user.password_setup_complete ? 'Update password' : 'Set password'}</button>
                     </form>
                 </section>
                 <section className="seller-settings-section" id="seller-settings-panel-phone" role="tabpanel" aria-labelledby="seller-settings-tab-phone" hidden={settingsTab !== 'phone'} tabIndex={-1}>
@@ -857,7 +898,11 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
     const pageTitle = page === 'location' || page === 'account' ? 'Settings' : activeNavigation?.label ?? (page === 'interests' ? 'Buyer interest' : '');
 
     return <main className={`admin-shell seller-shell${page === 'dashboard' ? ' seller-dashboard-open' : ''}`}>
-        <aside className="admin-sidebar">
+        <aside className={`admin-sidebar role-sidebar${mobileNavOpen ? ' mobile-open' : ''}`} onKeyDown={(event) => {
+            if (event.key === 'Escape') setMobileNavOpen(false);
+        }}>
+            <WorkspaceMobileHeader role="seller" menuOpen={mobileNavOpen} controlsId="seller-mobile-navigation" onToggle={() => setMobileNavOpen((open) => !open)} />
+            <div className="role-mobile-menu-panel" id="seller-mobile-navigation">
             <a className="brand" href="/">FARM<span>GATE</span></a>
             <div className="admin-sidebar-label">SELLER PORTAL</div>
             <nav aria-label="Seller navigation">{navigation.map((item) => {
@@ -872,11 +917,12 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
                                 ? navigationBadgeLabel(badgeCount, 'unread message', 'unread messages')
                                 : '';
                 const selected = page === item.id || (page === 'location' && item.id === 'account');
-                return <button type="button" key={item.id} className={selected ? 'active' : ''} aria-current={selected ? 'page' : undefined} aria-label={badgeCount > 0 ? `${item.label}, ${badgeDescription}${item.badge === 'orders' ? '. Separate from unread notifications.' : ''}` : item.label} title={badgeCount > 0 ? `${item.label}, ${badgeDescription}${item.badge === 'orders' ? ' (separate from unread notifications)' : ''}` : item.label} onClick={() => { setPage(item.id); setNotice(null); }}><span className="nav-icon" aria-hidden="true">{item.id === 'notifications' ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg> : item.icon}</span><span className="seller-nav-label">{item.label}</span>{item.badge === 'orders' && badgeCount > 0
+                return <button type="button" key={item.id} className={selected ? 'active' : ''} aria-current={selected ? 'page' : undefined} aria-label={badgeCount > 0 ? `${item.label}, ${badgeDescription}${item.badge === 'orders' ? '. Separate from unread notifications.' : ''}` : item.label} title={badgeCount > 0 ? `${item.label}, ${badgeDescription}${item.badge === 'orders' ? ' (separate from unread notifications)' : ''}` : item.label} onClick={() => { setPage(item.id); setNotice(null); setMobileNavOpen(false); }}><span className="nav-icon" aria-hidden="true">{item.id === 'notifications' ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg> : item.icon}</span><span className="seller-nav-label">{item.label}</span>{item.badge === 'orders' && badgeCount > 0
                     ? <span className="seller-orders-pending-badge" aria-hidden="true">{badgeCount > 99 ? '99+' : Math.floor(badgeCount)} pending</span>
                     : <NavigationBadge count={badgeCount} />}</button>;
             })}</nav>
             <button className="sidebar-logout" type="button" onClick={onLogout}>Log out <span>↗</span></button>
+            </div>
         </aside>
         <section className={`admin-content seller-content${page === 'dashboard' ? ' seller-content-dashboard' : ''}`}>
             <header className="admin-header"><div><p className="eyebrow">FARMGATE seller workspace</p><h1>{pageTitle}</h1><p>Manage your listings, orders, and buyer relationships.</p></div><span className="admin-role">SELLER</span></header>

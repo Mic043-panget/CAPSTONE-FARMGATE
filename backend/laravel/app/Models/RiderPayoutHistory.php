@@ -8,11 +8,20 @@ use LogicException;
 
 class RiderPayoutHistory extends Model
 {
-    protected $fillable = ['rider_payout_id', 'actor_id', 'action', 'from_status', 'to_status', 'reason', 'snapshot'];
+    protected $fillable = [
+        'rider_payout_id', 'actor_id', 'action', 'from_status', 'to_status', 'reason', 'snapshot',
+    ];
+
+    protected $hidden = ['reason'];
 
     protected function casts(): array
     {
-        return ['snapshot' => 'array'];
+        return ['reason' => 'encrypted', 'snapshot' => 'array'];
+    }
+
+    public function payout(): BelongsTo
+    {
+        return $this->belongsTo(RiderPayout::class, 'rider_payout_id');
     }
 
     public function actor(): BelongsTo

@@ -15,6 +15,7 @@ use App\Models\RiderPayoutDestinationHistory;
 use App\Models\RiderPayoutHistory;
 use App\Models\RiderPayoutMethod;
 use App\Models\RiderPayoutMethodHistory;
+use App\Models\RiderProfile;
 use App\Models\User;
 use App\Notifications\RiderPayoutStatusNotification;
 use Illuminate\Database\Eloquent\Builder;
@@ -29,6 +30,10 @@ use Throwable;
 
 class RiderPayoutController extends Controller
 {
+    private const DESTINATION_CONSENT_VERSION = 'rider-payout-ops-v1';
+
+    private const DESTINATION_OPERATIONAL_NOTICE = 'Provide a bank or GCash destination you control. Farmgate stores it for rider payout operations; submitting it does not initiate a payout or guarantee a transfer. An administrator must verify it before it can be used.';
+
     public function earnings(Request $request): JsonResponse
     {
         $rider = $request->user();
@@ -55,11 +60,18 @@ class RiderPayoutController extends Controller
     {
         $rider = $request->user();
         abort_unless($rider?->role === Role::RIDER, 403);
-        $destination = RiderPayoutDestination::query()->where('rider_id', $rider->id)->first();
+        $destination = RiderPayoutDestination::query()
+            ->where('rider_id', $rider->id)
+            ->where('is_current', true)
+            ->first();
 
         return response()->json([
             'destination' => $destination ? $this->destinationPayload($destination) : null,
             'methods' => RiderPayoutMethod::query()->where('status', 'ACTIVE')->orderBy('method_type')->get(['method_type', 'status']),
+            'consent' => [
+                'version' => self::DESTINATION_CONSENT_VERSION,
+                'notice' => self::DESTINATION_OPERATIONAL_NOTICE,
+            ],
             'provider' => ['enabled' => false, 'status' => 'DISABLED_NOT_CONFIGURED'],
         ])->header('Cache-Control', 'private, no-store');
     }
@@ -75,6 +87,8 @@ class RiderPayoutController extends Controller
             'bank_name' => ['required_if:destination_type,BANK', 'prohibited_unless:destination_type,BANK', 'string', 'min:2', 'max:100', 'regex:/\\S/'],
             'account_number' => ['required_if:destination_type,BANK', 'prohibited_unless:destination_type,BANK', 'string', 'min:4', 'max:40', 'regex:/^(?=.*[A-Za-z0-9])[A-Za-z0-9 -]+$/'],
             'wallet_number' => ['required_if:destination_type,GCASH', 'prohibited_unless:destination_type,GCASH', 'string', 'regex:/^\\+?[0-9][0-9 -]{6,19}$/'],
+            'consent_accepted' => ['required', 'accepted'],
+            'consent_version' => ['required', Rule::in([self::DESTINATION_CONSENT_VERSION])],
         ]);
         abort_unless(
             RiderPayoutMethod::query()->where('method_type', $data['destination_type'])->where('status', 'ACTIVE')->exists(),
@@ -83,8 +97,18 @@ class RiderPayoutController extends Controller
         );
 
         $destination = DB::transaction(function () use ($rider, $data): RiderPayoutDestination {
-            User::query()->whereKey($rider->id)->lockForUpdate()->firstOrFail();
-            $destination = RiderPayoutDestination::query()->where('rider_id', $rider->id)->lockForUpdate()->first();
+            $lockedRider = User::query()->whereKey($rider->id)->lockForUpdate()->firstOrFail();
+            abort_unless($lockedRider->role === Role::RIDER, 403);
+            abort_unless(
+                RiderProfile::query()->where('user_id', $rider->id)->where('is_verified', true)->exists(),
+                403,
+                'An approved rider account is required to set up a payout destination.',
+            );
+            $destination = RiderPayoutDestination::query()
+                ->where('rider_id', $rider->id)
+                ->where('is_current', true)
+                ->lockForUpdate()
+                ->first();
             $fields = [
                 'destination_type' => $data['destination_type'],
                 'account_holder' => trim($data['account_holder']),
@@ -93,29 +117,56 @@ class RiderPayoutController extends Controller
                 'wallet_number' => $data['destination_type'] === 'GCASH' ? trim($data['wallet_number']) : null,
             ];
             $isNew = ! $destination;
-            $changed = $isNew || collect($fields)->contains(fn (mixed $value, string $key): bool => $destination->{$key} !== $value);
-            if ($changed) {
+            $fieldsChanged = $isNew || collect($fields)->contains(fn (mixed $value, string $key): bool => $destination->{$key} !== $value);
+            $previousStatus = $destination?->status;
+            $detailsChanged = $fieldsChanged || $destination?->status === 'REJECTED';
+            if ($destination && $detailsChanged) {
                 abort_if(
-                    RiderPayout::query()->where('rider_id', $rider->id)->whereIn('status', ['PENDING', 'PROCESSING'])->lockForUpdate()->exists(),
+                    RiderPayout::query()
+                        ->where('rider_id', $rider->id)
+                        ->where('destination_id', $destination->id)
+                        ->whereIn('status', ['PENDING', 'PROCESSING'])
+                        ->lockForUpdate()
+                        ->exists(),
                     409,
                     'Resolve pending or processing payouts before changing the destination.',
                 );
-                $destination ??= new RiderPayoutDestination(['rider_id' => $rider->id]);
-                $previous = $destination->status;
+            }
+            if ($detailsChanged) {
+                if ($destination) {
+                    $previousDestination = $destination;
+                    $destination->status = 'REPLACED';
+                    $destination->is_current = false;
+                    $destination->save();
+                    RiderPayoutDestinationHistory::query()->create([
+                        'rider_payout_destination_id' => $previousDestination->id,
+                        'actor_id' => $rider->id,
+                        'action' => 'SUPERSEDED',
+                        'from_status' => $previousStatus,
+                        'to_status' => 'REPLACED',
+                        'previous_status' => $previousStatus,
+                        'new_status' => 'REPLACED',
+                    ]);
+                }
+                $destination = new RiderPayoutDestination(['rider_id' => $rider->id, 'is_current' => true]);
                 $destination->fill($fields);
                 $destination->status = 'PENDING_VERIFICATION';
                 $destination->verified_by = null;
                 $destination->verified_at = null;
-                $destination->save();
-                RiderPayoutDestinationHistory::query()->create([
-                    'rider_payout_destination_id' => $destination->id,
-                    'actor_id' => $rider->id,
-                    'action' => $isNew ? 'SUBMITTED' : 'UPDATED',
-                    'from_status' => $previous,
-                    'to_status' => 'PENDING_VERIFICATION',
-                    'reason' => 'Rider submitted or changed the payout destination; administrator verification is required.',
-                ]);
             }
+            $destination->consent_version = self::DESTINATION_CONSENT_VERSION;
+            $destination->consent_accepted_at = now();
+            $destination->save();
+            RiderPayoutDestinationHistory::query()->create([
+                'rider_payout_destination_id' => $destination->id,
+                'actor_id' => $rider->id,
+                'action' => $isNew ? 'SUBMITTED' : ($detailsChanged ? 'UPDATED' : 'CONSENT_RENEWED'),
+                'from_status' => $previousStatus,
+                'to_status' => $destination->status,
+                'previous_status' => $previousStatus,
+                'new_status' => $destination->status,
+                'reason' => 'Rider acknowledged the payout operations notice and submitted or renewed the destination details.',
+            ]);
 
             return $destination;
         });
@@ -123,6 +174,11 @@ class RiderPayoutController extends Controller
         return response()->json([
             'message' => 'Payout destination saved for administrator verification.',
             'destination' => $this->destinationPayload($destination),
+            'consent' => [
+                'version' => self::DESTINATION_CONSENT_VERSION,
+                'accepted_at' => $destination->consent_accepted_at?->toISOString(),
+                'notice' => self::DESTINATION_OPERATIONAL_NOTICE,
+            ],
         ])->header('Cache-Control', 'private, no-store');
     }
 
@@ -809,6 +865,8 @@ class RiderPayoutController extends Controller
             'account_number_masked' => $bank ? '•••• '.mb_substr($normalized, -4) : null,
             'wallet_number_masked' => $bank ? null : '•••• '.mb_substr($normalized, -4),
             'status' => $destination->status,
+            'consent_version' => $destination->consent_version,
+            'is_current' => $destination->is_current,
             'verified_at' => $destination->verified_at?->toISOString(),
             'updated_at' => $destination->updated_at?->toISOString(),
         ];

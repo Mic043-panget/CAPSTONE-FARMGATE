@@ -9,6 +9,7 @@ export type User = {
     phone_number?: string | null;
     phone_verified_at?: string | null;
     email_verified_at?: string | null;
+    password_setup_complete?: boolean;
     created_at?: string | null;
     profile_photo_url?: string | null;
     rider_profile?: {
@@ -44,7 +45,13 @@ export type Listing = {
     estimated_weight_kg?: string;
     quantity: number;
     category: Category;
-    seller: { id: number; name: string };
+    seller: {
+        id: number;
+        name: string;
+        shop_name?: string | null;
+        shop_image_url?: string | null;
+        is_verified?: boolean;
+    };
     images: { url: string; alt_text?: string }[];
 };
 

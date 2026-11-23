@@ -72,6 +72,8 @@ class RiderEarningsService
                 'order_reference' => $order->order_reference,
                 'completed_at' => $locked->delivery_verified_at ?? $locked->updated_at,
                 'delivery_fee_cents' => self::toCents($order->delivery_fee ?? 0),
+                'amount_cents' => $grossCents,
+                'calculated_at' => $locked->delivery_verified_at ?? $locked->updated_at,
                 'gross_amount_cents' => $grossCents,
                 'deductions_cents' => 0,
                 'adjustment_cents' => 0,

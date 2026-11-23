@@ -41,6 +41,7 @@ use App\Http\Controllers\Api\RiderPayoutController;
 use App\Http\Controllers\Api\Seller\ComplaintController as SellerComplaintController;
 use App\Http\Controllers\Api\Seller\DashboardController as SellerDashboardController;
 use App\Http\Controllers\Api\Seller\ProfileController as SellerProfileController;
+use App\Http\Controllers\Api\Seller\ShopProfileController as SellerShopProfileController;
 use App\Http\Controllers\Api\Seller\PromotionController as SellerPromotionController;
 use App\Http\Controllers\Api\Seller\ReviewController as SellerReviewController;
 use App\Http\Controllers\Api\SellerPayoutDestinationController;
@@ -119,6 +120,17 @@ Route::middleware(MaintenanceMode::class)->group(function (): void {
             Route::get('/seller/listings', [ListingController::class, 'mine']);
             Route::get('/seller/profile', [SellerProfileController::class, 'show']);
             Route::put('/seller/profile/location', [SellerProfileController::class, 'update']);
+            Route::get('/seller/shop-profile', [SellerShopProfileController::class, 'show']);
+            Route::post('/seller/shop-profile', [SellerShopProfileController::class, 'update'])->middleware('throttle:10,1');
+            Route::post('/seller/verification/submit', [SellerShopProfileController::class, 'submitVerification'])->middleware('throttle:5,1');
+            Route::get('/admin/seller-verifications', [SellerShopProfileController::class, 'adminIndex']);
+            Route::get('/admin/seller-verifications/{seller}', [SellerShopProfileController::class, 'adminShow'])->whereNumber('seller');
+            Route::post('/admin/seller-verifications/{seller}/document/reviewed', [SellerShopProfileController::class, 'adminMarkDocumentReviewed'])->whereNumber('seller')->middleware('throttle:10,1');
+            Route::post('/admin/seller-verifications/{seller}/decision', [SellerShopProfileController::class, 'adminDecision'])->whereNumber('seller')->middleware('throttle:10,1');
+            Route::get('/admin/seller-verifications/{seller}/document', [SellerShopProfileController::class, 'adminDocument'])
+                ->whereNumber('seller')
+                ->middleware('signed')
+                ->name('admin.seller-verification-document');
             Route::get('/seller/promotions', [SellerPromotionController::class, 'index']);
             Route::get('/seller/promotions/eligible-listings', [SellerPromotionController::class, 'eligibleListings']);
             Route::post('/seller/promotions', [SellerPromotionController::class, 'store'])->middleware('throttle:30,1');
@@ -233,6 +245,7 @@ Route::middleware(MaintenanceMode::class)->group(function (): void {
             Route::post('/checkout', [CheckoutController::class, 'store']);
             Route::post('/checkout/quote', [CheckoutController::class, 'quote']);
             Route::get('/orders', [OrderController::class, 'index']);
+            Route::get('/orders/{order}/chat-context', [OrderController::class, 'chatContext']);
             Route::get('/orders/{order}', [OrderController::class, 'show']);
             Route::post('/orders/{order}/request-update', [OrderController::class, 'requestUpdate'])->middleware('throttle:3,1');
             Route::post('/orders/{order}/delivery-code', [DeliveryTrackingController::class, 'issueCode'])->middleware('throttle:10,1');

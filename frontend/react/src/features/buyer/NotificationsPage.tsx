@@ -2,6 +2,7 @@ import React from 'react';
 import api from '../../lib/api';
 import { ViewDetailsAction } from '../../shared/components/Button';
 import { LoadingSkeleton } from '../../shared/components/LoadingSkeleton';
+import { NotificationDeviceSettingsControls, useDeviceNotificationSettings } from './NotificationDeviceSettings';
 
 type NotificationCategory = 'ALL' | 'ORDERS' | 'CHATS' | 'SYSTEM';
 
@@ -47,26 +48,7 @@ type AppNotification = {
     delivery_statuses?: { channel: string; status: string; attempts: number }[];
 };
 
-type PushConfig = { enabled: boolean; public_key: string | null };
 type NotificationUnreadCounts = { unread_count: number; unread_chat_count: number };
-
-function decodePushKey(value: string): ArrayBuffer {
-    const padded = value + '='.repeat((4 - value.length % 4) % 4);
-    const binary = window.atob(padded.replaceAll('-', '+').replaceAll('_', '/'));
-    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
-    const buffer = new ArrayBuffer(bytes.length);
-    new Uint8Array(buffer).set(bytes);
-
-    return buffer;
-}
-
-function samePushKey(current: ArrayBuffer | null, expected: ArrayBuffer): boolean {
-    if (!current) return false;
-    const actual = new Uint8Array(current);
-    const expectedBytes = new Uint8Array(expected);
-
-    return actual.length === expectedBytes.length && actual.every((value, index) => value === expectedBytes[index]);
-}
 
 function deliveryStatusLabel(channel: string, status: string): string {
     const channelLabel = channel === 'push' ? 'Device' : 'Email';
@@ -225,7 +207,7 @@ function notificationContent(notification: AppNotification, role: 'BUYER' | 'SEL
     return { title: 'Notification', message: notification.data.message ?? 'You have a new notification.' };
 }
 
-export function NotificationsPage({ onOpenOrder, onOpenConversation, onOpenCase, onOpenReview, onOpenListing, onOpenApplication, onOpenVehicleUpdate, onOpenAudit, onOpenDelivery, onOpenEvent, onOpenPromotion, onNotificationsRead, role = 'BUYER' }: {
+export function NotificationsPage({ onOpenOrder, onOpenConversation, onOpenCase, onOpenReview, onOpenListing, onOpenApplication, onOpenVehicleUpdate, onOpenAudit, onOpenDelivery, onOpenEvent, onOpenPromotion, onNotificationsRead, onOpenSettings, role = 'BUYER' }: {
     onOpenOrder?: (orderId: number, orderReference?: string) => void;
     onOpenConversation?: (conversationId: number) => void;
     onOpenCase?: (caseId: number, caseReference?: string) => void;
@@ -238,6 +220,7 @@ export function NotificationsPage({ onOpenOrder, onOpenConversation, onOpenCase,
     onOpenEvent?: (eventId: number) => void;
     onOpenPromotion?: (promotionId: number) => void;
     onNotificationsRead?: (counts?: NotificationUnreadCounts) => void | Promise<void>;
+    onOpenSettings?: () => void;
     role?: 'BUYER' | 'SELLER' | 'RIDER' | 'ADMIN';
 }) {
     const [notifications, setNotifications] = React.useState<AppNotification[]>([]);
@@ -249,14 +232,13 @@ export function NotificationsPage({ onOpenOrder, onOpenConversation, onOpenCase,
     const [bulkReadBusy, setBulkReadBusy] = React.useState(false);
     const [bulkReadMessage, setBulkReadMessage] = React.useState('');
     const [refreshError, setRefreshError] = React.useState('');
-    const [browserPermission, setBrowserPermission] = React.useState<NotificationPermission | 'unsupported'>(() => (
-        typeof window !== 'undefined' && 'Notification' in window ? window.Notification.permission : 'unsupported'
-    ));
-    const [browserPermissionMessage, setBrowserPermissionMessage] = React.useState('');
-    const [pushConfig, setPushConfig] = React.useState<PushConfig | null>(null);
-    const [pushSubscribed, setPushSubscribed] = React.useState(false);
-    const [pushBusy, setPushBusy] = React.useState(false);
-    const [pushMessage, setPushMessage] = React.useState('');
+    const {
+        browserPermission,
+        pushSubscribed,
+        enableBrowserNotifications,
+        disableDeviceNotifications,
+        ...deviceNotificationSettings
+    } = useDeviceNotificationSettings();
     const [notificationPreferences, setNotificationPreferences] = React.useState({
         order_notifications: true,
         chat_notifications: true,
@@ -403,44 +385,6 @@ export function NotificationsPage({ onOpenOrder, onOpenConversation, onOpenCase,
     }, [error, loading, notifications]);
 
     React.useEffect(() => {
-        let active = true;
-        api.get<PushConfig>('/api/notifications/push-config')
-            .then(async ({ data }) => {
-                if (!active) return;
-                setPushConfig(data);
-                if (!data.enabled
-                    || browserPermission !== 'granted'
-                    || !('serviceWorker' in navigator)
-                    || !('PushManager' in window)) return;
-
-                const registration = await navigator.serviceWorker.register('/service-worker.js');
-                let subscription = await registration.pushManager.getSubscription();
-                const serverKey = decodePushKey(data.public_key ?? '');
-                if (subscription && !samePushKey(subscription.options.applicationServerKey, serverKey)) {
-                    await subscription.unsubscribe();
-                    subscription = null;
-                }
-                if (!subscription) return;
-
-                const serialized = subscription.toJSON();
-                if (serialized.endpoint && serialized.keys?.p256dh && serialized.keys.auth) {
-                    await api.post('/api/notifications/push-subscriptions', {
-                        endpoint: serialized.endpoint,
-                        expirationTime: serialized.expirationTime,
-                        keys: serialized.keys,
-                        contentEncoding: 'aes128gcm',
-                    });
-                    if (active) setPushSubscribed(true);
-                }
-            })
-            .catch((requestError: { userMessage?: string }) => {
-                if (active) setPushMessage(requestError.userMessage ?? 'Device notification settings could not be loaded.');
-            });
-
-        return () => { active = false; };
-    }, [browserPermission]);
-
-    React.useEffect(() => {
         if (browserPermission === 'unsupported') return undefined;
         const timer = window.setInterval(() => {
             api.get<{ notifications: AppNotification[]; unread_count: number; unread_chat_count: number; bulk_read_count: number; preferences: typeof notificationPreferences }>('/api/notifications')
@@ -485,76 +429,6 @@ export function NotificationsPage({ onOpenOrder, onOpenConversation, onOpenCase,
 
         return () => window.clearInterval(timer);
     }, [browserPermission, notificationPreferences.chat_notifications, notificationPreferences.event_notifications, notificationPreferences.order_notifications, onNotificationsRead, onOpenConversation, onOpenOrder, pushSubscribed, role]);
-
-    async function enableBrowserNotifications(): Promise<void> {
-        if (browserPermission === 'unsupported' || !('serviceWorker' in navigator) || !('PushManager' in window) || !window.isSecureContext) {
-            setBrowserPermissionMessage('Background device notifications are not supported here. In-app notifications and email remain available.');
-            return;
-        }
-        if (!pushConfig?.enabled || !pushConfig.public_key) {
-            setBrowserPermissionMessage('Device notifications are not configured on this Farmgate server. In-app notifications and email remain available.');
-            return;
-        }
-        setPushBusy(true);
-        try {
-            const permission = await window.Notification.requestPermission();
-            setBrowserPermission(permission);
-            if (permission !== 'granted') {
-                setBrowserPermissionMessage('Device permission was not granted. Farmgate will keep in-app notifications and email available.');
-                return;
-            }
-
-            const registration = await navigator.serviceWorker.register('/service-worker.js');
-            const serverKey = decodePushKey(pushConfig.public_key);
-            let subscription = await registration.pushManager.getSubscription();
-            if (subscription && !samePushKey(subscription.options.applicationServerKey, serverKey)) {
-                await subscription.unsubscribe();
-                subscription = null;
-            }
-            subscription ??= await registration.pushManager.subscribe({
-                userVisibleOnly: true,
-                applicationServerKey: serverKey,
-            });
-            const serialized = subscription.toJSON();
-            if (!serialized.endpoint || !serialized.keys?.p256dh || !serialized.keys.auth) {
-                throw new Error('The browser returned an incomplete device subscription.');
-            }
-            await api.post('/api/notifications/push-subscriptions', {
-                endpoint: serialized.endpoint,
-                expirationTime: serialized.expirationTime,
-                keys: serialized.keys,
-                contentEncoding: 'aes128gcm',
-            });
-            setPushSubscribed(true);
-            setBrowserPermissionMessage('Device notifications are enabled. Important updates can appear even when the notifications page is closed.');
-        } catch (requestError) {
-            setBrowserPermissionMessage(requestError instanceof Error
-                ? `Device notifications could not be enabled: ${requestError.message}`
-                : 'Device notifications could not be enabled. In-app notifications and email remain available.');
-        } finally {
-            setPushBusy(false);
-        }
-    }
-
-    async function disableDeviceNotifications(): Promise<void> {
-        setPushBusy(true);
-        try {
-            const registration = await navigator.serviceWorker.getRegistration('/service-worker.js');
-            const subscription = await registration?.pushManager.getSubscription();
-            if (subscription) {
-                await api.delete('/api/notifications/push-subscriptions', { data: { endpoint: subscription.endpoint } });
-                await subscription.unsubscribe();
-            }
-            setPushSubscribed(false);
-            setBrowserPermissionMessage('Device notifications are disabled for this browser. In-app notifications and email remain available.');
-        } catch (requestError) {
-            setBrowserPermissionMessage(requestError instanceof Error
-                ? `Device notifications could not be disabled: ${requestError.message}`
-                : 'Device notification settings could not be updated.');
-        } finally {
-            setPushBusy(false);
-        }
-    }
 
     async function markAllAsRead(): Promise<void> {
         if (bulkReadBusy || bulkReadCount === 0) return;
@@ -611,24 +485,28 @@ export function NotificationsPage({ onOpenOrder, onOpenConversation, onOpenCase,
     const filteredNotifications = notifications.filter((notification) => category === 'ALL' || categoryFor(notification) === category);
 
     return <section className="buyer-notifications" aria-label="Notifications">
-        <div className="buyer-notification-device-alerts">
-            <button type="button" onClick={() => void enableBrowserNotifications()} disabled={pushBusy || pushSubscribed || browserPermission === 'unsupported' || pushConfig?.enabled === false}>
-                {pushBusy ? 'Updating...' : pushSubscribed ? 'Device notifications enabled' : 'Enable device notifications'}
-            </button>
-            {pushSubscribed && <button type="button" onClick={() => void disableDeviceNotifications()} disabled={pushBusy}>Disable on this device</button>}
-            <p aria-live="polite">
-                {browserPermissionMessage || pushMessage || (browserPermission === 'unsupported' || !('serviceWorker' in navigator) || !('PushManager' in window)
-                    ? 'Device notifications are unavailable on this browser or device. In-app notifications and email remain available.'
-                    : browserPermission === 'denied'
-                        ? 'Device notification permission is blocked in browser settings. In-app notifications and email remain available.'
-                        : pushConfig?.enabled === false
-                            ? 'Device notifications are not configured on this Farmgate server. In-app notifications and email remain available.'
-                            : 'Allow browser permission to receive important updates on this device, even when Farmgate is closed.')}
-            </p>
+        {role !== 'BUYER' && <NotificationDeviceSettingsControls
+            {...deviceNotificationSettings}
+            browserPermission={browserPermission}
+            pushSubscribed={pushSubscribed}
+            enableBrowserNotifications={enableBrowserNotifications}
+            disableDeviceNotifications={disableDeviceNotifications}
+        />}
+        <div className="buyer-notification-filter-bar">
+            <nav className="buyer-notification-filters" aria-label="Filter notifications" role="tablist">
+                {categories.map((item) => <button type="button" role="tab" aria-selected={category === item.id} className={category === item.id ? 'active' : ''} key={item.id} onClick={() => setCategory(item.id)}>{item.label}</button>)}
+            </nav>
+            {role === 'BUYER' && onOpenSettings && <button
+                type="button"
+                className="buyer-notification-settings"
+                aria-label="Notification settings"
+                title="Notification settings"
+                onClick={onOpenSettings}
+            >
+                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3" /><path d="m19.4 15 .1.1 1.2 1-.9 1.7-1.5-.5a8 8 0 0 1-1.7 1l-.3 1.6h-2l-.4-1.5a8 8 0 0 1-1.9 0l-.7 1.4-1.8-.8.3-1.6a8 8 0 0 1-1.4-1.4l-1.6.3-.7-1.8 1.4-.8a8 8 0 0 1 0-1.9l-1.4-.7.8-1.8 1.6.3a8 8 0 0 1 1.4-1.4l-.3-1.6 1.8-.7.8 1.4a8 8 0 0 1 1.9 0l.7-1.4 1.8.8-.3 1.6a8 8 0 0 1 1.4 1.4l1.6-.3.7 1.8-1.4.8a8 8 0 0 1 0 1.9Z" /></svg>
+                Settings
+            </button>}
         </div>
-        <nav className="buyer-notification-filters" aria-label="Filter notifications" role="tablist">
-            {categories.map((item) => <button type="button" role="tab" aria-selected={category === item.id} className={category === item.id ? 'active' : ''} key={item.id} onClick={() => setCategory(item.id)}>{item.label}</button>)}
-        </nav>
         {(bulkReadCount > 0 || notifications.some((notification) => !notification.read_at && notification.data.type !== 'chat_message')) && <div className="buyer-notification-bulk-actions">
             <p>Critical alerts remain unread until opened or acknowledged.</p>
             <button type="button" onClick={() => void markAllAsRead()} disabled={bulkReadBusy || bulkReadCount === 0} aria-busy={bulkReadBusy}>

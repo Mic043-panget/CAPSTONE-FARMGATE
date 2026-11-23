@@ -6,6 +6,7 @@ import { confirmAction, showError, showSuccess } from '../../lib/alerts';
 import { BuyerAddresses } from './BuyerAddresses';
 import { LoadingSkeleton } from '../../shared/components/LoadingSkeleton';
 import { Pagination } from '../../shared/components/Pagination';
+import { NotificationDeviceSettings } from './NotificationDeviceSettings';
 
 type ProfileSection = 'profile' | 'addresses' | 'password' | 'settings' | 'orders' | 'reviews';
 
@@ -190,8 +191,10 @@ function orderMatchesFilter(order: BuyerOrder, filter: OrderFilter): boolean {
     }
 }
 
-export function BuyerProfile({ user, onUserUpdated, onLogout, onNavigateHome, onOpenOrder }: { user: User; onUserUpdated: (user: User) => void; onLogout: () => void; onNavigateHome: () => void; onOpenOrder: (orderId: number) => void }) {
-    const [section, setSection] = React.useState<ProfileSection>('profile');
+export function BuyerProfile({ user, onUserUpdated, onLogout, onNavigateHome, onOpenOrder, initialSection = 'profile' }: { user: User; onUserUpdated: (user: User) => void; onLogout: () => void; onNavigateHome: () => void; onOpenOrder: (orderId: number) => void; initialSection?: 'profile' | 'settings' | 'notification-settings' }) {
+    const [section, setSection] = React.useState<ProfileSection>(initialSection === 'notification-settings' ? 'settings' : initialSection);
+    const notificationSettingsHeadingRef = React.useRef<HTMLHeadingElement | null>(null);
+    const notificationSettingsFocusHandled = React.useRef(false);
     const [editing, setEditing] = React.useState(false);
     const [name, setName] = React.useState(user.name);
     const [username, setUsername] = React.useState(user.username ?? user.email.split('@')[0]);
@@ -231,6 +234,22 @@ export function BuyerProfile({ user, onUserUpdated, onLogout, onNavigateHome, on
         setUsername(user.username ?? user.email.split('@')[0]);
         setPhoneNumber(user.phone_number ?? '');
     }, [user]);
+
+    React.useEffect(() => {
+        setSection(initialSection === 'notification-settings' ? 'settings' : initialSection);
+    }, [initialSection]);
+
+    React.useEffect(() => {
+        if (section !== 'settings' || initialSection !== 'notification-settings' || notificationSettingsFocusHandled.current) return undefined;
+        const frame = window.requestAnimationFrame(() => {
+            const heading = notificationSettingsHeadingRef.current;
+            if (!heading) return;
+            notificationSettingsFocusHandled.current = true;
+            heading.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            heading.focus({ preventScroll: true });
+        });
+        return () => window.cancelAnimationFrame(frame);
+    }, [section, initialSection]);
 
     React.useEffect(() => {
         if (section !== 'orders' && section !== 'reviews') return undefined;
@@ -613,6 +632,10 @@ export function BuyerProfile({ user, onUserUpdated, onLogout, onNavigateHome, on
                             {!emailVerifiedAt && <button type="button" disabled={verificationSending} onClick={() => void resendVerificationEmail()}>{verificationSending ? 'Sending...' : 'Resend verification email'}</button>}
                         </div>
                         {!emailVerifiedAt && <p className="buyer-account-settings-help">Open the verification link sent to your email, then refresh this status.</p>}
+                    </section>
+                    <section className="buyer-account-settings-card" aria-labelledby="device-notifications-heading">
+                        <p className="eyebrow">Notifications</p><h2 id="device-notifications-heading" ref={notificationSettingsHeadingRef} tabIndex={-1} className="buyer-notification-settings-target">Device notifications</h2>
+                        <NotificationDeviceSettings />
                     </section>
                     {accountSettingsLoading ? <LoadingSkeleton variant="detail" count={2} label="Loading account settings" /> : <>
                         <section className="buyer-account-settings-card" aria-labelledby="notifications-heading">

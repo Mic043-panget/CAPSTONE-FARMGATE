@@ -21,10 +21,13 @@ class ListingTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_seller_can_create_and_submit_a_per_kilo_listing(): void
+    public function test_seller_with_verified_email_can_create_and_submit_a_per_kilo_listing(): void
     {
-        $seller = User::factory()->create(['role' => Role::SELLER]);
-        $seller->sellerProfile()->create(['business_name' => 'Verified Seller', 'is_verified' => true]);
+        $seller = User::factory()->create([
+            'role' => Role::SELLER,
+            'email_verified_at' => now(),
+            'phone_verified_at' => null,
+        ]);
         $category = Category::create(['name' => 'Swine', 'slug' => 'swine']);
 
         $this->actingAs($seller)->postJson('/api/seller/listings', [
@@ -56,10 +59,29 @@ class ListingTest extends TestCase
         ])->assertForbidden();
     }
 
+    public function test_seller_with_verified_mobile_can_create_a_listing_without_verified_email(): void
+    {
+        $seller = User::factory()->unverified()->create([
+            'role' => Role::SELLER,
+            'phone_number' => '+639171234567',
+            'phone_verified_at' => now(),
+        ]);
+        $category = Category::create(['name' => 'Goat', 'slug' => 'goat']);
+
+        $this->actingAs($seller)->postJson('/api/seller/listings', [
+            'category_id' => $category->id,
+            'name' => 'Mobile-verified listing',
+            'quantity' => 1,
+            'pricing_type' => PricingType::PER_HEAD->value,
+            'price_per_head' => 1000,
+        ])->assertCreated()
+            ->assertJsonPath('listing.status', ListingStatus::DRAFT->value);
+    }
+
     public function test_unverified_seller_is_blocked_when_verification_is_required(): void
     {
         $admin = User::factory()->create(['role' => Role::ADMIN]);
-        $seller = User::factory()->create(['role' => Role::SELLER]);
+        $seller = User::factory()->unverified()->create(['role' => Role::SELLER, 'phone_verified_at' => null]);
         $category = Category::create(['name' => 'Goat', 'slug' => 'goat']);
         app(SystemSettingsService::class)->update(['seller_verification_required' => true], $admin->id, 'Seller verification required');
 
@@ -70,7 +92,7 @@ class ListingTest extends TestCase
             'pricing_type' => PricingType::PER_HEAD->value,
             'price_per_head' => 1000,
         ])->assertStatus(403)
-            ->assertJson(['message' => 'Seller verification is required before creating listings.']);
+            ->assertJson(['message' => 'Verify your email address or mobile number, or complete seller identity review, before creating livestock listings.']);
     }
 
     public function test_public_marketplace_returns_only_active_listings(): void
