@@ -13,13 +13,17 @@ use App\Models\Delivery;
 use App\Models\LivestockListing;
 use App\Models\Order;
 use App\Models\User;
+use App\Notifications\ChatAttentionNotification;
+use App\Services\Chat\ChatConversationHistoryConsolidator;
 use App\Services\Chat\ChatProvider;
 use App\Services\Chat\ChatProviderException;
 use App\Services\Chat\GeminiChatProvider;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request as ClientRequest;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Mockery;
 use Tests\TestCase;
 
@@ -31,6 +35,45 @@ class ChatApiTest extends TestCase
     {
         $this->getJson('/api/chat/conversations')->assertUnauthorized();
         $this->postJson('/api/chat/messages', ['message' => 'Hello'])->assertUnauthorized();
+    }
+
+    public function test_guest_ai_chat_uses_only_public_context_and_does_not_persist_messages(): void
+    {
+        $provider = Mockery::mock(ChatProvider::class);
+        $provider->shouldReceive('respond')->once()->withArgs(
+            fn (string $instruction, array $history): bool => str_contains($instruction, 'visitor is not signed in')
+                && str_contains($instruction, 'no tools, account context, private data')
+                && $history === [
+                    ['role' => 'user', 'content' => 'How do I browse livestock?'],
+                    ['role' => 'assistant', 'content' => 'Open the marketplace page.'],
+                    ['role' => 'user', 'content' => 'Can I see my order?'],
+                ],
+        )->andReturn('Sign in to view account-specific order information.');
+        $this->app->instance(ChatProvider::class, $provider);
+
+        $this->postJson('/api/chat/guest-messages', [
+            'message' => 'Can I see my order?',
+            'history' => [
+                ['role' => 'user', 'content' => 'How do I browse livestock?'],
+                ['role' => 'assistant', 'content' => 'Open the marketplace page.'],
+            ],
+        ])->assertCreated()
+            ->assertJsonPath('assistant_message.role', 'assistant')
+            ->assertJsonPath('assistant_message.content', 'Sign in to view account-specific order information.');
+
+        $this->assertDatabaseCount('chat_conversations', 0);
+        $this->assertDatabaseCount('chat_messages', 0);
+    }
+
+    public function test_guest_ai_chat_limits_history_and_message_size(): void
+    {
+        $history = array_fill(0, 11, ['role' => 'user', 'content' => 'Hello']);
+
+        $this->postJson('/api/chat/guest-messages', [
+            'message' => str_repeat('x', 2001),
+            'history' => $history,
+        ])->assertUnprocessable()
+            ->assertJsonValidationErrors(['message', 'history']);
     }
 
     public function test_chat_persists_messages_and_only_returns_the_callers_conversations(): void
@@ -63,6 +106,153 @@ class ChatApiTest extends TestCase
             'conversation_id' => $otherConversation->id,
             'message' => 'Read another account',
         ])->assertNotFound();
+        $this->assertDatabaseCount('chat_messages', 2);
+    }
+
+    public function test_each_role_reuses_its_private_ai_thread_without_creating_a_thread_on_retrieval(): void
+    {
+        $provider = Mockery::mock(ChatProvider::class);
+        $provider->shouldReceive('respond')->times(8)->andReturn('A verified response.');
+        $this->app->instance(ChatProvider::class, $provider);
+        $lastUser = null;
+        $lastConversationId = null;
+
+        foreach ([Role::BUYER, Role::SELLER, Role::RIDER, Role::ADMIN] as $role) {
+            $user = User::factory()->create(['role' => $role]);
+            $this->assertSame(0, ChatConversation::query()->where('ai_owner_id', $user->id)->count());
+
+            $this->actingAs($user)->getJson('/api/chat/ai-conversation')
+                ->assertOk()
+                ->assertJsonPath('conversation', null);
+            $firstConversationId = $this->actingAs($user)->postJson('/api/chat/messages', [
+                'message' => 'First private question',
+                'client_message_id' => (string) Str::uuid(),
+            ])->assertCreated()->json('conversation.id');
+            $this->actingAs($user)->postJson('/api/chat/messages', [
+                'message' => 'Follow-up question',
+                'client_message_id' => (string) Str::uuid(),
+            ])->assertCreated()
+                ->assertJsonPath('conversation.id', $firstConversationId);
+
+            $this->actingAs($user)->getJson('/api/chat/ai-conversation')
+                ->assertOk()
+                ->assertJsonPath('conversation.id', $firstConversationId);
+            $this->assertSame(1, ChatConversation::query()
+                ->where('kind', 'ai')
+                ->where('ai_owner_id', $user->id)
+                ->count());
+            $lastUser = $user;
+            $lastConversationId = $firstConversationId;
+        }
+
+        $outsider = User::factory()->create(['role' => Role::BUYER]);
+        $this->actingAs($outsider)->getJson('/api/chat/ai-conversation')
+            ->assertOk()
+            ->assertJsonPath('conversation', null);
+        $this->actingAs($outsider)->getJson('/api/chat/conversations/'.$lastConversationId)->assertNotFound();
+        $this->actingAs($outsider)->postJson('/api/chat/messages', [
+            'conversation_id' => $lastConversationId,
+            'message' => 'Attempt to access another account',
+        ])->assertNotFound();
+        $this->assertSame(1, ChatConversation::query()->where('ai_owner_id', $lastUser?->id)->count());
+    }
+
+    public function test_ai_message_retries_are_idempotent_and_reject_key_reuse_with_different_content(): void
+    {
+        $provider = Mockery::mock(ChatProvider::class);
+        $provider->shouldReceive('respond')->once()->andReturn('One saved answer.');
+        $this->app->instance(ChatProvider::class, $provider);
+        $user = User::factory()->create(['role' => Role::BUYER]);
+        $clientMessageId = (string) Str::uuid();
+        $payload = ['message' => 'Can I track my order?', 'client_message_id' => $clientMessageId];
+
+        $first = $this->actingAs($user)->postJson('/api/chat/messages', $payload)->assertCreated();
+        $retry = $this->actingAs($user)->postJson('/api/chat/messages', $payload)
+            ->assertOk()
+            ->assertJsonPath('user_message.id', $first->json('user_message.id'))
+            ->assertJsonPath('assistant_message.id', $first->json('assistant_message.id'))
+            ->assertJsonPath('conversation.id', $first->json('conversation.id'));
+
+        $this->actingAs($user)->postJson('/api/chat/messages', [
+            ...$payload,
+            'message' => 'Different content with the same idempotency key',
+        ])->assertStatus(409);
+
+        $this->assertDatabaseCount('chat_conversations', 1);
+        $this->assertDatabaseCount('chat_messages', 2);
+        $this->assertDatabaseHas('chat_messages', [
+            'conversation_id' => $retry->json('conversation.id'),
+            'sender_id' => $user->id,
+            'client_message_id' => $clientMessageId,
+        ]);
+    }
+
+    public function test_history_consolidation_moves_every_ai_message_and_alert_without_touching_direct_chats(): void
+    {
+        $user = User::factory()->create(['role' => Role::ADMIN]);
+        $peer = User::factory()->create(['role' => Role::SELLER]);
+        $now = now()->toDateTimeString();
+        $firstId = DB::table('chat_conversations')->insertGetId([
+            'user_id' => $user->id,
+            'kind' => 'ai',
+            'title' => 'Old AI prompt',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        $secondId = DB::table('chat_conversations')->insertGetId([
+            'user_id' => $user->id,
+            'kind' => 'ai',
+            'title' => 'New AI prompt',
+            'report_context' => json_encode(['type' => 'sales'], JSON_THROW_ON_ERROR),
+            'needs_human_attention' => true,
+            'attention_notified_at' => $now,
+            'created_at' => $now,
+            'updated_at' => now()->addSecond()->toDateTimeString(),
+        ]);
+        DB::table('chat_messages')->insert([
+            ['conversation_id' => $firstId, 'role' => 'user', 'content' => 'Earlier question', 'created_at' => $now, 'updated_at' => $now],
+            ['conversation_id' => $secondId, 'role' => 'assistant', 'content' => 'Later answer', 'created_at' => now()->addSecond(), 'updated_at' => now()->addSecond()],
+        ]);
+        DB::table('notifications')->insert([
+            'id' => (string) Str::uuid(),
+            'type' => ChatAttentionNotification::class,
+            'notifiable_type' => User::class,
+            'notifiable_id' => $user->id,
+            'data' => json_encode(['type' => 'chat_message', 'conversation_id' => $secondId, 'attention_required' => true], JSON_THROW_ON_ERROR),
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        $direct = ChatConversation::query()->create([
+            'user_id' => $user->id,
+            'recipient_id' => $peer->id,
+            'direct_key' => $user->id.':'.$peer->id,
+            'kind' => 'direct',
+        ]);
+
+        app(ChatConversationHistoryConsolidator::class)->consolidate();
+
+        $this->assertDatabaseCount('chat_conversations', 2);
+        $this->assertDatabaseHas('chat_conversations', [
+            'id' => $firstId,
+            'user_id' => $user->id,
+            'ai_owner_id' => $user->id,
+            'title' => null,
+            'needs_human_attention' => true,
+        ]);
+        $this->assertDatabaseMissing('chat_conversations', ['id' => $secondId]);
+        $this->assertSame('sales', ChatConversation::query()->findOrFail($firstId)->report_context['type']);
+        $this->assertSame(
+            ['Earlier question', 'Later answer'],
+            DB::table('chat_messages')->where('conversation_id', $firstId)->orderBy('id')->pluck('content')->all(),
+        );
+        $this->assertSame($direct->id, DB::table('chat_conversations')->where('kind', 'direct')->value('id'));
+        $this->assertSame(
+            $firstId,
+            json_decode((string) DB::table('notifications')->value('data'), true, flags: JSON_THROW_ON_ERROR)['conversation_id'],
+        );
+
+        app(ChatConversationHistoryConsolidator::class)->consolidate();
+        $this->assertDatabaseCount('chat_conversations', 2);
         $this->assertDatabaseCount('chat_messages', 2);
     }
 
@@ -400,7 +590,11 @@ class ChatApiTest extends TestCase
         $otherConversation = ChatConversation::query()->create(['user_id' => $otherSeller->id, 'title' => 'Private']);
         $this->actingAs($seller)->deleteJson('/api/chat/conversations/'.$otherConversation->id)->assertNotFound();
         $this->actingAs($seller)->deleteJson('/api/chat/conversations/'.$conversationId)->assertOk();
-        $this->assertDatabaseMissing('chat_conversations', ['id' => $conversationId]);
+        $this->assertDatabaseHas('chat_conversations', [
+            'id' => $conversationId,
+            'user_id' => $seller->id,
+            'ai_owner_id' => $seller->id,
+        ]);
         $this->assertDatabaseMissing('chat_messages', ['conversation_id' => $conversationId]);
     }
 

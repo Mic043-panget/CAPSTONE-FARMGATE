@@ -215,6 +215,11 @@ class FeedbackDisputeTest extends TestCase
             ->assertOk()
             ->assertJsonPath('complaints.total', 1)
             ->assertJsonPath('complaints.data.0.case_reference', $case->case_reference);
+        $this->actingAs($admin)->getJson('/api/admin/complaints?summary=true&search='.$case->case_reference.'&case_type=COMPLAINT')
+            ->assertOk()
+            ->assertJsonPath('case_counts.total', 1)
+            ->assertJsonPath('case_counts.statuses.OPEN', 1)
+            ->assertJsonPath('case_counts.statuses.UNDER_REVIEW', 0);
     }
 
     public function test_buyer_can_submit_media_review_and_admin_can_moderate_a_report(): void

@@ -7,6 +7,7 @@ use App\Models\AuditLog;
 use App\Models\RiderApplication;
 use App\Models\RiderPolicyPublication;
 use App\Models\RiderProfile;
+use App\Models\RiderVehicleChange;
 use App\Models\User;
 use App\Services\SystemSettingsService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -525,6 +526,77 @@ class RiderApplicationWorkflowTest extends TestCase
             ->assertJsonPath('vehicle_change.status', 'APPROVED');
         $this->assertSame('NEW 5678', $profile->fresh()->plate_number);
         $this->assertSame('New model', $profile->fresh()->vehicle_make_model);
+    }
+
+    public function test_admin_rider_queues_support_newest_and_oldest_sorting(): void
+    {
+        $admin = User::factory()->create(['role' => Role::ADMIN]);
+        $olderRider = User::factory()->create(['role' => Role::RIDER]);
+        $newerRider = User::factory()->create(['role' => Role::RIDER]);
+        $older = RiderApplication::create([
+            'user_id' => $olderRider->id,
+            'date_of_birth' => '1990-04-03',
+            'residential_address' => 'Private residential address',
+            'status' => 'DRAFT',
+            'privacy_policy_version' => '1.0',
+            'privacy_accepted_at' => now(),
+            'terms_version' => '1.0',
+            'terms_accepted_at' => now(),
+            'safety_policy_version' => '1.0',
+            'safety_policy_accepted_at' => now(),
+        ]);
+        $newer = RiderApplication::create([
+            'user_id' => $newerRider->id,
+            'date_of_birth' => '1992-05-04',
+            'residential_address' => 'Private residential address',
+            'status' => 'DRAFT',
+            'privacy_policy_version' => '1.0',
+            'privacy_accepted_at' => now(),
+            'terms_version' => '1.0',
+            'terms_accepted_at' => now(),
+            'safety_policy_version' => '1.0',
+            'safety_policy_accepted_at' => now(),
+        ]);
+        $olderAt = now()->subDays(2);
+        $newerAt = now()->subDay();
+        $older->forceFill(['created_at' => $olderAt, 'updated_at' => $olderAt])->save();
+        $newer->forceFill(['created_at' => $newerAt, 'updated_at' => $newerAt])->save();
+
+        $olderChange = RiderVehicleChange::create([
+            'user_id' => $olderRider->id,
+            'plate_number' => 'OLD 1234',
+            'vehicle_type' => 'Car',
+            'vehicle_make_model' => 'Model A',
+            'vehicle_color' => 'Blue',
+            'license_expires_on' => now()->addYear()->toDateString(),
+            'vehicle_registration_expires_on' => now()->addYear()->toDateString(),
+            'status' => 'PENDING',
+        ]);
+        $newerChange = RiderVehicleChange::create([
+            'user_id' => $newerRider->id,
+            'plate_number' => 'NEW 5678',
+            'vehicle_type' => 'Car',
+            'vehicle_make_model' => 'Model B',
+            'vehicle_color' => 'Green',
+            'license_expires_on' => now()->addYear()->toDateString(),
+            'vehicle_registration_expires_on' => now()->addYear()->toDateString(),
+            'status' => 'PENDING',
+        ]);
+        $olderChange->forceFill(['created_at' => $olderAt, 'updated_at' => $olderAt])->save();
+        $newerChange->forceFill(['created_at' => $newerAt, 'updated_at' => $newerAt])->save();
+
+        $this->actingAs($admin)->getJson('/api/admin/rider-applications?sort=oldest')
+            ->assertOk()
+            ->assertJsonPath('applications.data.0.application_reference', $older->application_reference);
+        $this->actingAs($admin)->getJson('/api/admin/rider-applications?sort=newest')
+            ->assertOk()
+            ->assertJsonPath('applications.data.0.application_reference', $newer->application_reference);
+        $this->actingAs($admin)->getJson('/api/admin/rider-vehicle-changes?sort=oldest')
+            ->assertOk()
+            ->assertJsonPath('vehicle_changes.data.0.vehicle_reference', $olderChange->vehicle_reference);
+        $this->actingAs($admin)->getJson('/api/admin/rider-vehicle-changes?sort=newest')
+            ->assertOk()
+            ->assertJsonPath('vehicle_changes.data.0.vehicle_reference', $newerChange->vehicle_reference);
     }
 
     private function createPublishedPolicy(string $version): RiderPolicyPublication

@@ -89,6 +89,8 @@ Route::middleware(MaintenanceMode::class)->group(function (): void {
             Route::post('/auth/reset-password', [AuthController::class, 'resetPassword']);
         });
 
+        Route::post('/chat/guest-messages', [ChatController::class, 'sendGuest'])->middleware('throttle:chat');
+
         Route::middleware('auth:sanctum')->group(function (): void {
             Route::get('/auth/user', [AuthController::class, 'user']);
             Route::get('/rider/application', [RiderApplicationController::class, 'show']);
@@ -320,6 +322,7 @@ Route::middleware(MaintenanceMode::class)->group(function (): void {
                 ->whereIn('type', ['sales', 'transactions', 'listings', 'users', 'sellers', 'buyers', 'riders', 'categories', 'deliveries', 'complaints']);
             Route::get('/chat/recipients', [ChatController::class, 'recipients'])->middleware('throttle:chat-search');
             Route::post('/chat/direct-conversations', [ChatController::class, 'startDirect'])->middleware('throttle:chat');
+            Route::get('/chat/ai-conversation', [ChatController::class, 'aiConversation']);
             Route::get('/chat/conversations', [ChatController::class, 'index']);
             Route::post('/chat/conversations/{conversation}/messages', [ChatController::class, 'sendDirect'])
                 ->whereNumber('conversation')

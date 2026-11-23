@@ -16,13 +16,39 @@ import type { User } from '../../shared/types';
 import { SystemCalendar } from '../shared/SystemCalendar';
 import { LoadingSkeleton } from '../../shared/components/LoadingSkeleton';
 import { RiderEarningsPage } from './RiderEarningsPage';
-import { WorkspaceMobileHeader } from '../shared/WorkspaceMobileHeader';
+import { WorkspaceAccountControl, WorkspaceMobileHeader, useWorkspaceMobileMenu } from '../shared/WorkspaceMobileHeader';
+import { WorkspaceBannerArtwork } from '../shared/WorkspaceBannerArtwork';
 import { RiderDeliveryTutorial } from './RiderDeliveryTutorial';
+import { RoleMobileBottomNavigation } from '../shared/RoleMobileBottomNavigation';
+import { FarmgateBrand } from '../shared/FarmgateBrand';
+import { WorkspaceSidebarIcon } from '../shared/WorkspaceSidebarIcon';
 
 const NearbyOrdersMap = React.lazy(() => import('./NearbyOrdersMap').then((module) => ({ default: module.NearbyOrdersMap })));
 
 type RiderPage = 'dashboard' | 'earnings' | 'deliveries' | 'events' | 'chats' | 'reports' | 'notifications' | 'account';
 type RiderDeliveryTab = 'nearby' | 'assigned' | 'scanner' | 'history';
+type RiderDeliveryIconName = 'pin' | 'truck' | 'qr' | 'history' | 'bell' | 'refresh' | 'check' | 'arrow' | 'route' | 'buyer' | 'cod' | 'photo' | 'calendar' | 'order' | 'search' | 'filter' | 'camera';
+function RiderDeliveryIcon({ name }: { name: RiderDeliveryIconName }) {
+    return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        {name === 'pin' ? <><path d="M20 10c0 5-8 11-8 11S4 15 4 10a8 8 0 1 1 16 0Z" /><circle cx="12" cy="10" r="2.5" /></>
+            : name === 'truck' ? <><path d="M3 6h11v12H3zM14 10h4l3 3v5h-7" /><circle cx="7.5" cy="18" r="1.5" /><circle cx="18" cy="18" r="1.5" /></>
+                : name === 'qr' ? <><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2M18 14h2M14 18h6M17 16v4" /></>
+                    : name === 'history' ? <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2M4.5 5.5 3 8h3" /></>
+                        : name === 'bell' ? <><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></>
+                            : name === 'refresh' ? <><path d="M20 7v5h-5M4 17v-5h5" /><path d="M6.1 9a7 7 0 0 1 11.6-2L20 12M4 12l2.3 5a7 7 0 0 0 11.6-2" /></>
+                                : name === 'check' ? <path d="m5 12 4 4L19 6" />
+                                    : name === 'route' ? <><circle cx="5" cy="18" r="2" /><circle cx="19" cy="6" r="2" /><path d="M7 18h2.5a3.5 3.5 0 0 0 3.5-3.5v-5A3.5 3.5 0 0 1 16.5 6H17" /></>
+                                        : name === 'buyer' ? <><circle cx="12" cy="8" r="3.5" /><path d="M4 21a8 8 0 0 1 16 0" /></>
+                                            : name === 'cod' ? <><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H20v14H5.5A2.5 2.5 0 0 1 3 16.5zM3 8h17M15 12h5v4h-5a2 2 0 0 1 0-4Z" /><circle cx="16" cy="14" r=".5" /></>
+                                                : name === 'photo' ? <><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="8.5" cy="9" r="1.5" /><path d="m21 15-5-5L5 20" /></>
+                                                    : name === 'calendar' ? <><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" /></>
+                                                        : name === 'order' ? <><path d="M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6M9 16h3" /></>
+                                                            : name === 'search' ? <><circle cx="10.8" cy="10.8" r="6.8" /><path d="m16 16 5 5" /></>
+                                                                : name === 'filter' ? <><path d="M4 6h16M7 12h10M10 18h4" /><circle cx="8" cy="6" r="1.5" fill="currentColor" /><circle cx="15" cy="12" r="1.5" fill="currentColor" /><circle cx="11" cy="18" r="1.5" fill="currentColor" /></>
+                                                                    : name === 'camera' ? <><path d="M3 8h4l2-3h6l2 3h4v11H3z" /><circle cx="12" cy="13" r="3.5" /></>
+                                                                        : <><path d="M5 12h14M13 6l6 6-6 6" /></>}
+    </svg>;
+}
 type RiderSummary = {
     availability: string;
     offers: number;
@@ -101,13 +127,18 @@ const navigation: { id: RiderPage; label: string; icon: string }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: '◈' },
     { id: 'earnings', label: 'Earnings', icon: '₱' },
     { id: 'deliveries', label: 'Deliveries', icon: '▣' },
-    { id: 'earnings', label: 'Earnings', icon: '₱' },
     { id: 'events', label: 'Events', icon: '◷' },
     { id: 'chats', label: 'Chats', icon: '✦' },
     { id: 'reports', label: 'Reports', icon: '▥' },
     { id: 'notifications', label: 'Notifications', icon: '♧' },
     { id: 'account', label: 'Settings', icon: '◉' },
 ];
+const riderMobileDestinations = [
+    { id: 'dashboard', label: 'Home', icon: 'home' },
+    { id: 'chats', label: 'Chats', icon: 'chat' },
+    { id: 'deliveries', label: 'Deliveries', icon: 'delivery' },
+    { id: 'account', label: 'Settings', icon: 'settings' },
+] as const;
 
 function statusLabel(status: string): string {
     return status.toLowerCase().replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -169,16 +200,16 @@ function CodCollectionAction({ delivery, onSaved }: { delivery: RiderDelivery; o
 
     const collection = delivery.order.cod_collection;
     return <section className="rider-cod-collection" aria-label="Cash on delivery collection">
-        <h5>Cash on delivery</h5>
-        {collection ? <p role="status">Cash collection recorded · {collection.status === 'NEEDS_REVIEW' ? 'Needs review' : collection.status.replaceAll('_', ' ').toLowerCase()}{collection.remittance_id ? ' · included in a remittance batch' : ''}</p>
-            : delivery.order.payment_status === 'PAID' ? <p role="status">Buyer payment is marked paid.</p>
+        <h5><RiderDeliveryIcon name="cod" />Cash on delivery</h5>
+        {collection ? <p className="rider-cod-collection-state" role="status"><span>{statusLabel(collection.status)}</span>Cash collection recorded{collection.remittance_id ? ' · included in a remittance batch' : ''}</p>
+            : delivery.order.payment_status === 'PAID' ? <p className="rider-cod-collection-state is-paid" role="status"><RiderDeliveryIcon name="check" />Buyer payment is marked paid.</p>
             : delivery.status !== 'DELIVERED' ? <p>Record cash after drop-off QR verification.</p>
                     : <form onSubmit={(event) => void collect(event)} aria-busy={busy}>
                         <p>Order total: PHP {Number(delivery.order.total_amount).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}. Record what you actually received; Farmgate admin must confirm remittance before the buyer payment is marked paid.</p>
                         <label>Cash received (PHP)
                             <input type="number" min="0.01" step="0.01" inputMode="decimal" required value={amount} onChange={(event) => setAmount(event.target.value)} />
                         </label>
-                        <label>Handover record photo
+                        <label><span><RiderDeliveryIcon name="photo" />Handover record photo</span>
                             <input type="file" accept="image/jpeg,image/png,image/webp" required onChange={(event) => setProof(event.target.files?.[0] ?? null)} />
                         </label>
                         <button type="submit" className="seller-inline-action" disabled={busy}>{busy ? 'Saving collection…' : 'Record cash received'}</button>
@@ -266,6 +297,8 @@ function RiderRemittancePanel({ onSubmitted }: { onSubmitted: () => void }) {
     const [busy, setBusy] = React.useState(false);
     const [message, setMessage] = React.useState('');
     const [error, setError] = React.useState('');
+    const [collectionsLoadError, setCollectionsLoadError] = React.useState('');
+    const [historyLoadError, setHistoryLoadError] = React.useState('');
     const [methodChoice, setMethodChoice] = React.useState('CASH_HANDOVER');
     const [receiverName, setReceiverName] = React.useState('');
     const [transactionReference, setTransactionReference] = React.useState(newCodTransferReference);
@@ -281,11 +314,12 @@ function RiderRemittancePanel({ onSubmitted }: { onSubmitted: () => void }) {
 
     async function refreshCollections() {
         setLoadingCollections(true);
+        setCollectionsLoadError('');
         try {
             const response = await api.get<{ collections: RiderCodCollection[] }>('/api/riders/cod/collections');
             setCollections(response.data.collections);
         } catch (requestError: any) {
-            setError(requestError.userMessage ?? requestError.response?.data?.message ?? 'COD collections could not be loaded.');
+            setCollectionsLoadError(requestError.userMessage ?? requestError.response?.data?.message ?? 'COD collections could not be loaded.');
         } finally {
             setLoadingCollections(false);
         }
@@ -293,6 +327,7 @@ function RiderRemittancePanel({ onSubmitted }: { onSubmitted: () => void }) {
 
     async function refreshHistory() {
         setLoadingHistory(true);
+        setHistoryLoadError('');
         try {
             const [methodsResponse, remittancesResponse] = await Promise.all([
                 api.get<{ methods: RiderCodReceivingMethod[] }>('/api/riders/cod/receiving-methods'),
@@ -306,7 +341,7 @@ function RiderRemittancePanel({ onSubmitted }: { onSubmitted: () => void }) {
                 ? current
                 : 'CASH_HANDOVER');
         } catch (requestError: any) {
-            setError(requestError.userMessage ?? requestError.response?.data?.message ?? 'COD remittance methods and history could not be loaded.');
+            setHistoryLoadError(requestError.userMessage ?? requestError.response?.data?.message ?? 'COD remittance methods and history could not be loaded.');
         } finally {
             setLoadingHistory(false);
         }
@@ -370,15 +405,18 @@ function RiderRemittancePanel({ onSubmitted }: { onSubmitted: () => void }) {
         }
     }
 
-    return <section className="rider-cod-remittance" aria-labelledby="rider-cod-remittance-title">
-        <div className="rider-cod-remittance-heading"><p className="eyebrow">Cash custody</p><h3 id="rider-cod-remittance-title">COD cash to remit</h3></div>
-        {loadingCollections ? <p role="status">Loading collected cash…</p> : collections.length === 0
+    return <div className="rider-cod-panels">
+        <section className="rider-cod-remittance" aria-labelledby="rider-cod-remittance-title">
+        <div className="rider-cod-remittance-heading"><span className="rider-cod-panel-icon"><RiderDeliveryIcon name="cod" /></span><div><p className="eyebrow">Cash custody</p><h3 id="rider-cod-remittance-title">COD cash to remit</h3></div></div>
+        {loadingCollections ? <p role="status">Loading collected cash…</p> : collectionsLoadError
+            ? <p className="rider-cod-load-error" role="alert">{collectionsLoadError} <button type="button" onClick={() => void refreshCollections()}>Try again</button></p>
+            : collections.length === 0
             ? <p className="rider-cod-remittance-summary">No collected COD cash is waiting for remittance.</p>
             : <div className="rider-cod-remittance-collections">
                 <p>{collections.length} order(s) · PHP {(totalCents / 100).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                 <ul>{collections.map((item) => <li key={item.id}>{item.order?.order_reference ?? 'Order'} · received PHP {(item.collected_amount_cents / 100).toFixed(2)}{item.status === 'NEEDS_REVIEW' ? ' · Needs review' : ''}</li>)}</ul>
             </div>}
-        {!loadingHistory && <div className="rider-cod-method-info">
+        {!loadingHistory && !historyLoadError && <div className="rider-cod-method-info">
             <label htmlFor="rider-cod-method">Remittance method</label>
             <select id="rider-cod-method" value={methodChoice} onChange={(event) => {
                 setMethodChoice(event.target.value);
@@ -404,7 +442,7 @@ function RiderRemittancePanel({ onSubmitted }: { onSubmitted: () => void }) {
             </div>}
         </div>}
         {loadingHistory && <p role="status">Loading receiving methods…</p>}
-        {!loadingCollections && collections.length > 0 && !loadingHistory && <form className="rider-cod-remittance-form" onSubmit={(event) => void submit(event)} aria-busy={busy}>
+        {!loadingCollections && !collectionsLoadError && collections.length > 0 && !loadingHistory && !historyLoadError && <form className="rider-cod-remittance-form" onSubmit={(event) => void submit(event)} aria-busy={busy}>
             {isCashHandover
                 ? <label htmlFor="rider-cod-receiver">Cash received by
                     <input id="rider-cod-receiver" type="text" autoComplete="name" maxLength={120} required value={receiverName} onChange={(event) => setReceiverName(event.target.value)} disabled={busy} />
@@ -423,19 +461,22 @@ function RiderRemittancePanel({ onSubmitted }: { onSubmitted: () => void }) {
         </form>}
         {message && <p className="rider-cod-feedback" role="status" aria-live="polite">{message}</p>}
         {error && <p className="rider-cod-feedback rider-cod-feedback-error" role="alert">{error} <button type="button" onClick={() => void refresh()} disabled={busy}>Reload COD details</button></p>}
-        <div className="rider-cod-remittance-history" aria-labelledby="rider-cod-history-title">
-            <h4 id="rider-cod-history-title">Remittance history</h4>
-            {loadingHistory ? <p role="status">Loading remittance history…</p> : remittances.length === 0
+        </section>
+        <section className="rider-cod-remittance-history" aria-labelledby="rider-cod-history-title">
+            <header className="rider-cod-history-title"><span className="rider-cod-panel-icon"><RiderDeliveryIcon name="history" /></span><div><p className="eyebrow">Submitted records</p><h3 id="rider-cod-history-title">Remittance history</h3></div></header>
+            {loadingHistory ? <p role="status">Loading remittance history…</p> : historyLoadError
+                ? <p className="rider-cod-load-error" role="alert">{historyLoadError} <button type="button" onClick={() => void refreshHistory()}>Try again</button></p>
+                : remittances.length === 0
                 ? <p>No remittances have been submitted yet.</p>
                 : <ul>{remittances.map((remittance) => <li key={remittance.id}>
-                    <div className="rider-cod-history-heading"><strong>{remittance.reference}</strong><span>{statusLabel(remittance.status)}</span></div>
-                    <p>{remittance.method ? statusLabel(remittance.method) : 'Remittance'} · Expected PHP {(remittance.expected_amount_cents / 100).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    <div className="rider-cod-history-heading"><strong>{remittance.reference}</strong><span className={`rider-remittance-status rider-remittance-status--${remittance.status.toLowerCase().replaceAll('_', '-')}`}>{statusLabel(remittance.status)}</span></div>
+                    <p><RiderDeliveryIcon name="cod" />{remittance.method ? statusLabel(remittance.method) : 'Remittance'} · Expected PHP {(remittance.expected_amount_cents / 100).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         {remittance.received_amount_cents !== null && ` · Received PHP ${(remittance.received_amount_cents / 100).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</p>
-                    {remittance.submitted_at && <time dateTime={remittance.submitted_at}>Submitted {new Date(remittance.submitted_at).toLocaleString('en-PH')}</time>}
+                    {remittance.submitted_at && <time dateTime={remittance.submitted_at}><RiderDeliveryIcon name="calendar" />Submitted {new Date(remittance.submitted_at).toLocaleString('en-PH')}</time>}
                     <p>{remittanceNextStep(remittance.status)}</p>
                 </li>)}</ul>}
-        </div>
-    </section>;
+        </section>
+    </div>;
 }
 
 function DeliveryProofCapture({ delivery, onSaved }: { delivery: RiderDelivery; onSaved: () => void }) {
@@ -514,10 +555,10 @@ function DeliveryProofCapture({ delivery, onSaved }: { delivery: RiderDelivery; 
     }
 
     if (!activeStatuses.has(delivery.status) || !['PICKED_UP', 'IN_TRANSIT'].includes(delivery.status)) return null;
-    if (delivery.has_delivery_proof) return <p className="rider-proof-saved" role="status">Proof saved · Scan the order QR at drop-off.</p>;
+    if (delivery.has_delivery_proof) return <p className="rider-proof-saved" role="status"><RiderDeliveryIcon name="check" />Proof saved · Scan the order QR at drop-off.</p>;
 
     return <form className="rider-proof-capture" onSubmit={(event) => void saveProof(event)}>
-        <h4>Delivery proof</h4>
+        <h4><RiderDeliveryIcon name="photo" />Delivery proof</h4>
         {previewUrl ? <div className="rider-proof-preview">
             <img src={previewUrl} alt="Preview of delivery proof photo" />
             <div className="rider-proof-photo-actions">
@@ -533,7 +574,7 @@ function DeliveryProofCapture({ delivery, onSaved }: { delivery: RiderDelivery; 
         </div>}
         <input ref={inputRef} className="rider-proof-file-input" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" tabIndex={-1} aria-hidden="true" onChange={(event) => selectPhoto(event.target.files?.[0] ?? null)} />
         <input ref={libraryInputRef} className="rider-proof-file-input" type="file" accept="image/jpeg,image/png,image/webp" tabIndex={-1} aria-hidden="true" onChange={(event) => selectPhoto(event.target.files?.[0] ?? null)} />
-        <label className="rider-proof-recipient">Recipient<input value={recipientName} onChange={(event) => setRecipientName(event.target.value)} required maxLength={120} autoComplete="name" /></label>
+        <label className="rider-proof-recipient"><span><RiderDeliveryIcon name="buyer" />Recipient</span><input value={recipientName} onChange={(event) => setRecipientName(event.target.value)} required maxLength={120} autoComplete="name" /></label>
         <label className="rider-proof-confirmation"><input type="checkbox" checked={recipientConfirmed} onChange={(event) => setRecipientConfirmed(event.target.checked)} required />Receipt confirmed</label>
         {error && <p className="rider-delivery-error" role="alert">{error}</p>}
         {message && <p className="rider-location-notice" role="status">{message}</p>}
@@ -558,21 +599,61 @@ function RiderDeliveryTracking({ delivery }: { delivery: RiderDelivery }) {
     </details>;
 }
 
-function DeliveryVerification({ delivery, onVerified, onError, autoExpand = false }: {
+function DeliveryVerification({ delivery, onVerified, onError, autoExpand = false, showSuccessMessage = true }: {
     delivery: RiderDelivery;
     onVerified: () => void;
     onError: (message: string) => void;
     autoExpand?: boolean;
+    showSuccessMessage?: boolean;
 }) {
     const [expanded, setExpanded] = React.useState(autoExpand);
     const [scanValue, setScanValue] = React.useState('');
     const [scanning, setScanning] = React.useState(false);
     const [scanningMessage, setScanningMessage] = React.useState('');
+    const [verificationMessage, setVerificationMessage] = React.useState('');
     const [submitting, setSubmitting] = React.useState(false);
     const [videoReady, setVideoReady] = React.useState(false);
     const videoRef = React.useRef<HTMLVideoElement>(null);
     const streamRef = React.useRef<MediaStream | null>(null);
     const submittedRef = React.useRef(false);
+
+    const expectedPurpose = ['RIDER_ACCEPTED', 'PICKUP_PENDING'].includes(delivery.status) ? 'pickup' : 'delivery';
+    const action = expectedPurpose === 'pickup' ? 'Verify pickup' : 'Verify delivery';
+    const parsedCode = qrCode(scanValue);
+    const purposeMatches = parsedCode !== null && (parsedCode.purpose === 'order' || parsedCode.purpose === expectedPurpose);
+    const proofRequired = expectedPurpose === 'delivery' && !delivery.has_delivery_proof;
+    const scanValidationError = scanValue && !parsedCode
+        ? 'QR code not recognized. Center a FARMGATE order QR in the frame and scan again.'
+        : scanValue && !purposeMatches
+            ? `This assignment requires a ${expectedPurpose} QR code. Scan the matching FARMGATE code.`
+            : '';
+    const scanResultMessage = !scanValue
+        ? scanning && videoReady ? 'Camera is scanning for a FARMGATE QR code.' : 'Waiting for a live camera scan.'
+        : scanValidationError
+            ? 'A QR code was detected, but it is not valid for this assignment.'
+            : proofRequired
+                ? 'QR detected. Delivery photo proof is still required.'
+                : 'FARMGATE QR detected. Secure token hidden.';
+    const cameraStatus = scanValue
+        ? scanValidationError ? 'QR not valid' : 'QR detected'
+        : scanning
+            ? videoReady ? 'Scanning live camera' : 'Connecting to camera…'
+            : scanningMessage ? 'Camera unavailable' : 'Camera paused';
+    const canVerify = Boolean(parsedCode && purposeMatches && !proofRequired && !scanning && !submitting);
+
+    function cameraFailureMessage(cameraError: unknown): string {
+        const errorName = cameraError instanceof Error ? cameraError.name : '';
+        if (errorName === 'NotAllowedError' || errorName === 'PermissionDeniedError') {
+            return 'Camera permission was denied. Allow camera access in your browser settings, then select Use camera to retry.';
+        }
+        if (errorName === 'NotFoundError' || errorName === 'DevicesNotFoundError') {
+            return 'No camera was found. Connect or enable a camera, then select Use camera to retry.';
+        }
+        if (!navigator.mediaDevices?.getUserMedia) {
+            return 'Camera access is unavailable in this browser. Use a camera-enabled browser and select Use camera to retry.';
+        }
+        return 'Camera could not start. Check camera availability and permissions, then select Use camera to retry.';
+    }
 
     React.useEffect(() => {
         if (!scanning) return undefined;
@@ -595,7 +676,8 @@ function DeliveryVerification({ delivery, onVerified, onError, autoExpand = fals
 
                 const Detector = (window as unknown as { BarcodeDetector?: BarcodeDetectorFactory }).BarcodeDetector;
                 if (!Detector) {
-                    setScanningMessage('Automatic QR scanning is not supported here. Paste or type the QR value below.');
+                    setScanningMessage('Automatic QR scanning is not supported in this browser. Open the Rider workspace in a supported browser, then select Use camera to retry.');
+                    setScanning(false);
                     return;
                 }
                 const detector = new Detector({ formats: ['qr_code'] });
@@ -605,14 +687,19 @@ function DeliveryVerification({ delivery, onVerified, onError, autoExpand = fals
                         const codes = await detector.detect(videoRef.current);
                         if (codes[0]?.rawValue) {
                             setScanValue(codes[0].rawValue);
+                            setScanningMessage('');
                             setScanning(false);
                         }
                     } catch {
-                        setScanningMessage('The camera could not read that QR code. Hold it steady or enter the code manually.');
+                        setScanningMessage('The camera could not read the QR code. Hold the FARMGATE code steady, or stop and restart the camera.');
                     }
                 }, 700);
             } catch (cameraError) {
-                setScanningMessage(cameraError instanceof Error ? cameraError.message : 'Camera access failed. Enter the QR value manually.');
+                if (!cancelled) {
+                    setVideoReady(false);
+                    setScanningMessage(cameraFailureMessage(cameraError));
+                    setScanning(false);
+                }
             }
         };
 
@@ -634,7 +721,6 @@ function DeliveryVerification({ delivery, onVerified, onError, autoExpand = fals
             onError('Enter the complete FARMGATE order QR code.');
             return;
         }
-        const expectedPurpose = ['RIDER_ACCEPTED', 'PICKUP_PENDING'].includes(delivery.status) ? 'pickup' : 'delivery';
         if (parsed.purpose !== 'order' && parsed.purpose !== expectedPurpose) {
             onError(`This delivery currently requires a ${expectedPurpose} QR code.`);
             return;
@@ -644,6 +730,7 @@ function DeliveryVerification({ delivery, onVerified, onError, autoExpand = fals
             return;
         }
         setSubmitting(true);
+        setVerificationMessage('');
         submittedRef.current = true;
         try {
             const endpoint = expectedPurpose === 'pickup'
@@ -668,6 +755,7 @@ function DeliveryVerification({ delivery, onVerified, onError, autoExpand = fals
             });
             setScanValue('');
             setScanning(false);
+            setVerificationMessage(`${expectedPurpose === 'pickup' ? 'Pickup' : 'Delivery'} QR verified successfully. Assignment status is updating.`);
             setExpanded(false);
             submittedRef.current = false;
             onVerified();
@@ -680,22 +768,51 @@ function DeliveryVerification({ delivery, onVerified, onError, autoExpand = fals
     }
 
     if (!activeStatuses.has(delivery.status)) return null;
-    const action = ['RIDER_ACCEPTED', 'PICKUP_PENDING'].includes(delivery.status) ? 'Verify pickup' : 'Verify delivery';
 
     return <div className="rider-verification">
-        <button type="button" className="rider-inline-action" disabled={submitting} aria-busy={submitting} onClick={() => { setScanning(false); setExpanded((open) => !open); }}>{expanded ? 'Close scanner' : action}</button>
+        <button type="button" className="rider-qr-close" disabled={submitting} aria-expanded={expanded} onClick={() => { setScanning(false); setExpanded((open) => !open); }}>{expanded ? 'Close scanner' : 'Open camera scanner'}</button>
+        {showSuccessMessage && verificationMessage && <p className="rider-qr-success" role="status">{verificationMessage}</p>}
         {expanded && <form className="rider-qr-form" onSubmit={(event) => void submitCode(event)}>
-            <p>{action === 'Verify pickup'
-                ? 'Scan the order QR and allow location access. Pickup must be within the configured distance of the seller pin.'
-                : 'After saving proof in My Deliveries, scan the same order QR at the buyer location. Location access is required and must be within the configured distance of the saved pin.'}</p>
-            <video ref={videoRef} className="rider-qr-video" playsInline muted aria-label="Camera QR scanner" />
-            {videoReady && scanningMessage === '' && <p role="status">Point the rear camera at the FARMGATE QR code.</p>}
-            {scanningMessage && <p className="rider-qr-help" role="status">{scanningMessage}</p>}
-            <label>QR value<input value={scanValue} onChange={(event) => setScanValue(event.target.value)} autoComplete="off" placeholder="FARMGATE:ORDER:…" /></label>
-            {action === 'Verify delivery' && <p className="rider-qr-help">Proof {delivery.has_delivery_proof ? 'is saved' : 'is not saved yet'}; use My Deliveries to capture and save the photo first.</p>}
-            <div className="rider-qr-actions">
-                <button type="button" disabled={submitting} onClick={() => { setScanning((value) => !value); setScanningMessage(''); }}>{scanning ? 'Stop camera' : 'Use camera'}</button>
-                <button type="submit" disabled={submitting || !scanValue.trim()} aria-busy={submitting}>{submitting ? 'Verifying…' : action}</button>
+            <p className="rider-qr-instructions">Scan the assigned order QR at the {expectedPurpose === 'pickup' ? 'seller pickup' : 'buyer delivery'} location.</p>
+            <p className="rider-qr-location-note"><RiderDeliveryIcon name="pin" />Location access is required and you must be within the configured distance of the saved pin.</p>
+            <div className="rider-qr-scan-layout">
+                <div className={`rider-qr-camera-field ${scanning ? 'is-scanning' : ''}`}>
+                    <video ref={videoRef} className="rider-qr-video" playsInline muted aria-label="Live camera feed for QR scanning" />
+                    <div className="rider-qr-camera-overlay" aria-hidden="true">
+                        <div className="rider-qr-scan-frame">
+                            <span className="rider-qr-frame-corner is-top-left" />
+                            <span className="rider-qr-frame-corner is-top-right" />
+                            <span className="rider-qr-frame-corner is-bottom-left" />
+                            <span className="rider-qr-frame-corner is-bottom-right" />
+                        </div>
+                        <div className="rider-qr-camera-status"><RiderDeliveryIcon name="camera" /><span>{cameraStatus}</span></div>
+                    </div>
+                </div>
+                <div className="rider-qr-controls">
+                    <div className={`rider-qr-result ${scanValidationError ? 'has-error' : scanValue && !proofRequired ? 'is-ready' : ''}`} role="status" aria-live="polite">
+                        <RiderDeliveryIcon name="qr" />
+                        <div><strong>QR scan result</strong><span>{scanResultMessage}</span></div>
+                    </div>
+                    {scanValidationError && <p className="rider-qr-help" role="alert">{scanValidationError}</p>}
+                    {scanningMessage && <p className="rider-qr-help" role="alert">{scanningMessage}</p>}
+                    {proofRequired && <p className="rider-qr-proof-required"><RiderDeliveryIcon name="photo" />Capture and save delivery photo proof in My Deliveries before scanning at the buyer location.</p>}
+                    <div className="rider-qr-actions">
+                        <button type="button" className="rider-qr-camera-action" disabled={submitting || (scanning && !videoReady)} onClick={() => {
+                            if (scanning) {
+                                setScanning(false);
+                            } else {
+                                setScanValue('');
+                                setScanningMessage('');
+                                setScanning(true);
+                            }
+                        }}>
+                            <RiderDeliveryIcon name="camera" />{scanning ? videoReady ? 'Stop camera' : 'Opening camera…' : 'Use camera'}
+                        </button>
+                        <button type="submit" className="rider-qr-verify-action" disabled={!canVerify} aria-busy={submitting}>
+                            <RiderDeliveryIcon name="check" />{submitting ? 'Verifying…' : action}
+                        </button>
+                    </div>
+                </div>
             </div>
         </form>}
     </div>;
@@ -708,7 +825,7 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
     onLogout: () => void;
 }) {
     const [page, setPage] = React.useState<RiderPage>(() => window.location.hash === '#notifications' ? 'notifications' : 'dashboard');
-    const [mobileNavOpen, setMobileNavOpen] = React.useState(false);
+    const [mobileNavOpen, setMobileNavOpen] = useWorkspaceMobileMenu();
     const [deliveryTab, setDeliveryTab] = React.useState<RiderDeliveryTab>('nearby');
     const [deliveryTutorialOpen, setDeliveryTutorialOpen] = React.useState(false);
     const [summary, setSummary] = React.useState<RiderSummary | null>(null);
@@ -746,6 +863,7 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
     const [selectedScannerDeliveryId, setSelectedScannerDeliveryId] = React.useState<number | null>(null);
     const [scannerLoading, setScannerLoading] = React.useState(false);
     const [scannerError, setScannerError] = React.useState('');
+    const [scannerSuccessMessage, setScannerSuccessMessage] = React.useState('');
     const [navigationCounts, setNavigationCounts] = React.useState({ notifications: 0, chats: 0 });
     const [activeConversationId, setActiveConversationId] = React.useState<number | undefined>();
     const [sharingDeliveryId, setSharingDeliveryId] = React.useState<number | null>(null);
@@ -1159,11 +1277,6 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
         setPage('deliveries');
     }
 
-    async function confirmLogout() {
-        if (!await confirmAction({ title: 'Log out of FarmGate?', text: 'Your account session will end on this device.', confirmText: 'Log out' })) return;
-        onLogout();
-    }
-
     const isChat = page === 'chats';
     const pageTitle = navigation.find((item) => item.id === page)?.label ?? 'Dashboard';
     const selectedScannerDelivery = scannerDeliveries.find((delivery) => delivery.id === selectedScannerDeliveryId) ?? null;
@@ -1174,21 +1287,31 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
         <aside className={`admin-sidebar role-sidebar${mobileNavOpen ? ' mobile-open' : ''}`} onKeyDown={(event) => {
             if (event.key === 'Escape') setMobileNavOpen(false);
         }}>
-            <WorkspaceMobileHeader role="rider" menuOpen={mobileNavOpen} controlsId="rider-mobile-navigation" onToggle={() => setMobileNavOpen((open) => !open)} />
+            <WorkspaceMobileHeader
+                role="rider"
+                menuOpen={mobileNavOpen}
+                controlsId="rider-mobile-navigation"
+                onToggle={() => setMobileNavOpen((open) => !open)}
+                location="Bongabong, Oriental Mindoro"
+                notificationCount={navigationCounts.notifications}
+                notificationsActive={page === 'notifications'}
+                onOpenNotifications={() => { setPage('notifications'); setMobileNavOpen(false); }}
+            />
             <div className="role-mobile-menu-panel" id="rider-mobile-navigation">
-            <a className="brand" href="/">FARM<span>GATE</span></a>
+            <FarmgateBrand />
             <div className="admin-sidebar-label">RIDER PORTAL</div>
             <nav aria-label="Rider navigation">{navigation.map((item) => {
                 const count = badgeCount(item.id);
-                return <button type="button" key={item.id} className={page === item.id ? 'active' : ''} aria-current={page === item.id ? 'page' : undefined} aria-label={count ? `${item.label}, ${count} unread` : item.label} onClick={() => { setPage(item.id); setNotice(''); setMobileNavOpen(false); }}>
-                    <span className="nav-icon" aria-hidden="true">{item.icon}</span><span className="seller-nav-label">{item.label}</span><NavigationBadge count={count} />
+                const mobileMenuExcluded = ['notifications', 'chats', 'listings'].includes(item.id);
+                return <button type="button" key={item.id} className={`${page === item.id ? 'active' : ''}${mobileMenuExcluded ? ' role-mobile-menu-excluded' : ''}`} aria-current={page === item.id ? 'page' : undefined} aria-label={count ? `${item.label}, ${count} unread` : item.label} onClick={() => { setPage(item.id); setNotice(''); setMobileNavOpen(false); }}>
+                    <span className="nav-icon"><WorkspaceSidebarIcon name={item.id} /></span><span className="seller-nav-label">{item.label}</span><NavigationBadge count={count} />
                 </button>;
             })}</nav>
-            <button className="sidebar-logout" type="button" onClick={() => void confirmLogout()}>Log out <span>↗</span></button>
+            <button className="sidebar-logout" type="button" onClick={onLogout}>Log out <span>↗</span></button>
             </div>
         </aside>
         <section className="admin-content seller-content">
-            <header className="admin-header"><div><p className="eyebrow">FARMGATE rider workspace</p><h1>{pageTitle}</h1><p>Manage your assigned deliveries and keep customers updated.</p></div><span className="admin-role">RIDER</span></header>
+            <header className="admin-header workspace-banner-header"><div><p className="eyebrow">FARMGATE rider workspace</p><h1>{pageTitle}</h1><p>{page === 'earnings' ? 'Track your payouts and earning history.' : 'Manage your assigned deliveries and keep customers updated.'}</p></div><WorkspaceBannerArtwork /><div className="role-header-context"><span className="admin-role">RIDER</span><WorkspaceAccountControl role="rider" userName={user.name} profilePhotoUrl={user.profile_photo_url} onOpenAccount={() => setPage('account')} /></div></header>
             {notice && <p className="rider-offer-notice" role="status">{notice}</p>}
             {page === 'dashboard' && <section className="role-dashboard rider-dashboard" aria-busy={summaryLoading}>
                 <div className="rider-dashboard-heading">
@@ -1245,52 +1368,59 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
                 </div>
             </section>}
             {page === 'earnings' && <RiderEarningsPage onError={onError} />}
-            {page === 'deliveries' && <section className="rider-deliveries" aria-labelledby="rider-deliveries-title">
-                <div className="rider-work-heading">
-                    <div><p className="eyebrow">Rider workspace</p><h2 id="rider-deliveries-title">Deliveries</h2></div>
+            {page === 'deliveries' && <section className="rider-deliveries" aria-label="Rider deliveries">
+                <div className="rider-delivery-toolbar">
                     <RiderDeliveryTutorial
                         open={deliveryTutorialOpen}
                         onToggle={() => setDeliveryTutorialOpen((open) => !open)}
                         onDismiss={() => setDeliveryTutorialOpen(false)}
                         onDeliveryTabChange={setDeliveryTab}
                     />
+                    <TabNav
+                        label="Delivery workspace"
+                        className="rider-delivery-tabs"
+                        value={deliveryTab}
+                        onChange={(value) => setDeliveryTab(value as RiderDeliveryTab)}
+                        options={[
+                            { value: 'nearby', label: <span className="rider-delivery-tab-label"><RiderDeliveryIcon name="pin" />Nearby Orders</span>, id: 'rider-delivery-tab-nearby' },
+                            { value: 'assigned', label: <span className="rider-delivery-tab-label"><RiderDeliveryIcon name="truck" />My Deliveries</span>, id: 'rider-delivery-tab-assigned' },
+                            { value: 'scanner', label: <span className="rider-delivery-tab-label"><RiderDeliveryIcon name="qr" />QR Scanner</span>, id: 'rider-delivery-tab-scanner' },
+                            { value: 'history', label: <span className="rider-delivery-tab-label"><RiderDeliveryIcon name="history" />Delivery History</span>, id: 'rider-delivery-tab-history' },
+                        ]}
+                    />
                 </div>
-                <TabNav
-                    label="Delivery workspace"
-                    className="rider-delivery-tabs"
-                    value={deliveryTab}
-                    onChange={(value) => setDeliveryTab(value as RiderDeliveryTab)}
-                    options={[
-                        { value: 'nearby', label: 'Nearby Orders', id: 'rider-delivery-tab-nearby' },
-                        { value: 'assigned', label: 'My Deliveries', id: 'rider-delivery-tab-assigned' },
-                        { value: 'scanner', label: 'QR Scanner', id: 'rider-delivery-tab-scanner' },
-                        { value: 'history', label: 'Delivery History', id: 'rider-delivery-tab-history' },
-                    ]}
-                />
                 {deliveryTab === 'nearby' && <section id="rider-nearby-workspace" className="rider-nearby-workspace" aria-labelledby="rider-offers-title" aria-live="polite">
-                    <div className="rider-nearby-heading">
-                        <div><p className="eyebrow">New assignments</p><h2 id="rider-offers-title">Nearby orders</h2><p>{offers.length} currently available to you</p></div>
-                        <div className="rider-nearby-location">
-                            <span>{riderLocation?.updated_at
-                                ? `Location updated ${new Date(riderLocation.updated_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
-                                : 'Share your location to center nearby requests'}</span>
-                            <button type="button" disabled={locationUpdating} onClick={() => void updateRiderLocation()}>
-                                {locationUpdating ? 'Updating…' : riderLocation ? 'Refresh my location' : 'Use my location'}
-                            </button>
-                        </div>
-                    </div>
-                    {locationNotice && <p className="rider-location-notice" role="status">{locationNotice}</p>}
-                    {offersError && <p className="rider-delivery-error" role="alert">{offersError} <button type="button" onClick={() => void refreshSummary(true)}>Try again</button></p>}
                     <div className="rider-nearby-columns" aria-busy={offersLoading}>
                         <div className="rider-nearby-main">
-                            <React.Suspense fallback={<div className="rider-nearby-map rider-map-loading" role="status">Loading map…</div>}>
-                                <NearbyOrdersMap offers={offers} selectedOfferId={selectedOfferId} riderLocation={riderLocation} onSelectOffer={setSelectedOfferId} />
-                            </React.Suspense>
-                            <p className="rider-map-privacy-note">P = pickup, D = approximate drop-off. Offer-map distances are approximate; checkout distance is the saved road route. Exact buyer details stay hidden until assignment.</p>
-                            {offersLoading && offers.length === 0 ? <div className="rider-offer-skeletons" role="status" aria-label="Loading nearby orders">
-                                {Array.from({ length: 3 }, (_, index) => <div className="rider-offer-skeleton" key={index}><span /><span /><span /></div>)}
-                            </div> : offersError && offers.length === 0 ? null : offers.length === 0 ? <p className="rider-offers-empty">No delivery offers right now. Only standard-delivery orders marked Ready for Pickup with confirmed payment and a valid seller pickup location are offered to verified, available riders within the configured distance. Refreshing your location retries eligible expired offers. Accept an offer to add it to My Deliveries.</p>
-                                : <div className="rider-offers-list">{offers.map((offer) => {
+                            <div className="rider-nearby-panel">
+                                <div className="rider-nearby-heading">
+                                    <div className="rider-nearby-title">
+                                        <span className="rider-nearby-title-icon"><RiderDeliveryIcon name="pin" /></span>
+                                        <div><p className="eyebrow">New assignments</p><h2 id="rider-offers-title">Nearby orders</h2><p>{offers.length} {offers.length === 1 ? 'order' : 'orders'} available to you</p></div>
+                                    </div>
+                                    <div className="rider-nearby-location">
+                                        <span>{riderLocation?.updated_at
+                                            ? `Location updated ${new Date(riderLocation.updated_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+                                            : 'Share your location to center nearby requests'}</span>
+                                        <button type="button" disabled={locationUpdating} onClick={() => void updateRiderLocation()}>
+                                            <RiderDeliveryIcon name="refresh" />{locationUpdating ? 'Updating…' : riderLocation ? 'Refresh location' : 'Use my location'}
+                                        </button>
+                                    </div>
+                                </div>
+                                {locationNotice && <p className="rider-location-notice" role="status">{locationNotice}</p>}
+                                {offersError && <p className="rider-delivery-error" role="alert">{offersError} <button type="button" onClick={() => void refreshSummary(true)}>Try again</button></p>}
+                                <React.Suspense fallback={<div className="rider-nearby-map rider-map-loading" role="status">Loading map…</div>}>
+                                    <NearbyOrdersMap offers={offers} selectedOfferId={selectedOfferId} riderLocation={riderLocation} onSelectOffer={setSelectedOfferId} />
+                                </React.Suspense>
+                                <p className="rider-map-privacy-note">P = pickup, D = approximate drop-off. Offer-map distances are approximate; checkout distance is the saved road route. Exact buyer details stay hidden until assignment.</p>
+                                {offersLoading && offers.length === 0 ? <div className="rider-offer-skeletons" role="status" aria-label="Loading nearby orders">
+                                    {Array.from({ length: 3 }, (_, index) => <div className="rider-offer-skeleton" key={index}><span /><span /><span /></div>)}
+                                </div> : offersError && offers.length === 0 ? null : offers.length === 0 ? <div className="rider-offers-empty">
+                                    <span className="rider-offers-empty-icon"><RiderDeliveryIcon name="truck" /></span>
+                                    <div><h3>No nearby orders right now</h3><p>New eligible delivery offers will appear here when available in your area.</p>
+                                        <details><summary>Why might there be no orders?</summary><p>Only standard-delivery orders marked Ready for Pickup with confirmed payment and a valid seller pickup location are offered to verified, available riders within the configured distance. Refreshing your location retries eligible expired offers.</p></details>
+                                    </div>
+                                </div> : <div className="rider-offers-list">{offers.map((offer) => {
                                     const selected = selectedOfferId === offer.id;
                                     return <article className={`rider-offer-card ${selected ? 'is-selected' : ''}`} key={offer.id}>
                                         <button type="button" className="rider-offer-select" aria-pressed={selected} onClick={() => setSelectedOfferId(offer.id)}>
@@ -1312,18 +1442,21 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
                                         </button>
                                     </article>;
                                 })}</div>}
+                            </div>
                         </div>
                         <aside className="rider-order-notifications" aria-labelledby="rider-order-notifications-title">
-                            <header><div><p className="eyebrow">Updates</p><h3 id="rider-order-notifications-title">Order Notifications</h3></div><NavigationBadge count={navigationCounts.notifications} /></header>
+                            <header><span className="rider-order-notification-icon"><RiderDeliveryIcon name="bell" /></span><div><p className="eyebrow">Updates</p><h3 id="rider-order-notifications-title">Order Notifications</h3></div><NavigationBadge count={navigationCounts.notifications} /></header>
                             {navigationCounts.notifications > 0 && <div className="rider-notification-bulk-actions">
                                 <button type="button" onClick={() => void markRiderNotificationsRead()} disabled={notificationActionBusy || notificationBulkReadCount === 0} aria-busy={notificationActionBusy}>
-                                    {notificationActionBusy ? 'Marking…' : 'Mark all as read'}
+                                    {notificationActionBusy ? 'Marking…' : <><RiderDeliveryIcon name="check" />Mark all as read</>}
                                 </button>
                                 <p>Critical alerts remain unread until opened or acknowledged.</p>
                             </div>}
                             {notificationActionMessage && <p className="rider-notification-action-message" role="status">{notificationActionMessage}</p>}
-                            <h4>Nearby orders</h4>
-                            {offers.length === 0 ? <p className="rider-notification-empty">No open requests.</p> : offers.slice(0, 3).map((offer) => {
+                            <h4><RiderDeliveryIcon name="pin" />Nearby orders</h4>
+                            {offersLoading && offers.length === 0 ? <p className="rider-notification-empty" role="status">Checking for nearby orders…</p>
+                                : offersError && offers.length === 0 ? <p className="rider-notification-empty">Nearby orders are currently unavailable.</p>
+                                    : offers.length === 0 ? <p className="rider-notification-empty">No open requests.</p> : offers.slice(0, 3).map((offer) => {
                                 const unread = riderNotifications.some((item) => item.read_at === null
                                     && item.data.type === 'rider_offer_available'
                                     && item.data.order_reference === offer.delivery.order.order_reference);
@@ -1333,7 +1466,7 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
                                     <span className="rider-notification-state">Available</span>
                                 </button>;
                             })}
-                            <h4>Assignment updates</h4>
+                            <h4><RiderDeliveryIcon name="truck" />Assignment updates</h4>
                             {riderNotifications.filter((item) => item.data.type === 'rider_assignment_confirmed').length === 0
                                 ? <p className="rider-notification-empty">No assignment confirmations yet.</p>
                                 : riderNotifications.filter((item) => item.data.type === 'rider_assignment_confirmed').slice(0, 3).map((item) => (
@@ -1343,74 +1476,135 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
                                         <time>{new Date(item.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time>
                                     </div>
                                 ))}
-                            <button type="button" className="rider-notifications-link" onClick={() => setPage('notifications')}>View all notifications</button>
+                            <button type="button" className="rider-notifications-link" onClick={() => setPage('notifications')}>View all notifications <RiderDeliveryIcon name="arrow" /></button>
                         </aside>
                     </div>
                 </section>}
                 {deliveryTab === 'assigned' && <section id="rider-assigned-deliveries" className="rider-assigned-deliveries" aria-label="My assigned deliveries">
                     <RiderRemittancePanel key={deliveryRevision} onSubmitted={() => setDeliveryRevision((revision) => revision + 1)} />
                     <div className="rider-delivery-filters" role="search" aria-label="Filter my deliveries">
-                        <label>Search deliveries<input type="search" value={deliverySearch} onChange={(event) => { setDeliverySearch(event.target.value); setDeliveryPage(1); }} placeholder="Delivery or order reference, buyer, or seller" /></label>
-                        <label>Delivery status<select value={deliveryStatus} onChange={(event) => { setDeliveryStatus(event.target.value); setDeliveryPage(1); }}><option value="">All statuses</option>{riderStatuses.map((status) => <option key={status} value={status}>{statusLabel(status)}</option>)}</select></label>
+                        <label><span className="rider-delivery-filter-label"><RiderDeliveryIcon name="search" />Search deliveries</span><span className="rider-delivery-filter-control"><input type="search" value={deliverySearch} onChange={(event) => { setDeliverySearch(event.target.value); setDeliveryPage(1); }} placeholder="Delivery or order reference, buyer, or seller" /></span></label>
+                        <label><span className="rider-delivery-filter-label"><RiderDeliveryIcon name="filter" />Delivery status</span><select value={deliveryStatus} onChange={(event) => { setDeliveryStatus(event.target.value); setDeliveryPage(1); }}><option value="">All statuses</option>{riderStatuses.map((status) => <option key={status} value={status}>{statusLabel(status)}</option>)}</select></label>
                     </div>
-                    <p className="rider-delivery-count" aria-live="polite">{deliveryTotal} assigned deliveries</p>
-                    {deliveryError && <p className="rider-delivery-error" role="alert">{deliveryError} <button type="button" onClick={() => setDeliveryRevision((revision) => revision + 1)}>Try again</button></p>}
+                    {deliveryError && deliveries.length > 0 && <p className="rider-delivery-error" role="alert">{deliveryError} <button type="button" onClick={() => setDeliveryRevision((revision) => revision + 1)}>Try again</button></p>}
                     {deliveriesLoading ? <div className="rider-delivery-skeletons" role="status" aria-label="Loading assigned deliveries">
                         {Array.from({ length: 3 }, (_, index) => <article className="rider-delivery-skeleton" key={index}><span /><span /><span /></article>)}
-                    </div> : deliveries.length === 0 ? <div className="rider-deliveries-empty"><h3>No matching deliveries</h3><p>Accepted assignments appear here. Try a different filter or search.</p></div>
+                    </div> : deliveryError && deliveries.length === 0 ? <div className="rider-deliveries-empty rider-deliveries-load-error" role="alert"><h3>Deliveries couldn’t be loaded</h3><p>Try again to refresh your assigned deliveries.</p><button type="button" className="seller-inline-action" onClick={() => setDeliveryRevision((revision) => revision + 1)}>Try again</button></div>
+                        : deliveries.length === 0 ? <div className="rider-deliveries-empty"><h3>No matching deliveries</h3><p>Accepted assignments appear here. Try a different filter or search.</p></div>
                         : <div className="rider-delivery-groups">{riderStatuses.map((status) => {
                             const group = deliveries.filter((delivery) => delivery.status === status);
                             if (group.length === 0) return null;
                             return <section className="rider-delivery-group" key={status} aria-labelledby={`delivery-status-${status}`}>
-                                <h3 id={`delivery-status-${status}`}>{statusLabel(status)} <span>{group.length}</span></h3>
-                                <div className="rider-delivery-list">{group.map((delivery) => <article className="rider-delivery-card" key={delivery.id}>
-                                    <div className="rider-delivery-card-heading"><div><p className="eyebrow" title={`Order ${delivery.order.order_reference}`}>{delivery.delivery_reference}</p><span className={`rider-delivery-status rider-delivery-status--${delivery.status.toLowerCase()}`}>{statusLabel(delivery.status)}</span></div><strong><small>Order total</small>₱{Number(delivery.order.total_amount).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></div>
-                                    {delivery.order.delivery_distance_km !== null && <p className="rider-delivery-route">{Number(delivery.order.delivery_distance_km).toFixed(2)} km · Fee ₱{Number(delivery.order.delivery_fee).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>}
-                                    <div className="rider-delivery-addresses"><p><b>Pickup</b><span title={delivery.pickup_address ?? delivery.order.seller?.name ?? 'Seller location'}>{delivery.pickup_address ?? delivery.order.seller?.name ?? 'Seller location'}</span></p><p><b>Drop-off</b><span title={locationFor(delivery.order)}>{locationFor(delivery.order)}</span></p><p><b>Buyer</b><span title={`${delivery.order.shipping_address?.recipient_name ?? delivery.order.buyer?.name ?? 'Buyer'}${delivery.order.buyer?.phone_number ? ` · ${delivery.order.buyer.phone_number}` : ''}`}>{delivery.order.shipping_address?.recipient_name ?? delivery.order.buyer?.name ?? 'Buyer'}{delivery.order.buyer?.phone_number ? ` · ${delivery.order.buyer.phone_number}` : ''}</span></p></div>
-                                    {activeStatuses.has(delivery.status) && <div className="rider-delivery-actions">
-                                        <button type="button" className="seller-inline-action" onClick={() => toggleLocationSharing(delivery.id)}>{sharingDeliveryId === delivery.id ? 'Stop sharing location' : 'Share live location'}</button>
+                                <h3 id={`delivery-status-${status}`}><RiderDeliveryIcon name="truck" />{statusLabel(status)} <span className="rider-delivery-group-count">{group.length}</span></h3>
+                                <div className="rider-delivery-list">{group.map((delivery) => <article className="rider-delivery-card rider-assigned-delivery-card" key={delivery.id}>
+                                    <div className="rider-assigned-card-details">
+                                        <div className="rider-delivery-card-heading rider-assigned-card-heading">
+                                            <div className="rider-assigned-reference">
+                                                <span className="rider-assigned-card-icon"><RiderDeliveryIcon name="truck" /></span>
+                                                <div className="rider-assigned-reference-text">
+                                                    <p className="eyebrow">Delivery reference</p>
+                                                    <strong className="rider-assigned-delivery-reference">{delivery.delivery_reference}</strong>
+                                                    <span className="rider-assigned-order-reference"><RiderDeliveryIcon name="order" />Order {delivery.order.order_reference}</span>
+                                                </div>
+                                            </div>
+                                            <span className={`rider-delivery-status rider-delivery-status--${delivery.status.toLowerCase()}`}>
+                                                {delivery.status === 'DELIVERED' && <RiderDeliveryIcon name="check" />}{statusLabel(delivery.status)}
+                                            </span>
+                                        </div>
+                                        <p className="rider-delivery-route"><RiderDeliveryIcon name="route" />{delivery.order.delivery_distance_km !== null
+                                            ? <>{Number(delivery.order.delivery_distance_km).toFixed(2)} km <span>·</span> Fee ₱{Number(delivery.order.delivery_fee).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</>
+                                            : 'Saved route distance and fee unavailable'}</p>
+                                        <div className="rider-delivery-addresses">
+                                            <p><b><RiderDeliveryIcon name="pin" />Pickup</b><span title={delivery.pickup_address ?? delivery.order.seller?.name ?? 'Seller location'}>{delivery.pickup_address ?? delivery.order.seller?.name ?? 'Seller location'}</span></p>
+                                            <p><b><RiderDeliveryIcon name="pin" />Drop-off</b><span title={locationFor(delivery.order)}>{locationFor(delivery.order)}</span></p>
+                                            <p><b><RiderDeliveryIcon name="buyer" />Buyer</b><span title={`${delivery.order.shipping_address?.recipient_name ?? delivery.order.buyer?.name ?? 'Buyer'}${delivery.order.buyer?.phone_number ? ` · ${delivery.order.buyer.phone_number}` : ''}`}>{delivery.order.shipping_address?.recipient_name ?? delivery.order.buyer?.name ?? 'Buyer'}{delivery.order.buyer?.phone_number ? ` · ${delivery.order.buyer.phone_number}` : ''}</span></p>
+                                        </div>
+                                        {activeStatuses.has(delivery.status) && <div className="rider-delivery-actions">
+                                            <button type="button" className="seller-inline-action" onClick={() => toggleLocationSharing(delivery.id)}><RiderDeliveryIcon name="pin" />{sharingDeliveryId === delivery.id ? 'Stop sharing location' : 'Share live location'}</button>
+                                        </div>}
+                                        {sharingDeliveryId === delivery.id && locationNotice && <p className="rider-location-notice" role="status">{locationNotice}</p>}
+                                    </div>
+                                    {(delivery.order.payment_method === 'COD' || ['PICKED_UP', 'IN_TRANSIT', 'DELIVERED'].includes(delivery.status)) && <div className="rider-assigned-card-workflow">
+                                        <CodCollectionAction delivery={delivery} onSaved={() => {
+                                            refreshDeliveries();
+                                            void refreshSummary(false);
+                                            setDeliveryRevision((revision) => revision + 1);
+                                        }} />
+                                        <DeliveryProofCapture delivery={delivery} onSaved={() => {
+                                            refreshDeliveries();
+                                            void refreshSummary(false);
+                                        }} />
+                                        {delivery.status === 'DELIVERED' && <DeliveryProofSummary
+                                            deliveryId={delivery.id}
+                                            hasProof={delivery.has_delivery_proof ?? false}
+                                            recipientConfirmed={delivery.recipient_confirmed}
+                                            recipientName={delivery.delivery_recipient_name}
+                                            capturedAt={delivery.proof_captured_at}
+                                            recordedAt={delivery.proof_recorded_at}
+                                            showMetadataIcons
+                                        />}
                                     </div>}
-                                    <DeliveryProofCapture delivery={delivery} onSaved={() => {
-                                        refreshDeliveries();
-                                        void refreshSummary(false);
-                                    }} />
-                                    <CodCollectionAction delivery={delivery} onSaved={() => {
-                                        refreshDeliveries();
-                                        void refreshSummary(false);
-                                        setDeliveryRevision((revision) => revision + 1);
-                                    }} />
-                                    {sharingDeliveryId === delivery.id && locationNotice && <p className="rider-location-notice" role="status">{locationNotice}</p>}
-                                    {delivery.status === 'DELIVERED' && <DeliveryProofSummary
-                                        deliveryId={delivery.id}
-                                        hasProof={delivery.has_delivery_proof ?? false}
-                                        recipientConfirmed={delivery.recipient_confirmed}
-                                        recipientName={delivery.delivery_recipient_name}
-                                        capturedAt={delivery.proof_captured_at}
-                                        recordedAt={delivery.proof_recorded_at}
-                                    />}
-                                    {activeStatuses.has(delivery.status) && <RiderDeliveryTracking delivery={delivery} />}
+                                    <aside className="rider-assigned-order-total"><span>Order total</span><strong>₱{Number(delivery.order.total_amount).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></aside>
+                                    {activeStatuses.has(delivery.status) && <div className="rider-assigned-card-tracking"><RiderDeliveryTracking delivery={delivery} /></div>}
                                 </article>)}</div>
                             </section>;
                         })}</div>}
-                    {!deliveriesLoading && deliveryTotal > 0 && <div className="rider-delivery-pagination"><span>Page {deliveryPage} of {deliveryLastPage} · {deliveryTotal} deliveries</span>{deliveryLastPage > 1 && <Pagination page={deliveryPage} lastPage={deliveryLastPage} onChange={setDeliveryPage} />}</div>}
+                    <div className="rider-delivery-pagination" aria-live="polite">
+                        <span>{deliveriesLoading ? 'Loading assigned deliveries…' : deliveryError && deliveries.length === 0 ? 'Assigned delivery count unavailable' : `${deliveryTotal} assigned ${deliveryTotal === 1 ? 'delivery' : 'deliveries'}${deliveryTotal > 0 ? ` · Page ${deliveryPage} of ${deliveryLastPage}` : ''}`}</span>
+                        {!deliveriesLoading && deliveryTotal > 0 && deliveryLastPage > 1 && <Pagination page={deliveryPage} lastPage={deliveryLastPage} onChange={setDeliveryPage} />}
+                    </div>
                 </section>}
-                {deliveryTab === 'scanner' && <section className="rider-qr-scanner" aria-labelledby="rider-qr-scanner-title">
-                    <div className="rider-work-heading"><div><p className="eyebrow">Assigned deliveries only</p><h3 id="rider-qr-scanner-title">QR Scanner</h3><p>Choose an active assignment to verify pickup or delivery.</p></div><button type="button" className="seller-inline-action" disabled={scannerLoading} aria-busy={scannerLoading} onClick={refreshDeliveries}>{scannerLoading ? 'Refreshing…' : 'Refresh assignments'}</button></div>
+                {deliveryTab === 'scanner' && <section id="rider-qr-scanner" className="rider-qr-scanner" aria-labelledby="rider-qr-scanner-title">
+                    <div className="rider-work-heading"><div><p className="eyebrow">Assigned deliveries only</p><h3 id="rider-qr-scanner-title">QR Scanner</h3><p>Choose an active assignment to verify pickup or delivery.</p></div><button type="button" className="seller-inline-action rider-qr-refresh-action" aria-label={scannerLoading ? 'Refreshing assignments' : 'Refresh assignments'} disabled={scannerLoading} aria-busy={scannerLoading} onClick={() => { setScannerSuccessMessage(''); refreshDeliveries(); }}><RiderDeliveryIcon name="refresh" /><span className="rider-qr-refresh-label">{scannerLoading ? 'Refreshing…' : 'Refresh assignments'}</span></button></div>
                     {scannerError && <p className="rider-delivery-error" role="alert">{scannerError}</p>}
+                    {scannerSuccessMessage && <p className="rider-qr-success" role="status">{scannerSuccessMessage}</p>}
                     {scannerLoading ? <LoadingSkeleton variant="list" count={3} label="Loading active assignments" />
                         : scannerDeliveries.length === 0 ? <div className="rider-deliveries-empty"><h4>No active assigned deliveries</h4><p>Accept a delivery first. Nearby, unassigned requests cannot be scanned or verified.</p></div>
                             : <div className="rider-qr-scanner-content">
-                                <label className="rider-scanner-assignment">Assigned delivery
-                                    <select value={selectedScannerDeliveryId ?? ''} onChange={(event) => setSelectedScannerDeliveryId(Number(event.target.value))}>
+                                <label className="rider-scanner-assignment"><span><RiderDeliveryIcon name="truck" />Assigned delivery</span>
+                                    <select value={selectedScannerDeliveryId ?? ''} onChange={(event) => { setSelectedScannerDeliveryId(Number(event.target.value)); setScannerSuccessMessage(''); }}>
                                         {scannerDeliveries.map((delivery) => <option key={delivery.id} value={delivery.id}>
                                             {delivery.delivery_reference} · {delivery.order.order_reference} · {statusLabel(delivery.status)}
                                         </option>)}
                                     </select>
                                 </label>
-                                {selectedScannerDelivery && <article className="rider-delivery-card">
-                                    <div className="rider-delivery-card-heading"><div><p className="eyebrow">{selectedScannerDelivery.delivery_reference} · Order {selectedScannerDelivery.order.order_reference}</p><h4>{statusLabel(selectedScannerDelivery.status)}</h4></div></div>
-                                    <DeliveryVerification delivery={selectedScannerDelivery} autoExpand onVerified={() => { refreshDeliveries(); void refreshSummary(false); }} onError={onError} />
-                                </article>}
+                                {selectedScannerDelivery && <div className="rider-qr-workspace">
+                                    <article className="rider-qr-delivery-summary" aria-label="Selected assigned delivery">
+                                        <div className="rider-qr-summary-heading">
+                                            <span className="rider-qr-summary-icon"><RiderDeliveryIcon name="truck" /></span>
+                                            <div>
+                                                <p className="eyebrow">Delivery reference</p>
+                                                <strong>{selectedScannerDelivery.delivery_reference}</strong>
+                                                <span className="rider-qr-order-reference"><RiderDeliveryIcon name="order" />Order {selectedScannerDelivery.order.order_reference}</span>
+                                            </div>
+                                        </div>
+                                        <span className={`rider-delivery-status rider-delivery-status--${selectedScannerDelivery.status.toLowerCase()}`}>{statusLabel(selectedScannerDelivery.status)}</span>
+                                        <div className="rider-qr-summary-details">
+                                            <p><span><RiderDeliveryIcon name="order" />Order total</span><strong>₱{Number(selectedScannerDelivery.order.total_amount).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></p>
+                                            <p><span><RiderDeliveryIcon name="pin" />Pickup</span><strong>{selectedScannerDelivery.pickup_address ?? selectedScannerDelivery.order.seller?.name ?? 'Seller location'}</strong></p>
+                                            <p><span><RiderDeliveryIcon name="pin" />Drop-off</span><strong>{locationFor(selectedScannerDelivery.order)}</strong></p>
+                                            <p><span><RiderDeliveryIcon name="buyer" />Buyer</span><strong>{selectedScannerDelivery.order.shipping_address?.recipient_name ?? selectedScannerDelivery.order.buyer?.name ?? 'Buyer'}{selectedScannerDelivery.order.buyer?.phone_number ? ` · ${selectedScannerDelivery.order.buyer.phone_number}` : ''}</strong></p>
+                                        </div>
+                                    </article>
+                                    <section className="rider-qr-scan-panel" aria-labelledby="rider-qr-scan-panel-title">
+                                        <header className="rider-qr-scan-heading">
+                                            <span className="rider-qr-panel-icon"><RiderDeliveryIcon name="qr" /></span>
+                                            <div><p className="eyebrow">Camera verification</p><h4 id="rider-qr-scan-panel-title">Scan order QR</h4></div>
+                                        </header>
+                                        <DeliveryVerification
+                                            delivery={selectedScannerDelivery}
+                                            autoExpand
+                                            showSuccessMessage={false}
+                                            onVerified={() => {
+                                                const purpose = ['RIDER_ACCEPTED', 'PICKUP_PENDING'].includes(selectedScannerDelivery.status) ? 'Pickup' : 'Delivery';
+                                                setScannerSuccessMessage(`${purpose} QR verified successfully. Assigned delivery status is refreshing.`);
+                                                refreshDeliveries();
+                                                void refreshSummary(false);
+                                            }}
+                                            onError={onError}
+                                        />
+                                    </section>
+                                </div>}
                             </div>}
                 </section>}
                 {deliveryTab === 'history' && <div id="rider-delivery-history"><ReportPanel role="RIDER" onError={onError} title="Delivery History" hideTypeSelector /></div>}
@@ -1431,6 +1625,12 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
             />}
             {isChat && <span className="sr-only" aria-live="polite">Rider chats workspace</span>}
         </section>
+        <RoleMobileBottomNavigation
+            items={riderMobileDestinations}
+            activeId={page}
+            navigationLabel="Key rider destinations"
+            onNavigate={(destination) => { setPage(destination); setNotice(''); setMobileNavOpen(false); }}
+        />
     </main>;
 }
 

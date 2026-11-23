@@ -17,6 +17,14 @@ type AuditResponse = { audit_logs: { data: AuditRow[]; total: number; current_pa
 
 const roles = ['', 'ADMIN', 'BUYER', 'SELLER', 'RIDER'];
 const databaseActions = ['', 'INSERT', 'UPDATE', 'DELETE', 'NONE'];
+const auditSortOptions = [
+    { value: 'created_at', label: 'Date & time' },
+    { value: 'actor', label: 'Actor' },
+    { value: 'role', label: 'Role' },
+    { value: 'action', label: 'Action' },
+    { value: 'database_action', label: 'Database action' },
+    { value: 'entity_type', label: 'Entity' },
+] as const;
 const formatValue = (value: unknown) => value === null || value === undefined ? '-' : typeof value === 'object' ? JSON.stringify(value) : String(value);
 const escapeHtml = (value: unknown) => formatValue(value).replace(/[&<>"']/g, (character) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -66,7 +74,7 @@ export function AuditHistory({ onError, preparedBy, initialAuditId, onInitialAud
     }
 
     function header(label: string, column: string) {
-        return <button type="button" className="audit-sort" onClick={() => changeSort(column)}>{label}{sort === column ? ` ${direction === 'asc' ? '↑' : '↓'}` : ''}</button>;
+        return <button type="button" className="audit-sort" aria-label={`Sort by ${label}${sort === column ? `, ${direction === 'asc' ? 'ascending' : 'descending'}` : ''}`} onClick={() => changeSort(column)}>{label}{sort === column ? ` ${direction === 'asc' ? '↑' : '↓'}` : ''}</button>;
     }
 
     async function openAuditDetails(id: number) {
@@ -150,20 +158,109 @@ export function AuditHistory({ onError, preparedBy, initialAuditId, onInitialAud
         }
     }
 
+    const firstRow = total === 0 ? 0 : (page - 1) * perPage + 1;
+    const lastRow = Math.min(total, (page - 1) * perPage + rows.length);
+
     return <section className="admin-section audit-history">
-        <div className="admin-section-heading"><div><p className="eyebrow">Security</p><h2>Audit History</h2></div><div><span className="record-count">{total} records</span><button type="button" onClick={() => void printAuditReport()} disabled={printing}>{printing ? 'Preparing report...' : 'Print audit report'}</button></div></div>
-        <div className="audit-filters">
-            <label className="audit-search-field">Search<input value={filters.search} onChange={(event) => updateFilter('search', event.target.value)} placeholder="Actor, action, entity type, or entity ID" /></label>
-            <label>Role<select value={filters.role} onChange={(event) => updateFilter('role', event.target.value)}>{roles.map((role) => <option key={role} value={role}>{role || 'All roles'}</option>)}</select></label>
-            <label>Database action<select value={filters.database_action} onChange={(event) => updateFilter('database_action', event.target.value)}>{databaseActions.map((action) => <option key={action} value={action}>{action || 'All changes'}</option>)}</select></label>
-            <label>Result<select value={filters.success} onChange={(event) => updateFilter('success', event.target.value)}><option value="">All results</option><option value="true">Success</option><option value="false">Failed</option></select></label>
-            <label>Date from<input type="date" value={filters.date_from} onChange={(event) => updateFilter('date_from', event.target.value)} /></label>
-            <label>Date to<input type="date" value={filters.date_to} onChange={(event) => updateFilter('date_to', event.target.value)} /></label>
+        <div className="admin-section-heading audit-heading-panel">
+            <div className="audit-title-group">
+                <span className="audit-title-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none"><path d="M12 3 19 6v5c0 4.7-2.9 8-7 10-4.1-2-7-5.3-7-10V6l7-3Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"/><path d="m9 12 2 2 4-4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                </span>
+                <div><p className="eyebrow">Security</p><h2>Audit History</h2></div>
+            </div>
+            <div className="audit-heading-actions">
+                <span className="record-count" aria-live="polite">{total} audit records</span>
+                <button className="audit-print-button" type="button" onClick={() => void printAuditReport()} disabled={printing} aria-busy={printing}>
+                    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none"><path d="M7 8V3h10v5M7 17H5a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M7 14h10v7H7z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"/><path d="M17 11h.01" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"/></svg>
+                    {printing ? 'Preparing report...' : 'Print audit report'}
+                </button>
+            </div>
         </div>
-        {loading ? <p className="admin-loading">Loading audit history...</p> : <>
-            {rows.length ? <div className="data-table-wrap"><table><thead><tr><th>{header('Date & time', 'created_at')}</th><th>{header('Actor', 'actor')}</th><th>{header('Role', 'role')}</th><th>{header('Action', 'action')}</th><th>{header('Database action', 'database_action')}</th><th>{header('Entity', 'entity_type')}</th><th>Description</th><th>Result</th><th>IP address</th><th>Review</th></tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td>{new Date(row.created_at).toLocaleString()}</td><td>{row.actor?.name ?? 'Guest'}<small>{row.actor?.email ?? '-'}</small></td><td>{row.actor?.role ?? '-'}</td><td><span className="truncate-cell">{row.action}</span></td><td><span className={`status-pill audit-${row.database_action.toLowerCase()}`}>{row.database_action}</span></td><td>{row.entity_type ?? '-'}</td><td><span className="truncate-cell">{row.description ?? '-'}</span></td><td><span className={`status-pill ${row.status_code < 400 ? 'status-active' : 'status-rejected'}`}>{row.status_code < 400 ? 'Success' : 'Failed'}</span></td><td>{row.ip_address ?? '-'}</td><td><ViewDetailsAction contextLabel={`audit record ${row.id}`} loading={detailLoading} onClick={() => void openAuditDetails(row.id)} /></td></tr>)}</tbody></table></div> : <p className="admin-empty">No audit records match these filters.</p>}
-            <div className="audit-pagination"><label>Rows<select value={perPage} onChange={(event) => { setPerPage(Number(event.target.value)); setPage(1); }}><option value="10">10</option><option value="25">25</option><option value="50">50</option><option value="100">100</option></select></label><Pagination page={page} lastPage={lastPage} onChange={setPage} /></div>
-        </>}
+        <section className="audit-filter-panel" aria-label="Audit filters">
+            <h3><svg aria-hidden="true" viewBox="0 0 24 24" fill="none"><path d="M4 5h16l-6.2 7.2v5.3l-3.6 1.8v-7.1L4 5Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"/></svg>Filters</h3>
+            <div className="audit-filters">
+                <label>Search<input value={filters.search} onChange={(event) => updateFilter('search', event.target.value)} placeholder="Actor, action, entity type, or entity ID" /></label>
+                <label>Role<select value={filters.role} onChange={(event) => updateFilter('role', event.target.value)}>{roles.map((role) => <option key={role} value={role}>{role || 'All roles'}</option>)}</select></label>
+                <label>Database action<select value={filters.database_action} onChange={(event) => updateFilter('database_action', event.target.value)}>{databaseActions.map((action) => <option key={action} value={action}>{action || 'All changes'}</option>)}</select></label>
+                <label>Result<select value={filters.success} onChange={(event) => updateFilter('success', event.target.value)}><option value="">All results</option><option value="true">Success</option><option value="false">Failed</option></select></label>
+                <label>Date from<input type="date" value={filters.date_from} onChange={(event) => updateFilter('date_from', event.target.value)} /></label>
+                <label>Date to<input type="date" value={filters.date_to} onChange={(event) => updateFilter('date_to', event.target.value)} /></label>
+            </div>
+        </section>
+        <section className="audit-results-panel" aria-label="Audit results" aria-busy={loading}>
+            <div className="audit-mobile-tools">
+                <label>Sort by<select value={sort} onChange={(event) => changeSort(event.target.value)}>{auditSortOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+                <button type="button" onClick={() => { setDirection((current) => current === 'asc' ? 'desc' : 'asc'); setPage(1); }} aria-label={`Reverse sort direction; currently ${direction === 'asc' ? 'ascending' : 'descending'}`}>
+                    {direction === 'asc' ? 'Ascending ↑' : 'Descending ↓'}
+                </button>
+            </div>
+            {loading ? <p className="admin-loading" role="status">Loading audit history...</p> : <>
+                {rows.length ? <>
+                    <div className="data-table-wrap audit-table-wrap" tabIndex={0} aria-label="Audit history table. Scroll within this region to see all columns.">
+                        <table className="audit-table">
+                            <caption className="sr-only">Audit history records</caption>
+                            <colgroup><col className="audit-col-date"/><col className="audit-col-actor"/><col className="audit-col-role"/><col className="audit-col-action"/><col className="audit-col-database"/><col className="audit-col-entity"/><col className="audit-col-description"/><col className="audit-col-result"/><col className="audit-col-ip"/><col className="audit-col-details"/></colgroup>
+                            <thead><tr>
+                                <th scope="col">{header('Date & time', 'created_at')}</th>
+                                <th scope="col">{header('Actor', 'actor')}</th>
+                                <th scope="col">{header('Role', 'role')}</th>
+                                <th scope="col">{header('Action', 'action')}</th>
+                                <th scope="col">{header('Database action', 'database_action')}</th>
+                                <th scope="col">{header('Entity', 'entity_type')}</th>
+                                <th scope="col">Description</th>
+                                <th scope="col">Result</th>
+                                <th scope="col">IP address</th>
+                                <th scope="col">Details</th>
+                            </tr></thead>
+                            <tbody>{rows.map((row) => <tr key={row.id}>
+                                <td><time dateTime={row.created_at}>{new Date(row.created_at).toLocaleString()}</time></td>
+                                <td><strong className="audit-actor-name">{row.actor?.name ?? 'Guest'}</strong><small>{row.actor?.email ?? '-'}</small></td>
+                                <td><span className={`audit-role-badge audit-role-${row.actor?.role?.toLowerCase() ?? 'guest'}`}>{row.actor?.role ?? '-'}</span></td>
+                                <td><span className="audit-action-cell" title={row.action}>{row.action}</span></td>
+                                <td><span className={`status-pill audit-${row.database_action.toLowerCase()}`}>{row.database_action}</span></td>
+                                <td className="audit-entity-cell">{row.entity_type ?? '-'}</td>
+                                <td><span className="audit-description-cell" title={row.description ?? '-'}>{row.description ?? '-'}</span></td>
+                                <td><span className={`audit-result-badge ${row.status_code < 400 ? 'is-success' : 'is-failed'}`}>{row.status_code < 400 ? 'Success' : 'Failed'}</span></td>
+                                <td className="audit-ip-cell">{row.ip_address ?? '-'}</td>
+                                <td><ViewDetailsAction contextLabel={`audit record ${row.id}`} loading={detailLoading} onClick={() => void openAuditDetails(row.id)} /></td>
+                            </tr>)}</tbody>
+                        </table>
+                    </div>
+                    <div className="audit-mobile-list" aria-label="Audit history cards">
+                        {rows.map((row) => <div className="audit-mobile-card" key={`mobile-${row.id}`}>
+                            <details>
+                                <summary>
+                                    <span className="audit-mobile-card-actor"><strong>{row.actor?.name ?? 'Guest'}</strong><time dateTime={row.created_at}>{new Date(row.created_at).toLocaleString()}</time></span>
+                                    <span className="audit-mobile-card-badges">
+                                        <span className={`audit-role-badge audit-role-${row.actor?.role?.toLowerCase() ?? 'guest'}`}>{row.actor?.role ?? '-'}</span>
+                                        <span className={`audit-result-badge ${row.status_code < 400 ? 'is-success' : 'is-failed'}`}>{row.status_code < 400 ? 'Success' : 'Failed'}</span>
+                                    </span>
+                                    <span className="audit-mobile-card-action"><small>Action</small>{row.action}</span>
+                                </summary>
+                                <div className="audit-mobile-card-content">
+                                    <dl>
+                                        <div><dt>Actor email</dt><dd>{row.actor?.email ?? '-'}</dd></div>
+                                        <div><dt>Database action</dt><dd><span className={`status-pill audit-${row.database_action.toLowerCase()}`}>{row.database_action}</span></dd></div>
+                                        <div><dt>Entity</dt><dd>{row.entity_type ?? '-'}</dd></div>
+                                        <div><dt>IP address</dt><dd>{row.ip_address ?? '-'}</dd></div>
+                                        <div className="audit-mobile-description"><dt>Description</dt><dd>{row.description ?? '-'}</dd></div>
+                                    </dl>
+                                </div>
+                            </details>
+                            <div className="audit-mobile-card-footer">
+                                <ViewDetailsAction contextLabel={`audit record ${row.id}`} loading={detailLoading} onClick={() => void openAuditDetails(row.id)} />
+                            </div>
+                        </div>)}
+                    </div>
+                </> : <p className="admin-empty">No audit records match these filters.</p>}
+                <div className="audit-pagination">
+                    <label>Rows per page<select value={perPage} onChange={(event) => { setPerPage(Number(event.target.value)); setPage(1); }}><option value="10">10</option><option value="25">25</option><option value="50">50</option><option value="100">100</option></select></label>
+                    <span className="audit-result-range">Showing {firstRow}–{lastRow} of {total} records</span>
+                    <Pagination page={page} lastPage={lastPage} onChange={setPage} />
+                </div>
+            </>}
+        </section>
         {selected && <div className="audit-modal-backdrop" role="presentation" onClick={() => setSelected(null)}><article ref={auditDialogRef} className="audit-modal" role="dialog" aria-modal="true" aria-labelledby="audit-detail-title" onClick={(event) => event.stopPropagation()}>
             <div className="audit-modal-heading"><div><p className="eyebrow">Read-only review</p><h3 id="audit-detail-title">{selected.entity_type ?? 'Audit'} record · {selected.action}</h3></div><button type="button" onClick={() => setSelected(null)} aria-label="Close audit details">Close</button></div>
             <div className="audit-detail-grid">

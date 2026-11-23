@@ -28,6 +28,23 @@ type Promotion = {
     image_url: string | null;
 };
 
+type PromotionSummary = { active: number; scheduled: number; draft: number };
+type PromotionIconName = 'tag' | 'calendar' | 'file' | 'listing' | 'discount' | 'edit' | 'play' | 'pause' | 'end' | 'delete';
+
+function PromotionIcon({ name }: { name: PromotionIconName }) {
+    const shape = name === 'tag' ? <><path d="M20 13 11 22 2 13l9-9h9v9Z" /><circle cx="16" cy="8" r="1.5" /></>
+        : name === 'calendar' ? <><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" /></>
+            : name === 'file' ? <><path d="M6 3h8l5 5v13H6z" /><path d="M14 3v6h5M9 14h7M9 17h7" /></>
+                : name === 'listing' ? <><path d="M4 5h16M4 10h16M4 15h10M4 20h10" /><circle cx="19" cy="18" r="2" /></>
+                    : name === 'discount' ? <><path d="m19 5-14 14" /><circle cx="7" cy="7" r="2" /><circle cx="17" cy="17" r="2" /></>
+                        : name === 'edit' ? <><path d="m4 16.5-.8 4.3 4.3-.8L20 7.5 16.5 4 4 16.5Z" /><path d="m14.8 5.7 3.5 3.5" /></>
+                            : name === 'play' ? <path d="m8 5 11 7-11 7V5Z" />
+                                : name === 'pause' ? <><path d="M8 5v14M16 5v14" /></>
+                                    : name === 'end' ? <rect x="5" y="5" width="14" height="14" rx="1" />
+                                        : <><path d="M4 7h16M10 11v6M14 11v6M6 7l1 14h10l1-14M9 7V4h6v3" /></>;
+    return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">{shape}</svg>;
+}
+
 type PromotionForm = {
     name: string;
     description: string;
@@ -66,6 +83,16 @@ function toIsoDateTime(value: string): string {
     return new Date(value).toISOString();
 }
 
+function formatPromotionDateTime(value: string): string {
+    return new Date(value).toLocaleString('en-PH', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+    });
+}
+
 function errorMessage(error: any): string {
     const validation = error.response?.data?.errors;
     if (validation) return Object.values(validation).flat().join(' ');
@@ -81,12 +108,14 @@ export function SellerPromotions({ onError }: { onError: (message: string) => vo
     const [page, setPage] = React.useState(1);
     const [lastPage, setLastPage] = React.useState(1);
     const [totalPromotions, setTotalPromotions] = React.useState(0);
+    const [summary, setSummary] = React.useState<PromotionSummary | null>(null);
     const [listings, setListings] = React.useState<EligibleListing[]>([]);
     const [knownListings, setKnownListings] = React.useState<Record<number, EligibleListing>>({});
     const [inactiveSelectedListings, setInactiveSelectedListings] = React.useState<EligibleListing[]>([]);
     const [eligibleListingPage, setEligibleListingPage] = React.useState(1);
     const [eligibleListingsLastPage, setEligibleListingsLastPage] = React.useState(1);
     const [loading, setLoading] = React.useState(true);
+    const [loadError, setLoadError] = React.useState<string | null>(null);
     const [form, setForm] = React.useState<PromotionForm | null>(null);
     const [editing, setEditing] = React.useState<number | null>(null);
     const [saving, setSaving] = React.useState(false);
@@ -108,14 +137,16 @@ export function SellerPromotions({ onError }: { onError: (message: string) => vo
 
     const reload = React.useCallback(async () => {
         setLoading(true);
+        setLoadError(null);
         try {
             const [promotionResponse, listingResponse] = await Promise.all([
-                api.get<{ promotions: { data: Promotion[]; last_page: number; total: number } }>('/api/seller/promotions', { params: { page } }),
+                api.get<{ promotions: { data: Promotion[]; last_page: number; total: number }; summary: PromotionSummary }>('/api/seller/promotions', { params: { page } }),
                 api.get<{ listings: { data: EligibleListing[]; last_page: number } }>('/api/seller/promotions/eligible-listings', { params: { page: eligibleListingPage } }),
             ]);
             setPromotions(promotionResponse.data.promotions.data);
             setLastPage(promotionResponse.data.promotions.last_page);
             setTotalPromotions(promotionResponse.data.promotions.total);
+            setSummary(promotionResponse.data.summary);
             setListings(listingResponse.data.listings.data);
             setKnownListings((current) => ({
                 ...current,
@@ -124,7 +155,7 @@ export function SellerPromotions({ onError }: { onError: (message: string) => vo
             }));
             setEligibleListingsLastPage(listingResponse.data.listings.last_page);
         } catch (error) {
-            onError(errorMessage(error));
+            setLoadError(errorMessage(error));
         } finally {
             setLoading(false);
         }
@@ -288,13 +319,25 @@ export function SellerPromotions({ onError }: { onError: (message: string) => vo
             <button type="button" aria-pressed={activeTab === 'promotions'} className={activeTab === 'promotions' ? 'active' : ''} onClick={() => setActiveTab('promotions')}>Promotions</button>
             <button type="button" aria-pressed={activeTab === 'events'} className={activeTab === 'events' ? 'active' : ''} onClick={() => setActiveTab('events')}>Events</button>
         </nav>
-        {activeTab === 'events' ? <SystemCalendar role="SELLER" onError={onError} /> : <section className="seller-work-section" aria-labelledby="seller-promotions-title">
-        <div className="seller-work-heading">
-            <div><p className="eyebrow">Offers &amp; discounts</p><h2 id="seller-promotions-title">Promotions</h2></div>
-            <span>{totalPromotions} total promotions</span>
-            <button className="seller-inline-action" type="button" onClick={() => form ? clearPromotionForm() : beginCreate()}>{form ? 'Close form' : 'Create promotion +'}</button>
+        {activeTab === 'events' ? <SystemCalendar role="SELLER" onError={onError} /> : <>
+        <div className="seller-promotion-summary" aria-label="Promotion summary">
+            {([
+                { key: 'active', label: 'Active promotions', icon: 'tag', tone: 'active' },
+                { key: 'scheduled', label: 'Scheduled', icon: 'calendar', tone: 'scheduled' },
+                { key: 'draft', label: 'Draft', icon: 'file', tone: 'draft' },
+            ] as const).map((item) => <article className={`seller-promotion-summary-card seller-promotion-summary-card--${item.tone}`} key={item.key}>
+                <span className="seller-promotion-summary-icon"><PromotionIcon name={item.icon} /></span>
+                <span><span className="seller-promotion-summary-label">{item.label}</span><strong>{loading ? '—' : summary?.[item.key] ?? '—'}</strong></span>
+            </article>)}
         </div>
-        <p>Create date-bounded discounts for all eligible listings or selected active listings. Promotions with overlapping dates cannot apply to the same listing.</p>
+        <section className="seller-work-section seller-promotions-panel" aria-labelledby="seller-promotions-title">
+        <div className="seller-promotion-panel-heading">
+            <div><p className="eyebrow">Offers &amp; discounts</p><h2 id="seller-promotions-title">Promotions</h2><p>Create date-bounded discounts for eligible active listings. Overlapping promotions cannot share a listing.</p></div>
+            <div className="seller-promotion-panel-actions">
+                {!loading && !loadError && <span className="seller-promotion-total">{totalPromotions} total promotions</span>}
+                <button className="seller-inline-action" type="button" onClick={() => form ? clearPromotionForm() : beginCreate()}>{form ? 'Close form' : <><PromotionIcon name="tag" />Create promotion</>}</button>
+            </div>
+        </div>
         {form && <form className="seller-promotion-form" onSubmit={save}>
             <label>Promotion name<input required maxLength={120} value={form.name} onChange={(event) => updateForm('name', event.target.value)} /></label>
             <label>Description <span>(optional)</span><textarea maxLength={2000} value={form.description} onChange={(event) => updateForm('description', event.target.value)} /></label>
@@ -336,26 +379,58 @@ export function SellerPromotions({ onError }: { onError: (message: string) => vo
             </div>
             <div className="seller-promotion-form-actions"><button className="seller-inline-action" type="submit" disabled={saving || Boolean(imageError)}>{saving ? 'Saving...' : editing ? 'Save changes' : 'Save as draft'}</button><button className="seller-table-action" type="button" onClick={clearPromotionForm}>Cancel</button></div>
         </form>}
-        {loading ? <LoadingSkeleton variant="cards" count={3} label="Loading seller promotions" /> : promotions.length ? <div className="seller-promotion-list">{promotions.map((promotion) => {
+        {loading ? <LoadingSkeleton variant="cards" count={3} label="Loading seller promotions" /> : loadError ? <div className="seller-promotion-load-error">
+            <p role="alert">{loadError}</p>
+            <button type="button" className="seller-table-action" onClick={() => void reload()}>Try again</button>
+        </div> : promotions.length ? <div className="seller-promotion-list">{promotions.map((promotion) => {
             const expired = new Date(promotion.ends_at).getTime() <= clock;
             const scheduled = new Date(promotion.starts_at).getTime() > clock;
             const status = promotion.status === 'DRAFT' ? 'DRAFT' : expired ? 'ENDED' : promotion.status === 'ACTIVE' ? scheduled ? 'SCHEDULED' : 'ACTIVE' : promotion.status;
+            const discountLabel = promotion.discount_type === 'PERCENTAGE'
+                ? `${Number(promotion.discount_value).toLocaleString('en-PH', { maximumFractionDigits: 2 })}% off`
+                : `₱${Number(promotion.discount_value).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} off`;
+            const listingDescription = promotion.applies_to_all
+                ? 'All eligible active listings'
+                : promotion.listings.map((listing) => listing.name).join(', ') || 'Selected active listings';
             return <article className="seller-promotion-card" key={promotion.id}>
-                <div className="seller-promotion-card-heading"><div><h3>{promotion.name}</h3><span className={`status-pill status-${status.toLowerCase()}`}>{status}</span></div><strong>{promotion.discount_type === 'PERCENTAGE' ? `${Number(promotion.discount_value)}% off` : `PHP ${Number(promotion.discount_value).toLocaleString()} off`}</strong></div>
-                {promotion.image_url && <img className="seller-promotion-card-image" src={promotion.image_url} alt={`${promotion.name} promotion`} />}
-                {promotion.description && <p>{promotion.description}</p>}
-                <p>{promotion.applies_to_all ? 'All eligible active listings' : promotion.listings.map((listing) => listing.name).join(', ') || 'Selected listings'}</p>
-                <p className="seller-promotion-dates">{new Date(promotion.starts_at).toLocaleString()} – {new Date(promotion.ends_at).toLocaleString()}</p>
+                <div className="seller-promotion-card-image-wrap">
+                    {promotion.image_url
+                        ? <img className="seller-promotion-card-image" src={promotion.image_url} alt={`${promotion.name} promotion`} loading="lazy" />
+                        : <span className="seller-promotion-card-image-placeholder"><PromotionIcon name="tag" /><small>Promotion image</small></span>}
+                    <span className="seller-promotion-discount-badge">{discountLabel}</span>
+                </div>
+                <div className="seller-promotion-card-content">
+                    <div className="seller-promotion-card-heading">
+                        <h3>{promotion.name}</h3>
+                        <span className={`status-pill status-${status.toLowerCase()} seller-promotion-status`}>{status}</span>
+                    </div>
+                    <p className="seller-promotion-description">{promotion.description || 'No description provided.'}</p>
+                    <div className="seller-promotion-details">
+                        <div className="seller-promotion-detail">
+                            <PromotionIcon name="listing" />
+                            <span><small>Listing</small><strong>{listingDescription}</strong></span>
+                        </div>
+                        <div className="seller-promotion-detail">
+                            <PromotionIcon name="calendar" />
+                            <span><small>Schedule</small><strong>{formatPromotionDateTime(promotion.starts_at)} – {formatPromotionDateTime(promotion.ends_at)}</strong></span>
+                        </div>
+                        <div className="seller-promotion-detail">
+                            <PromotionIcon name="discount" />
+                            <span><small>Discount</small><strong>{discountLabel}</strong></span>
+                        </div>
+                    </div>
+                </div>
                 <div className="seller-promotion-actions">
-                    {['DRAFT', 'PAUSED', 'ACTIVE'].includes(promotion.status) && !expired && <button type="button" className="seller-table-action" onClick={() => beginEdit(promotion)}>Edit</button>}
-                    {['DRAFT', 'PAUSED'].includes(promotion.status) && <button type="button" className="seller-table-action" onClick={() => void transition(promotion, 'activate')}>{promotion.status === 'PAUSED' ? 'Resume' : 'Activate'}</button>}
-                    {promotion.status === 'ACTIVE' && !expired && <button type="button" className="seller-table-action" onClick={() => void transition(promotion, 'pause')}>Pause</button>}
-                    {['ACTIVE', 'PAUSED'].includes(promotion.status) && <button type="button" className="seller-table-action" onClick={() => void transition(promotion, 'end')}>End</button>}
-                    {promotion.status === 'DRAFT' && <button type="button" className="seller-table-action" onClick={() => void transition(promotion, 'delete')}>Delete draft</button>}
+                    {['DRAFT', 'PAUSED', 'ACTIVE'].includes(promotion.status) && !expired && <button type="button" className="seller-promotion-action seller-promotion-action--primary" onClick={() => beginEdit(promotion)}><PromotionIcon name="edit" />Edit</button>}
+                    {['DRAFT', 'PAUSED'].includes(promotion.status) && <button type="button" className="seller-promotion-action" onClick={() => void transition(promotion, 'activate')}><PromotionIcon name="play" />{promotion.status === 'PAUSED' ? 'Resume' : 'Activate'}</button>}
+                    {promotion.status === 'ACTIVE' && !expired && <button type="button" className="seller-promotion-action" onClick={() => void transition(promotion, 'pause')}><PromotionIcon name="pause" />Pause</button>}
+                    {['ACTIVE', 'PAUSED'].includes(promotion.status) && <button type="button" className="seller-promotion-action" onClick={() => void transition(promotion, 'end')}><PromotionIcon name="end" />End</button>}
+                    {promotion.status === 'DRAFT' && <button type="button" className="seller-promotion-action seller-promotion-action--danger" onClick={() => void transition(promotion, 'delete')}><PromotionIcon name="delete" />Delete draft</button>}
                 </div>
             </article>;
-        })}</div> : <p className="seller-empty">No promotions yet. Create a draft to prepare an offer for your active listings.</p>}
-        <Pagination page={page} lastPage={lastPage} onChange={setPage} />
-        </section>}
+        })}</div> : <div className="seller-promotion-empty"><PromotionIcon name="file" /><strong>No promotions yet</strong><p>Create a draft to prepare an offer for your active listings.</p></div>}
+        {!loading && !loadError && <Pagination page={page} lastPage={lastPage} onChange={setPage} />}
+        </section>
+        </>}
     </>;
 }

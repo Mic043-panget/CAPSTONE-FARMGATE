@@ -78,6 +78,19 @@ function metricLabel(metric: SummaryMetric | undefined): string {
     return `${metric.count.toLocaleString()} · ${amount(metric.amount_cents)}`;
 }
 
+function PaymentSummaryIcon({ name }: { name: 'review' | 'received' | 'pending' | 'recorded' }) {
+    return <span className="payments-summary-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        {name === 'review' ? <><ellipse cx="12" cy="5" rx="8" ry="3" /><path d="M4 5v14c0 1.7 3.6 3 8 3M20 5v6M4 10c0 1.7 3.6 3 8 3M4 15c0 1.7 3.6 3 8 3" /><circle cx="18" cy="17" r="3" /><path d="m18 15.5 0 3M16.5 17h3" /></>
+            : name === 'received' ? <><circle cx="12" cy="12" r="9" /><path d="m7.5 12.5 3 3 6-7" /></>
+                : name === 'pending' ? <><path d="M12 3v9l6 3" /><circle cx="12" cy="12" r="9" /></>
+                    : <><rect x="4" y="3" width="16" height="18" rx="2" /><path d="M8 8h8M8 12h8M8 16h4" /></>}
+    </svg></span>;
+}
+
+function PaymentsRecordIcon() {
+    return <span className="payments-record-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6.5h16v13H4zM4 10h16M8 14h4M7 3.5h10" /></svg></span>;
+}
+
 export function CodMoneyOperations({ onError, onOpenSettings }: { onError: (message: string) => void; onOpenSettings: () => void }) {
     const [summary, setSummary] = React.useState<Summary | null>(null);
     const [remittances, setRemittances] = React.useState<Page<Remittance> | null>(null);
@@ -236,7 +249,7 @@ export function CodMoneyOperations({ onError, onOpenSettings }: { onError: (mess
     const recordedRows = recordedPayouts?.data ?? [];
 
     return <section className="seller-work-section cod-money-operations" aria-labelledby="cod-money-title">
-        <div className="payments-page-heading">
+        <div className="payments-page-heading cod-money-heading">
             <div><p className="eyebrow">Admin · COD operations</p><h2 id="cod-money-title">COD reconciliation</h2><p>Review incoming rider remittances and track seller payouts. Transfers are manual only.</p></div>
             <button className="seller-inline-action" type="button" onClick={() => void refresh()} disabled={refreshing}>{refreshing ? 'Refreshing…' : 'Refresh'}</button>
         </div>
@@ -245,18 +258,19 @@ export function CodMoneyOperations({ onError, onOpenSettings }: { onError: (mess
             <p>Riders report cash collected and submit remittance proof. Proof is evidence, not receipt confirmation. Admins must verify actual receipt before buyer COD payment becomes paid; a separate seller payout is then created from the order’s snapshotted fee. Farmgate does not initiate PayMongo or bank payouts.</p>
         </details>
 
-        {loadError && <p className="seller-error" role="alert">{loadError}</p>}
         {success && <p className="payments-success" role="status">{success}</p>}
-        {loading ? <p role="status">Loading payment records…</p> : <>
+        {loading ? <p className="payments-loading" role="status">Loading payment records…</p>
+            : loadError ? <p className="payments-load-error" role="alert">{loadError} <button type="button" onClick={() => void refresh()}>Try again</button></p>
+                : <>
             <section className="payments-summary-grid" aria-label="COD workflow summary">
-                <article className="payments-summary-card"><span>Remittances awaiting review</span><strong>{metricLabel(summary?.remittances_awaiting_review)}</strong></article>
-                <article className="payments-summary-card"><span>Confirmed COD received</span><strong>{metricLabel(summary?.confirmed_cod_received)}</strong></article>
-                <article className="payments-summary-card"><span>Seller payouts pending</span><strong>{metricLabel(summary?.seller_payouts_pending)}</strong></article>
-                <article className="payments-summary-card"><span>Recorded payouts</span><strong>{metricLabel(summary?.recorded_payouts)}</strong></article>
+                <article className="payments-summary-card"><span>Remittances awaiting review</span><strong>{metricLabel(summary?.remittances_awaiting_review)}</strong><PaymentSummaryIcon name="review" /></article>
+                <article className="payments-summary-card"><span>Confirmed COD received</span><strong>{metricLabel(summary?.confirmed_cod_received)}</strong><PaymentSummaryIcon name="received" /></article>
+                <article className="payments-summary-card"><span>Seller payouts pending</span><strong>{metricLabel(summary?.seller_payouts_pending)}</strong><PaymentSummaryIcon name="pending" /></article>
+                <article className="payments-summary-card"><span>Recorded payouts</span><strong>{metricLabel(summary?.recorded_payouts)}</strong><PaymentSummaryIcon name="recorded" /></article>
             </section>
 
-            <div className="payments-global-search">
-                <label>Search payment records<input type="search" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Remittance, order, delivery, or seller" /></label>
+            <div className="payments-global-search cod-search">
+                <label className="payments-search-label">Search payment records<span className="payments-search-control"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none"><circle cx="10.8" cy="10.8" r="6.8" stroke="currentColor" strokeWidth="1.8" /><path d="m16 16 4.5 4.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg><input type="search" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Remittance, order, delivery, or seller" /></span></label>
             </div>
             <section className="payments-list-section" aria-labelledby="payments-remittances-title">
                 <div className="payments-section-heading"><div><h3 id="payments-remittances-title">Rider cash remittances</h3><p>Search and review submitted cash or transfer batches.</p></div></div>
@@ -265,20 +279,20 @@ export function CodMoneyOperations({ onError, onOpenSettings }: { onError: (mess
                     <label>Method<select value={remittanceMethod} onChange={(event) => { setRemittanceMethod(event.target.value); setRemittancePage(1); }}><option value="">All methods</option><option value="CASH_HANDOVER">Cash handover</option><option value="BANK_TRANSFER">Bank transfer</option><option value="BANK_QR">Online banking QR</option></select></label>
                     <label>Sort<select value={remittanceSort} onChange={(event) => { setRemittanceSort(event.target.value); setRemittancePage(1); }}><option value="newest">Newest submitted</option><option value="oldest">Oldest submitted</option><option value="amount_desc">Amount: high to low</option><option value="amount_asc">Amount: low to high</option><option value="reference_asc">Reference: A–Z</option><option value="reference_desc">Reference: Z–A</option></select></label>
                 </div>
-                {!remittanceRows.length ? <div className="payments-empty-state"><strong>No remittances match this view.</strong><span>Remittances appear here after riders submit collected COD cash for review.</span></div> : <div className="data-table-wrap payments-table-wrap"><table className="data-table payments-table">
+                {!remittanceRows.length ? <div className="payments-empty-state"><strong>No remittances match this view.</strong><span>Remittances appear here after riders submit collected COD cash for review.</span></div> : <div className="data-table-wrap payments-table-wrap"><table className="data-table payments-table payments-remittance-table">
                     <thead><tr><th>Reference</th><th>Order</th><th>Rider</th><th>Amount collected</th><th>Method</th><th>Submitted</th><th>Status</th><th>Details</th></tr></thead>
                     <tbody>{remittanceRows.map((item) => {
                         const orders = [...new Set(item.collections?.map((collection) => collection.order?.order_reference).filter(Boolean) ?? [])];
                         return <React.Fragment key={item.id}>
-                            <tr>
-                                <td><strong>{item.reference}</strong></td>
-                                <td>{orders.length ? orders.join(', ') : `${item.collections_count} order(s)`}</td>
-                                <td>{item.rider?.name ?? 'Rider'}</td>
-                                <td>{amount(item.collections?.reduce((total, collection) => total + collection.collected_amount_cents, 0) ?? item.expected_amount_cents)}</td>
-                                <td>{['BANK_QR', 'PAYMONGO_QR'].includes(item.method_type) ? 'Online banking QR' : item.method_type.replaceAll('_', ' ')}</td>
-                                <td>{new Date(item.submitted_at).toLocaleString()}</td>
-                                <td><span className={`status-pill status-${item.status.toLowerCase()}`}>{item.status.replaceAll('_', ' ')}</span></td>
-                                <td><ViewDetailsAction className="payments-text-button" contextLabel={`remittance ${item.reference}`} expanded={expandedRemittance === item.id} controls={`remittance-details-${item.id}`} onClick={() => setExpandedRemittance((current) => current === item.id ? null : item.id)} /></td>
+                            <tr className="payments-mobile-card payments-remittance-card">
+                                <td className="payments-card-identity payments-remittance-reference" data-label="Reference"><div><PaymentsRecordIcon /><strong>{item.reference}</strong></div></td>
+                                <td className="payments-card-status payments-remittance-status" data-label="Status"><span className={`status-pill status-${item.status.toLowerCase()}`}>{item.status.replaceAll('_', ' ')}</span></td>
+                                <td className="payments-remittance-order" data-label="Order reference">{orders.length ? orders.join(', ') : `${item.collections_count} order(s)`}</td>
+                                <td className="payments-remittance-rider" data-label="Rider">{item.rider?.name ?? 'Rider'}</td>
+                                <td className="payments-remittance-amount" data-label="Amount collected">{amount(item.collections?.reduce((total, collection) => total + collection.collected_amount_cents, 0) ?? item.expected_amount_cents)}</td>
+                                <td className="payments-remittance-method" data-label="Method">{['BANK_QR', 'PAYMONGO_QR'].includes(item.method_type) ? 'Online banking QR' : item.method_type.replaceAll('_', ' ')}</td>
+                                <td className="payments-remittance-submitted" data-label="Submitted">{new Date(item.submitted_at).toLocaleString()}</td>
+                                <td className="payments-card-actions payments-remittance-actions" data-label="Details"><ViewDetailsAction className="payments-text-button" contextLabel={`remittance ${item.reference}`} expanded={expandedRemittance === item.id} controls={`remittance-details-${item.id}`} onClick={() => setExpandedRemittance((current) => current === item.id ? null : item.id)} /></td>
                             </tr>
                             {expandedRemittance === item.id && <tr id={`remittance-details-${item.id}`} className="payments-detail-row"><td colSpan={8}>
                                 <div className="payments-detail-grid">
@@ -328,13 +342,13 @@ export function CodMoneyOperations({ onError, onOpenSettings }: { onError: (mess
                     <label>Status<select value={recordedStatus} onChange={(event) => { setRecordedStatus(event.target.value); setRecordedPage(1); }}><option value="">All recorded statuses</option><option value="PAID">Paid</option><option value="RETURNED">Returned</option><option value="DISPUTED">Disputed</option></select></label>
                     <label>Sort<select value={payoutSort} onChange={(event) => { setPayoutSort(event.target.value); setRecordedPage(1); }}><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="amount_desc">Amount: high to low</option><option value="amount_asc">Amount: low to high</option></select></label>
                 </div>
-                {!recordedRows.length ? <div className="payments-empty-state"><strong>No recorded payouts match this view.</strong><span>When an admin records an externally completed transfer with evidence, it appears here.</span></div> : <div className="data-table-wrap payments-table-wrap"><table className="data-table payments-table">
-                    <thead><tr><th>Payout</th><th>Order</th><th>Seller</th><th>Amount</th><th>Transfer reference</th><th>Date</th><th>Status</th><th>Receipt</th></tr></thead>
-                    <tbody>{recordedRows.map((payout) => <tr key={payout.id}>
-                        <td>PO-{payout.id}</td><td>{payout.order?.order_reference ?? 'Order'}</td><td>{payout.seller?.name ?? 'Seller'}</td>
-                        <td>{amount(payout.amount_cents)}</td><td>{payout.external_reference ?? '—'}</td><td>{payout.paid_at ? new Date(payout.paid_at).toLocaleString() : 'Not paid'}</td>
-                        <td><span className={`status-pill status-${payout.status.toLowerCase()}`}>{payout.status === 'PAID' ? 'External transfer recorded' : payout.status === 'PROCESSING' ? 'External process reported' : payout.status}</span>{payout.status === 'PROCESSING' && <small>Farmgate has not initiated the transfer.</small>}</td>
-                        <td>{payout.receipt_url ? <a href={payout.receipt_url} target="_blank" rel="noreferrer">View private receipt</a> : 'No receipt attached'}{payout.status === 'PAID' && <><label>Correction / reversal reason<input maxLength={500} value={payoutForms[payout.id]?.reason ?? ''} onChange={(event) => updatePayoutForm(payout, { reason: event.target.value })} /></label><button className="seller-inline-action" type="button" disabled={busy} onClick={() => changePayoutStatus(payout, 'RETURNED')}>Record returned transfer</button><button className="payments-text-button" type="button" disabled={busy} onClick={() => changePayoutStatus(payout, 'DISPUTED')}>Flag dispute</button></>}</td>
+                {!recordedRows.length ? <div className="payments-empty-state"><strong>No recorded payouts match this view.</strong><span>When an admin records an externally completed transfer with evidence, it appears here.</span></div> : <div className="data-table-wrap payments-table-wrap"><table className="data-table payments-table payments-recorded-table">
+                    <thead><tr><th>Order reference</th><th>Seller</th><th>Amount</th><th>Transfer reference</th><th>Date</th><th>Status</th><th>Receipt</th></tr></thead>
+                    <tbody>{recordedRows.map((payout) => <tr className="payments-mobile-card payments-recorded-card" key={payout.id}>
+                        <td className="payments-card-identity payments-recorded-reference" data-label="Order reference"><div><PaymentsRecordIcon /><strong>{payout.order?.order_reference ?? 'Order reference unavailable'}</strong></div></td><td className="payments-recorded-seller" data-label="Seller">{payout.seller?.name ?? 'Seller'}</td>
+                        <td className="payments-recorded-amount" data-label="Amount">{amount(payout.amount_cents)}</td><td className="payments-recorded-transfer" data-label="Transfer reference">{payout.external_reference ?? '—'}</td><td className="payments-recorded-date" data-label="Date">{payout.paid_at ? new Date(payout.paid_at).toLocaleString() : 'Not paid'}</td>
+                        <td className="payments-card-status payments-recorded-status" data-label="Status"><span className={`status-pill status-${payout.status.toLowerCase()}`}>{payout.status === 'PAID' ? 'External transfer recorded' : payout.status === 'PROCESSING' ? 'External process reported' : payout.status}</span>{payout.status === 'PROCESSING' && <small>Farmgate has not initiated the transfer.</small>}</td>
+                        <td className="payments-card-actions payments-recorded-actions" data-label="Receipt and actions">{payout.receipt_url ? <a href={payout.receipt_url} target="_blank" rel="noreferrer">View private receipt</a> : 'No receipt attached'}{payout.status === 'PAID' && <><label>Correction / reversal reason<input maxLength={500} value={payoutForms[payout.id]?.reason ?? ''} onChange={(event) => updatePayoutForm(payout, { reason: event.target.value })} /></label><button className="seller-inline-action" type="button" disabled={busy} onClick={() => changePayoutStatus(payout, 'RETURNED')}>Record returned transfer</button><button className="payments-text-button" type="button" disabled={busy} onClick={() => changePayoutStatus(payout, 'DISPUTED')}>Flag dispute</button></>}</td>
                     </tr>)}</tbody>
                 </table></div>}
                 {recordedPayouts && recordedPayouts.last_page > 1 && <Pagination page={recordedPage} lastPage={recordedPayouts.last_page} onChange={setRecordedPage} label="Recorded payout pages" />}
@@ -361,15 +375,17 @@ function PayoutTable({
             <label>Status<select value={status} onChange={(event) => onStatus(event.target.value)}><option value="">All queue statuses</option><option value="PENDING_SETUP">Needs destination setup</option><option value="PENDING">Pending</option><option value="PROCESSING">Processing</option><option value="FAILED">Failed</option></select></label>
             <label>Sort<select value={sort} onChange={(event) => onSort(event.target.value)}><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="amount_desc">Amount: high to low</option><option value="amount_asc">Amount: low to high</option></select></label>
         </div>
-        {!rows.length ? <div className="payments-empty-state"><strong>No payouts in the queue.</strong><span>Payout records appear after a COD remittance is fully reconciled. A verified seller destination is required before external payment can be recorded.</span></div> : <div className="data-table-wrap payments-table-wrap"><table className="data-table payments-table">
-            <thead><tr><th>Payout</th><th>Order</th><th>Seller</th><th>Amount due</th><th>Destination</th><th>Status</th><th>Available action</th></tr></thead>
+        {!rows.length ? <div className="payments-empty-state"><strong>No payouts in the queue.</strong><span>Payout records appear after a COD remittance is fully reconciled. A verified seller destination is required before external payment can be recorded.</span></div> : <div className="data-table-wrap payments-table-wrap"><table className="data-table payments-table payments-queue-table">
+            <thead><tr><th>Order reference</th><th>Seller</th><th>Amount due</th><th>Destination</th><th>Status</th><th>Available action</th></tr></thead>
             <tbody>{rows.map((payout) => {
                 const form = payoutForms[payout.id] ?? { reference: '', amount: (payout.amount_cents / 100).toFixed(2), paidDate: '', reason: '', receipt: null };
-                return <tr key={payout.id}>
-                    <td>PO-{payout.id}</td><td>{payout.order?.order_reference ?? 'Order'}</td><td>{payout.seller?.name ?? 'Seller'}</td><td>{amount(payout.amount_cents)}</td>
-                    <td>{payout.destination_masked ? `${payout.destination_masked.type} · ${payout.destination_masked.institution} · ${payout.destination_masked.account_holder} · ${payout.destination_masked.identifier ?? ''} · ${payout.destination_masked.status}` : 'Verified destination required'}</td>
-                    <td><span className={`status-pill status-${payout.status.toLowerCase()}`}>{payout.status === 'PROCESSING' ? 'External process reported' : payout.status.replaceAll('_', ' ')}</span>{payout.status === 'PROCESSING' && <small>Farmgate has not initiated the transfer.</small>}{payout.provider_status && <small>{payout.provider_status}</small>}{payout.histories?.length ? <details><summary>History</summary>{payout.histories.map((entry, index) => <small key={`${entry.action}-${index}`}>{entry.action.replaceAll('_', ' ')} · {entry.actor?.name ?? 'Admin'} · {entry.reason}</small>)}</details> : null}</td>
-                    <td>
+                return <tr className="payments-mobile-card payments-queue-card" key={payout.id}>
+                    <td className="payments-card-identity payments-queue-reference" data-label="Order reference"><div><PaymentsRecordIcon /><strong>{payout.order?.order_reference ?? 'Order reference unavailable'}</strong></div></td>
+                    <td className="payments-queue-seller" data-label="Seller">{payout.seller?.name ?? 'Seller'}</td>
+                    <td className="payments-queue-amount" data-label="Amount due">{amount(payout.amount_cents)}</td>
+                    <td className="payments-queue-destination" data-label="Destination">{payout.destination_masked ? `${payout.destination_masked.type} · ${payout.destination_masked.institution} · ${payout.destination_masked.account_holder} · ${payout.destination_masked.identifier ?? ''} · ${payout.destination_masked.status}` : 'Verified destination required'}</td>
+                    <td className="payments-card-status payments-queue-status" data-label="Status"><span className={`status-pill status-${payout.status.toLowerCase()}`}>{payout.status === 'PROCESSING' ? 'External process reported' : payout.status.replaceAll('_', ' ')}</span>{payout.status === 'PROCESSING' && <small>Farmgate has not initiated the transfer.</small>}{payout.provider_status && <small>{payout.provider_status}</small>}{payout.histories?.length ? <details><summary>History</summary>{payout.histories.map((entry, index) => <small key={`${entry.action}-${index}`}>{entry.action.replaceAll('_', ' ')} · {entry.actor?.name ?? 'Admin'} · {entry.reason}</small>)}</details> : null}</td>
+                    <td className="payments-card-actions payments-queue-actions" data-label="Available action">
                         {payout.status === 'PENDING_SETUP' ? <div className="payments-eligibility-block"><strong>Not eligible to record</strong><ul>{(payout.eligibility_unmet.length ? payout.eligibility_unmet : ['The seller must acknowledge the effective policy and have a verified destination.']).map((item) => <li key={item}>{item}</li>)}</ul><button className="payments-text-button" type="button" onClick={onOpenSettings}>Review policy and destination controls</button></div> : <>
                             <label>Action reason<input maxLength={500} value={form.reason} onChange={(event) => updatePayoutForm(payout, { reason: event.target.value })} /></label>
                             {['PENDING', 'PROCESSING'].includes(payout.status) && payoutsEnabled && payout.seller_payout_eligible && <div className="payments-action-form">

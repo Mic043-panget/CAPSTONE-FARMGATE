@@ -24,13 +24,19 @@ class PromotionController extends Controller
     public function index(Request $request): JsonResponse
     {
         $seller = $this->seller($request);
+        $now = now();
+        $promotions = SellerPromotion::query()->where('seller_id', $seller->id);
 
         return response()->json([
-            'promotions' => SellerPromotion::query()
-                ->where('seller_id', $seller->id)
+            'promotions' => (clone $promotions)
                 ->with(['listings:id,name,status,pricing_type,price_per_kilo,price_per_head'])
                 ->latest()
                 ->paginate(15),
+            'summary' => [
+                'active' => (clone $promotions)->where('status', 'ACTIVE')->where('starts_at', '<=', $now)->where('ends_at', '>', $now)->count(),
+                'scheduled' => (clone $promotions)->where('status', 'ACTIVE')->where('starts_at', '>', $now)->where('ends_at', '>', $now)->count(),
+                'draft' => (clone $promotions)->where('status', 'DRAFT')->count(),
+            ],
         ]);
     }
 

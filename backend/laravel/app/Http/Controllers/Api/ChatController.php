@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\ChatMessageRequest;
 use App\Http\Requests\ChatRecipientSearchRequest;
 use App\Http\Requests\DirectChatMessageRequest;
+use App\Http\Requests\GuestChatMessageRequest;
 use App\Http\Requests\StartDirectChatRequest;
 use App\Models\ChatConversation;
 use App\Models\ChatMessage;
@@ -15,30 +16,36 @@ use App\Models\User;
 use App\Services\Chat\ChatConversationService;
 use App\Services\Chat\ChatProviderException;
 use App\Services\Chat\DirectChatService;
+use App\Services\Chat\GuestChatService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
 class ChatController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $filters = $request->validate(['search' => ['nullable', 'string', 'max:100']]);
+        $filters = $request->validate([
+            'search' => ['nullable', 'string', 'max:100'],
+            'kind' => ['nullable', 'string', 'in:ai,direct'],
+        ]);
         $search = trim($filters['search'] ?? '');
+        $kind = $filters['kind'] ?? null;
         $actorId = (int) $request->user()->id;
-        $conversationTable = (new ChatConversation())->getTable();
-        $unreadConversationIds = $request->user()->unreadNotifications()
+        $conversationTable = (new ChatConversation)->getTable();
+        $unreadConversationCounts = $request->user()->unreadNotifications()
             ->where('data->type', 'chat_message')
             ->get(['data'])
             ->map(fn ($notification): ?int => isset($notification->data['conversation_id'])
                 ? (int) $notification->data['conversation_id']
                 : null)
             ->filter()
-            ->unique()
-            ->flip();
+            ->countBy();
         $conversations = ChatConversation::query()
             ->addSelect([
                 'last_message_preview' => ChatMessage::query()
@@ -49,7 +56,9 @@ class ChatController extends Controller
             ])
             ->where(function (Builder $query) use ($request): void {
                 $query->where(function (Builder $ai) use ($request): void {
-                    $ai->where('kind', 'ai')->where('user_id', $request->user()->id);
+                    $ai->where('kind', 'ai')
+                        ->where('user_id', $request->user()->id)
+                        ->where('ai_owner_id', $request->user()->id);
                 })->orWhere(function (Builder $direct) use ($request): void {
                     $direct->where('kind', 'direct')
                         ->where(function (Builder $participants) use ($request): void {
@@ -58,6 +67,8 @@ class ChatController extends Controller
                         });
                 });
             })
+            ->when($kind === 'ai', fn (Builder $query): Builder => $query->where('kind', 'ai')->where('ai_owner_id', $request->user()->id))
+            ->when($kind === 'direct', fn (Builder $query): Builder => $query->where('kind', 'direct'))
             ->when($search !== '', function (Builder $query) use ($search, $actorId): void {
                 $like = "%{$search}%";
                 $query->where(function (Builder $matches) use ($like, $actorId): void {
@@ -73,13 +84,52 @@ class ChatController extends Controller
 
         return response()->json([
             ...$conversations->toArray(),
-            'data' => $conversations->getCollection()->map(fn (ChatConversation $conversation): array => $this->conversationData($conversation, $request->user()) + [
+            'data' => $conversations->getCollection()->map(function (ChatConversation $conversation) use ($request, $unreadConversationCounts): array {
+                $unreadCount = (int) ($unreadConversationCounts[$conversation->id] ?? 0);
+
+                return $this->conversationData($conversation, $request->user()) + [
+                    'messages_count' => $conversation->messages_count,
+                    'unread' => $unreadCount > 0,
+                    'unread_count' => $unreadCount,
+                    'last_message_preview' => $conversation->last_message_preview === null
+                        ? null
+                        : Str::limit($conversation->last_message_preview, 120),
+                ];
+            })->all(),
+        ]);
+    }
+
+    public function aiConversation(Request $request): JsonResponse
+    {
+        $conversation = ChatConversation::query()
+            ->addSelect([
+                'last_message_preview' => ChatMessage::query()
+                    ->select('content')
+                    ->whereColumn('chat_messages.conversation_id', 'chat_conversations.id')
+                    ->latest('id')
+                    ->limit(1),
+            ])
+            ->withCount('messages')
+            ->where('kind', 'ai')
+            ->where('user_id', $request->user()->id)
+            ->where('ai_owner_id', $request->user()->id)
+            ->first();
+
+        if ($conversation === null) {
+            return response()->json(['conversation' => null]);
+        }
+
+        return response()->json([
+            'conversation' => $this->conversationData($conversation, $request->user()) + [
                 'messages_count' => $conversation->messages_count,
-                'unread' => $unreadConversationIds->has($conversation->id),
+                'unread_count' => $request->user()->unreadNotifications()
+                    ->where('data->type', 'chat_message')
+                    ->where('data->conversation_id', $conversation->id)
+                    ->count(),
                 'last_message_preview' => $conversation->last_message_preview === null
                     ? null
                     : Str::limit($conversation->last_message_preview, 120),
-            ])->all(),
+            ],
         ]);
     }
 
@@ -89,7 +139,9 @@ class ChatController extends Controller
         $ownedConversation = ChatConversation::query()
             ->where(function (Builder $query) use ($request): void {
                 $query->where(function (Builder $ai) use ($request): void {
-                    $ai->where('kind', 'ai')->where('user_id', $request->user()->id);
+                    $ai->where('kind', 'ai')
+                        ->where('user_id', $request->user()->id)
+                        ->where('ai_owner_id', $request->user()->id);
                 })->orWhere(function (Builder $direct) use ($request): void {
                     $direct->where('kind', 'direct')
                         ->where(function (Builder $participants) use ($request): void {
@@ -129,13 +181,25 @@ class ChatController extends Controller
 
     public function destroy(Request $request, int $conversation): JsonResponse
     {
-        $ownedConversation = ChatConversation::query()
-            ->where('kind', 'ai')
-            ->where('user_id', $request->user()->id)
-            ->findOrFail($conversation);
-        $ownedConversation->delete();
+        $clearedConversation = DB::transaction(function () use ($request, $conversation): ChatConversation {
+            $conversationToClear = ChatConversation::query()
+                ->where('kind', 'ai')
+                ->where('user_id', $request->user()->id)
+                ->where('ai_owner_id', $request->user()->id)
+                ->lockForUpdate()
+                ->findOrFail($conversation);
+            $conversationToClear->messages()->delete();
+            $conversationToClear->report_context = null;
+            $conversationToClear->title = null;
+            $conversationToClear->save();
 
-        return response()->json(['message' => 'Conversation deleted.']);
+            return $conversationToClear;
+        });
+
+        return response()->json([
+            'message' => 'Farmgate AI history cleared. The conversation remains available for future messages.',
+            'conversation' => $this->conversationData($clearedConversation, $request->user()),
+        ]);
     }
 
     public function clearReportContext(Request $request, int $conversation): JsonResponse
@@ -143,6 +207,7 @@ class ChatController extends Controller
         $ownedConversation = ChatConversation::query()
             ->where('kind', 'ai')
             ->where('user_id', $request->user()->id)
+            ->where('ai_owner_id', $request->user()->id)
             ->findOrFail($conversation);
         $ownedConversation->report_context = null;
         $ownedConversation->save();
@@ -161,6 +226,7 @@ class ChatController extends Controller
                 $data['message'],
                 $data['report'] ?? null,
                 (bool) ($data['clear_report_context'] ?? false),
+                $data['client_message_id'] ?? null,
             );
         } catch (ChatProviderException) {
             return response()->json([
@@ -172,6 +238,26 @@ class ChatController extends Controller
             'conversation' => $this->conversationData($result['conversation'], $request->user()),
             'user_message' => $this->messageData($result['user_message'], $request->user(), $result['conversation']),
             'assistant_message' => $this->messageData($result['assistant_message'], $request->user(), $result['conversation']),
+        ], $result['created'] ? 201 : 200);
+    }
+
+    public function sendGuest(GuestChatMessageRequest $request, GuestChatService $chat): JsonResponse
+    {
+        $data = $request->validated();
+
+        try {
+            $assistantMessage = $chat->respond($data['message'], $data['history'] ?? []);
+        } catch (ChatProviderException) {
+            return response()->json([
+                'message' => 'The assistant is temporarily unavailable. Please try again later.',
+            ], 503);
+        }
+
+        return response()->json([
+            'assistant_message' => [
+                'role' => 'assistant',
+                'content' => $assistantMessage,
+            ],
         ], 201);
     }
 
@@ -252,6 +338,9 @@ class ChatController extends Controller
                 'id' => $peer->id,
                 'name' => $peer->name,
                 'role' => $peer->role instanceof Role ? $peer->role->value : (string) $peer->role,
+                'profile_photo_url' => $peer->profile_photo_path === null
+                    ? null
+                    : Storage::disk('public')->url($peer->profile_photo_path),
             ];
             $listing = $conversation->listing;
             $data['listing'] = $listing === null ? null : [

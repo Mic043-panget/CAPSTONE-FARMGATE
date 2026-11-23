@@ -73,12 +73,34 @@ const categories: { id: NotificationCategory; label: string }[] = [
     { id: 'SYSTEM', label: 'System' },
 ];
 
+const notificationPageSize = 10;
+
 function categoryFor(notification: AppNotification): NotificationCategory {
     if (notification.data.type?.startsWith('order_')
         || notification.data.type === 'rider_assignment_waiting'
         || notification.data.type === 'delivery_proof_recorded') return 'ORDERS';
     if (notification.data.type?.startsWith('chat_')) return 'CHATS';
     return 'SYSTEM';
+}
+
+function notificationIconFor(notification: AppNotification): 'order' | 'chat' | 'rider' | 'payment' | 'system' {
+    const type = `${notification.data.type ?? ''} ${notification.type}`.toLowerCase();
+    if (type.includes('chat')) return 'chat';
+    if (type.includes('payment') || type.includes('cod') || type.includes('payout') || type.includes('remittance')) return 'payment';
+    if (type.includes('rider') || type.includes('delivery')) return 'rider';
+    if (type.includes('order')) return 'order';
+    return 'system';
+}
+
+function NotificationIcon({ kind }: { kind: 'all' | 'order' | 'chat' | 'rider' | 'payment' | 'system' }) {
+    return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        {kind === 'all' ? <><path d="m12 3 8 4-8 4-8-4 8-4Z" /><path d="m4 12 8 4 8-4M4 17l8 4 8-4" /></>
+            : kind === 'order' ? <><path d="M3 5h2l2.2 10.2a2 2 0 0 0 2 1.6h8.6a2 2 0 0 0 1.9-1.4L21 9H6" /><circle cx="10" cy="20" r="1" /><circle cx="18" cy="20" r="1" /></>
+                : kind === 'chat' ? <><path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H7l-4 2v-5.2A7.5 7.5 0 1 1 20 11.5Z" /><path d="M8 11h.01M12 11h.01M16 11h.01" /></>
+                    : kind === 'rider' ? <><circle cx="7" cy="17" r="3" /><circle cx="18" cy="17" r="3" /><path d="M7 17h5l3-6h3l3 6M12 17l-2-5H7M15 7h2l2 4M14 5h.01" /></>
+                        : kind === 'payment' ? <><ellipse cx="12" cy="6" rx="8" ry="3" /><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3M4 17c0 1.7 3.6 3 8 3s8-1.3 8-3" /></>
+                            : <><circle cx="12" cy="12" r="3" /><path d="M12 2.8v2M12 19.2v2M4.7 4.7l1.4 1.4m11.8 11.8 1.4 1.4M2.8 12h2m14.4 0h2M4.7 19.3l1.4-1.4M17.9 6.1l1.4-1.4" /></>}
+    </svg>;
 }
 
 function notificationContent(notification: AppNotification, role: 'BUYER' | 'SELLER' | 'RIDER' | 'ADMIN'): { title: string; message: string } {
@@ -225,6 +247,8 @@ export function NotificationsPage({ onOpenOrder, onOpenConversation, onOpenCase,
 }) {
     const [notifications, setNotifications] = React.useState<AppNotification[]>([]);
     const [category, setCategory] = React.useState<NotificationCategory>('ALL');
+    const [currentPage, setCurrentPage] = React.useState(1);
+    const [selectedNotificationId, setSelectedNotificationId] = React.useState<string | null>(null);
     const [loading, setLoading] = React.useState(true);
     const [error, setError] = React.useState('');
     const [readError, setReadError] = React.useState('');
@@ -247,6 +271,30 @@ export function NotificationsPage({ onOpenOrder, onOpenConversation, onOpenCase,
     const seenNotificationIds = React.useRef(new Set<string>());
     const notificationLinkHandled = React.useRef(false);
 
+    function hasAvailableDestination(notification: AppNotification): boolean {
+        const data = notification.data;
+        return Boolean(
+            (data.case_id && onOpenCase)
+            || (data.review_id && onOpenReview)
+            || (data.listing_id && onOpenListing)
+            || (data.application_id && onOpenApplication)
+            || (data.vehicle_change_id && onOpenVehicleUpdate)
+            || (data.audit_log_id && onOpenAudit)
+            || (data.delivery_id && onOpenDelivery)
+            || (data.event_id && onOpenEvent)
+            || (data.promotion_id && onOpenPromotion)
+            || (data.order_id && onOpenOrder)
+            || (data.conversation_id && onOpenConversation)
+        );
+    }
+
+    function hasRelatedItem(notification: AppNotification): boolean {
+        const data = notification.data;
+        return Boolean(data.order_id || data.conversation_id || data.case_id || data.review_id || data.listing_id
+            || data.application_id || data.vehicle_change_id || data.audit_log_id || data.delivery_id
+            || data.event_id || data.promotion_id);
+    }
+
     async function openNotification(notification: AppNotification) {
         setReadError('');
         const data = notification.data;
@@ -261,20 +309,7 @@ export function NotificationsPage({ onOpenOrder, onOpenConversation, onOpenCase,
                                         : data.promotion_id ? { type: 'promotion', id: data.promotion_id }
                                             : data.order_id ? { type: 'order', id: data.order_id }
                                                 : data.conversation_id ? { type: 'conversation', id: data.conversation_id } : undefined;
-        const hasOpenHandler = Boolean(
-            (data.case_id && onOpenCase)
-            || (data.review_id && onOpenReview)
-            || (data.listing_id && onOpenListing)
-            || (data.application_id && onOpenApplication)
-            || (data.vehicle_change_id && onOpenVehicleUpdate)
-            || (data.audit_log_id && onOpenAudit)
-            || (data.delivery_id && onOpenDelivery)
-            || (data.event_id && onOpenEvent)
-            || (data.promotion_id && onOpenPromotion)
-            || (data.order_id && onOpenOrder)
-            || (data.conversation_id && onOpenConversation)
-            || (data.order_id && onOpenOrder && (data.case_id || data.review_id))
-        );
+        const hasOpenHandler = hasAvailableDestination(notification);
         try {
             const response = await api.post<{ notification: AppNotification; unread_count: number; unread_chat_count: number; bulk_read_count: number }>(`/api/notifications/${notification.id}/read`, {
                 target_available: hasOpenHandler,
@@ -295,7 +330,7 @@ export function NotificationsPage({ onOpenOrder, onOpenConversation, onOpenCase,
         }
 
         if (!hasOpenHandler) {
-            setReadError('This item is unavailable from the current page or your access has changed. The unavailable link was recorded.');
+            setSelectedNotificationId(notification.id);
             return;
         }
 
@@ -482,7 +517,24 @@ export function NotificationsPage({ onOpenOrder, onOpenConversation, onOpenCase,
         }
     }
 
+    function viewNotification(notification: AppNotification): void {
+        if (hasRelatedItem(notification)) {
+            void openNotification(notification);
+            return;
+        }
+
+        setSelectedNotificationId((selectedId) => selectedId === notification.id ? null : notification.id);
+        if (!notification.read_at && notification.data.type !== 'chat_message') {
+            void acknowledgeNotification(notification);
+        }
+    }
+
     const filteredNotifications = notifications.filter((notification) => category === 'ALL' || categoryFor(notification) === category);
+    const pageCount = Math.max(1, Math.ceil(filteredNotifications.length / notificationPageSize));
+    const safePage = Math.min(currentPage, pageCount);
+    const pageStart = (safePage - 1) * notificationPageSize;
+    const pageNotifications = filteredNotifications.slice(pageStart, pageStart + notificationPageSize);
+    const pageEnd = Math.min(pageStart + pageNotifications.length, filteredNotifications.length);
 
     return <section className="buyer-notifications" aria-label="Notifications">
         {role !== 'BUYER' && <NotificationDeviceSettingsControls
@@ -492,9 +544,12 @@ export function NotificationsPage({ onOpenOrder, onOpenConversation, onOpenCase,
             enableBrowserNotifications={enableBrowserNotifications}
             disableDeviceNotifications={disableDeviceNotifications}
         />}
-        <div className="buyer-notification-filter-bar">
-            <nav className="buyer-notification-filters" aria-label="Filter notifications" role="tablist">
-                {categories.map((item) => <button type="button" role="tab" aria-selected={category === item.id} className={category === item.id ? 'active' : ''} key={item.id} onClick={() => setCategory(item.id)}>{item.label}</button>)}
+        <div className="farmgate-notification-filter-bar">
+            <nav className="farmgate-notification-filters" aria-label="Filter notifications" role="tablist">
+                {categories.map((item) => <button type="button" role="tab" aria-selected={category === item.id} className={category === item.id ? 'active' : ''} key={item.id} onClick={() => { setCategory(item.id); setCurrentPage(1); setSelectedNotificationId(null); }}>
+                    <NotificationIcon kind={item.id === 'ALL' ? 'all' : item.id === 'ORDERS' ? 'order' : item.id === 'CHATS' ? 'chat' : 'system'} />
+                    <span>{item.label}</span>
+                </button>)}
             </nav>
             {role === 'BUYER' && onOpenSettings && <button
                 type="button"
@@ -504,39 +559,69 @@ export function NotificationsPage({ onOpenOrder, onOpenConversation, onOpenCase,
                 onClick={onOpenSettings}
             >
                 <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3" /><path d="m19.4 15 .1.1 1.2 1-.9 1.7-1.5-.5a8 8 0 0 1-1.7 1l-.3 1.6h-2l-.4-1.5a8 8 0 0 1-1.9 0l-.7 1.4-1.8-.8.3-1.6a8 8 0 0 1-1.4-1.4l-1.6.3-.7-1.8 1.4-.8a8 8 0 0 1 0-1.9l-1.4-.7.8-1.8 1.6.3a8 8 0 0 1 1.4-1.4l-.3-1.6 1.8-.7.8 1.4a8 8 0 0 1 1.9 0l.7-1.4 1.8.8-.3 1.6a8 8 0 0 1 1.4 1.4l1.6-.3.7 1.8-1.4.8a8 8 0 0 1 0 1.9Z" /></svg>
-                Settings
             </button>}
         </div>
-        {(bulkReadCount > 0 || notifications.some((notification) => !notification.read_at && notification.data.type !== 'chat_message')) && <div className="buyer-notification-bulk-actions">
+        {(bulkReadCount > 0 || notifications.some((notification) => !notification.read_at && notification.data.type !== 'chat_message')) && <div className="farmgate-notification-bulk-actions">
             <p>Critical alerts remain unread until opened or acknowledged.</p>
             <button type="button" onClick={() => void markAllAsRead()} disabled={bulkReadBusy || bulkReadCount === 0} aria-busy={bulkReadBusy}>
                 {bulkReadBusy ? 'Marking…' : 'Mark all as read'}
             </button>
         </div>}
         {bulkReadMessage && <p className="buyer-notifications-state" role="status">{bulkReadMessage}</p>}
-        <div className="buyer-notification-content" aria-live="polite">
+        <div className="farmgate-notification-list-panel" aria-live="polite" aria-busy={loading}>
             {loading ? <LoadingSkeleton variant="list" count={4} label="Loading notifications" /> : error ? <p className="buyer-notifications-state error" role="alert">{error}</p> : <>
                 {readError && <p className="buyer-notifications-state error" role="alert">{readError}</p>}
                 {refreshError && <p className="buyer-notifications-state error" role="alert">{refreshError}</p>}
-                {filteredNotifications.length ? <div className="buyer-notification-list">
-                    {filteredNotifications.map((notification) => {
+                {filteredNotifications.length ? <>
+                    <div className="farmgate-notification-list">
+                    {pageNotifications.map((notification) => {
                         const content = notificationContent(notification, role);
-                        return <article className={`buyer-notification${notification.read_at ? '' : ' unread'}`} key={notification.id}>
-                            <div><strong>{content.title}</strong><span>{notification.read_at ? 'Read' : 'Unread'}</span><time dateTime={notification.created_at}>{new Date(notification.created_at).toLocaleString()}</time></div>
-                            <p>{content.message}</p>
-                            {notification.delivery_statuses?.length ? <p className="buyer-notification-delivery-status" aria-label="Notification delivery status">
-                                Delivery: {notification.delivery_statuses.map((delivery) => deliveryStatusLabel(delivery.channel, delivery.status)).join(' · ')}
-                            </p> : null}
-                            {notification.data.order_id || notification.data.conversation_id || notification.data.case_id || notification.data.review_id || notification.data.listing_id || notification.data.application_id || notification.data.vehicle_change_id || notification.data.audit_log_id || notification.data.delivery_id || notification.data.event_id || notification.data.promotion_id
-                                ? <ViewDetailsAction
+                        const selected = selectedNotificationId === notification.id;
+                        const iconKind = notificationIconFor(notification);
+                        return <article className={`farmgate-notification-row${notification.read_at ? '' : ' is-unread'}${notification.is_critical ? ' is-critical' : ''}`} key={notification.id}>
+                            <span className={`farmgate-notification-icon is-${iconKind}`}><NotificationIcon kind={iconKind} /></span>
+                            <div className="farmgate-notification-copy">
+                                <div className="farmgate-notification-heading">
+                                    <strong>{content.title}</strong>
+                                    <span className={`farmgate-notification-status${notification.read_at ? '' : ' is-unread'}`}>{notification.read_at ? 'Read' : 'Unread'}</span>
+                                    {notification.is_critical && <span className="farmgate-notification-critical">Critical</span>}
+                                </div>
+                                <p>{content.message}</p>
+                                {notification.delivery_statuses?.length ? <p className="farmgate-notification-delivery" aria-label="Notification delivery status">
+                                    <NotificationIcon kind="payment" />
+                                    {notification.delivery_statuses.map((delivery) => deliveryStatusLabel(delivery.channel, delivery.status)).join(' · ')}
+                                </p> : null}
+                            </div>
+                            <time className="farmgate-notification-time" dateTime={notification.created_at}>{new Date(notification.created_at).toLocaleString()}</time>
+                            <div className="farmgate-notification-actions">
+                                <ViewDetailsAction
+                                    className="farmgate-notification-details-action"
                                     contextLabel={content.title}
-                                    onClick={() => void openNotification(notification)}
+                                    expanded={selected}
+                                    controls={`notification-details-${notification.id}`}
+                                    onClick={() => viewNotification(notification)}
                                 />
-                                : <span className="buyer-notification-unavailable">No related item is available for this notification.</span>}
-                            {notification.is_critical && notification.data.type !== 'chat_message' && !notification.read_at && <button type="button" onClick={() => void acknowledgeNotification(notification)}>Acknowledge</button>}
+                                {notification.is_critical && notification.data.type !== 'chat_message' && !notification.read_at && <button className="farmgate-notification-acknowledge" type="button" onClick={() => void acknowledgeNotification(notification)}>Acknowledge</button>}
+                            </div>
+                            {selected && <div className="farmgate-notification-details" id={`notification-details-${notification.id}`}>
+                                <strong>{content.title}</strong>
+                                <p>{content.message}</p>
+                                <p><span>Received</span><time dateTime={notification.created_at}>{new Date(notification.created_at).toLocaleString()}</time></p>
+                                {notification.delivery_statuses?.length ? <p><span>Delivery</span>{notification.delivery_statuses.map((delivery) => deliveryStatusLabel(delivery.channel, delivery.status)).join(' · ')}</p> : null}
+                                {!hasAvailableDestination(notification) && <p className="farmgate-notification-no-destination">No related page is available for this notification.</p>}
+                            </div>}
                         </article>;
                     })}
-                </div> : <div className="buyer-notifications-empty">
+                    </div>
+                    <footer className="farmgate-notification-pagination">
+                        <p>Showing {pageStart + 1}–{pageEnd} of {filteredNotifications.length} records</p>
+                        <div>
+                            <button type="button" aria-label="Previous page" onClick={() => setCurrentPage((page) => Math.max(1, page - 1))} disabled={safePage <= 1}>‹</button>
+                            <span aria-current="page">{safePage}</span>
+                            <button type="button" aria-label="Next page" onClick={() => setCurrentPage((page) => Math.min(pageCount, page + 1))} disabled={safePage >= pageCount}>›</button>
+                        </div>
+                    </footer>
+                </> : <div className="buyer-notifications-empty">
                     <svg aria-hidden="true" viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 39h12M24 6a4 4 0 0 1 4 4c5 1.5 8 5.5 8 12v7l4 5H8l4-5v-7c0-6.5 3-10.5 8-12a4 4 0 0 1 4-4Z" /><path d="m8 8 32 32" /></svg>
                     <p>No notifications yet</p>
                 </div>}

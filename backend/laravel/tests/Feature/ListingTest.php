@@ -422,6 +422,18 @@ class ListingTest extends TestCase
             ->assertOk()
             ->assertJsonPath('listings.data.0.name', 'Rejected listing');
 
+        $this->getJson("/api/seller/listings?category_id={$otherCategory->id}&status=DRAFT")
+            ->assertOk()
+            ->assertJsonPath('listings.total', 1)
+            ->assertJsonPath('listings.data.0.name', 'Farm cattle')
+            ->assertJsonPath('summary.total', 18)
+            ->assertJsonPath('summary.draft', 17)
+            ->assertJsonPath('summary.pending_review', 0);
+        $this->getJson('/api/seller/listings?status=REJECTED')
+            ->assertOk()
+            ->assertJsonPath('listings.total', 1)
+            ->assertJsonPath('listings.data.0.name', 'Rejected listing');
+
         $this->getJson('/api/seller/listings?sort=created_at;DROP%20TABLE%20users')
             ->assertUnprocessable();
     }

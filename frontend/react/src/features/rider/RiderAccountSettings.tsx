@@ -2,6 +2,7 @@ import React from 'react';
 import api, { initializeCsrf } from '../../lib/api';
 import { confirmAction, showSuccess } from '../../lib/alerts';
 import type { User } from '../../shared/types';
+import { SettingsCategoryIcon } from '../shared/SettingsCategoryIcon';
 import { RiderSetupGuide } from './RiderSetupGuide';
 
 type SettingsTab = 'profile' | 'password' | 'delivery' | 'vehicle' | 'payout' | 'notifications' | 'location';
@@ -52,14 +53,14 @@ type AccountPreferences = {
     allow_direct_messages: boolean;
 };
 
-const tabs: { id: SettingsTab; label: string }[] = [
-    { id: 'profile', label: 'Profile & contact' },
-    { id: 'password', label: 'Password' },
-    { id: 'delivery', label: 'Delivery preferences' },
-    { id: 'vehicle', label: 'Vehicle information' },
-    { id: 'payout', label: 'Payout destination' },
-    { id: 'notifications', label: 'Notifications' },
-    { id: 'location', label: 'Location permissions' },
+const tabs: { id: SettingsTab; label: string; icon: string }[] = [
+    { id: 'profile', label: 'Profile & contact', icon: 'account' },
+    { id: 'password', label: 'Password', icon: 'security' },
+    { id: 'delivery', label: 'Delivery preferences', icon: 'delivery' },
+    { id: 'vehicle', label: 'Vehicle information', icon: 'rider' },
+    { id: 'payout', label: 'Payout destination', icon: 'finance' },
+    { id: 'notifications', label: 'Notifications', icon: 'notifications' },
+    { id: 'location', label: 'Location permissions', icon: 'distance' },
 ];
 
 const defaultPreferences: AccountPreferences = {
@@ -67,6 +68,18 @@ const defaultPreferences: AccountPreferences = {
     chat_notifications: true,
     allow_direct_messages: true,
 };
+
+function RiderSettingsHeading({ icon, eyebrow, title, description }: {
+    icon: string;
+    eyebrow: string;
+    title: string;
+    description: string;
+}) {
+    return <header className="seller-work-heading settings-category-heading">
+        <span className="settings-section-icon"><SettingsCategoryIcon name={icon} /></span>
+        <div><p className="eyebrow">{eyebrow}</p><h3>{title}</h3><p>{description}</p></div>
+    </header>;
+}
 
 function errorMessage(error: any, fallback: string): string {
     return error.userMessage ?? error.response?.data?.message ?? fallback;
@@ -498,8 +511,13 @@ export function RiderAccountSettings({ user, onUserUpdated, onError, onReviewTut
     } as const)[locationPermission];
     const photoUrl = user.profile_photo_url;
 
-    return <section className="seller-work-section rider-account-settings" aria-labelledby="rider-account-settings-title">
-        <div className="seller-work-heading"><div><p className="eyebrow">Private account workspace</p><h2 id="rider-account-settings-title">Account settings</h2></div></div>
+    return <section className="seller-work-section seller-settings-page settings-panel rider-account-settings" aria-labelledby="rider-account-settings-title">
+        <header className="admin-section-heading settings-page-heading">
+            <div className="settings-page-title">
+                <span className="settings-page-icon"><SettingsCategoryIcon name="rider" /></span>
+                <div><p className="eyebrow">Rider portal settings</p><h2 id="rider-account-settings-title">Account settings</h2></div>
+            </div>
+        </header>
         <p className="rider-settings-intro">Only your signed-in account can view and update these settings. Changes to phone number require verification.</p>
         {notice && <p className="rider-settings-notice" role="status">{notice}</p>}
         <RiderSetupGuide
@@ -517,11 +535,11 @@ export function RiderAccountSettings({ user, onUserUpdated, onError, onReviewTut
             }}
             onReviewTutorial={onReviewTutorial}
         />
-        <div className="seller-settings-tabs rider-settings-tabs" role="tablist" aria-label="Rider account settings">
+        <nav className="seller-settings-tabs settings-category-nav rider-settings-tabs" role="tablist" aria-label="Rider account settings">
             {tabs.map((item) => <button
                 key={item.id}
                 id={`rider-settings-tab-${item.id}`}
-                className="seller-settings-tab"
+                className={`seller-settings-tab settings-category-tab${tab === item.id ? ' is-active' : ''}`}
                 type="button"
                 role="tab"
                 aria-selected={tab === item.id}
@@ -529,10 +547,13 @@ export function RiderAccountSettings({ user, onUserUpdated, onError, onReviewTut
                 tabIndex={tab === item.id ? 0 : -1}
                 onClick={() => setTab(item.id)}
                 onKeyDown={(event) => tabKeyDown(event, item.id)}
-            >{item.label}</button>)}
-        </div>
+            ><SettingsCategoryIcon name={item.icon} /><span>{item.label}</span></button>)}
+        </nav>
+        <section className="seller-account-management settings-focused-panel" aria-label="Rider account management">
+            <p className="seller-account-management-heading">Account management</p>
         {loading ? <p className="seller-loading" role="status">Loading your private settings…</p> : <>
             <section className="seller-settings-section rider-settings-panel" id="rider-settings-panel-profile" role="tabpanel" aria-labelledby="rider-settings-tab-profile" hidden={tab !== 'profile'} tabIndex={-1}>
+                <RiderSettingsHeading icon="account" eyebrow="Rider account" title="Profile & contact" description="Manage your account details and verified contact information." />
                 <div className="rider-profile-header">
                     <div className="rider-profile-avatar">{photoUrl ? <img src={photoUrl} alt={`${user.name}'s profile`} /> : <span aria-label="Default profile image" role="img">{user.name.slice(0, 1).toUpperCase()}</span>}</div>
                     <div><p className="eyebrow">Rider profile</p><h3>{user.name}</h3><p>{user.role} · {settings?.is_verified ? 'Verified rider' : 'Verification pending'}</p></div>
@@ -563,7 +584,7 @@ export function RiderAccountSettings({ user, onUserUpdated, onError, onReviewTut
                 </section>
             </section>
             <section className="seller-settings-section rider-settings-panel" id="rider-settings-panel-password" role="tabpanel" aria-labelledby="rider-settings-tab-password" hidden={tab !== 'password'} tabIndex={-1}>
-                <div className="seller-work-heading"><div><p className="eyebrow">Profile protection</p><h3>{user.password_setup_complete ? 'Change password' : 'Set a password'}</h3></div></div>
+                <RiderSettingsHeading icon="security" eyebrow="Profile protection" title={user.password_setup_complete ? 'Change password' : 'Set a password'} description="Update the password used to sign in to your account." />
                 <form className="seller-account-form rider-password-form" onSubmit={(event) => void changePassword(event)}>
                     {user.password_setup_complete
                         ? <label>Current password<input type="password" autoComplete="current-password" required value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} /></label>
@@ -574,7 +595,7 @@ export function RiderAccountSettings({ user, onUserUpdated, onError, onReviewTut
                 </form>
             </section>
             <section className="seller-settings-section rider-settings-panel" id="rider-settings-panel-delivery" role="tabpanel" aria-labelledby="rider-settings-tab-delivery" hidden={tab !== 'delivery'} tabIndex={-1}>
-                <div className="seller-work-heading"><div><p className="eyebrow">Delivery setup</p><h3>Availability &amp; vehicle</h3></div></div>
+                <RiderSettingsHeading icon="delivery" eyebrow="Delivery setup" title="Availability &amp; vehicle" description="Manage whether you receive new delivery offers." />
                 <div className="rider-availability-card">
                     <div><span className={`rider-availability-indicator${settings?.availability === 'AVAILABLE' ? ' online' : ''}`} aria-hidden="true" /><div><strong>{settings?.availability === 'AVAILABLE' ? 'Available for offers' : 'Offline'}</strong><p>{settings?.is_verified ? 'You can manage whether you receive new delivery offers.' : 'Your rider profile is pending verification; offers are unavailable until an administrator verifies it.'}</p></div></div>
                     <div className="rider-availability-actions">
@@ -585,7 +606,7 @@ export function RiderAccountSettings({ user, onUserUpdated, onError, onReviewTut
                 </div>
             </section>
             <section className="seller-settings-section rider-settings-panel" id="rider-settings-panel-vehicle" role="tabpanel" aria-labelledby="rider-settings-tab-vehicle" hidden={tab !== 'vehicle'} tabIndex={-1}>
-                <div className="seller-work-heading"><div><p className="eyebrow">Admin-reviewed change</p><h3>Vehicle information</h3></div></div>
+                <RiderSettingsHeading icon="rider" eyebrow="Admin-reviewed change" title="Vehicle information" description="Review approved details and submit changes for administrator review." />
                 <p>Approved vehicle details remain active while updates are reviewed. License, OR/CR, and vehicle photos are private, encrypted, and available only to you and authorized admin reviewers.</p>
                 <dl className="rider-approved-vehicle">
                 <div><dt>Approved vehicle</dt><dd>{settings?.vehicle_type ?? 'Not recorded'} · {settings?.vehicle_make_model ?? '—'}</dd></div>
@@ -614,7 +635,7 @@ export function RiderAccountSettings({ user, onUserUpdated, onError, onReviewTut
                 </form>
             </section>
             <section className="seller-settings-section rider-settings-panel" id="rider-settings-panel-payout" role="tabpanel" aria-labelledby="rider-settings-tab-payout" hidden={tab !== 'payout'} tabIndex={-1}>
-                <div className="seller-work-heading"><div><p className="eyebrow">Rider earnings</p><h3>Bank or GCash payout destination</h3></div></div>
+                <RiderSettingsHeading icon="finance" eyebrow="Rider earnings" title="Bank or GCash payout destination" description="Manage the destination for eligible rider earnings." />
                 <p>Provide the account where you want your delivery earnings paid. Farmgate stores account details encrypted and only displays masked values. A payout is not initiated when you submit these details.</p>
                 {payoutDestinationLoading ? <p className="seller-loading" role="status">Loading payout destination…</p> : <>
                     {payoutDestination && <div className="seller-payout-destination-summary" aria-live="polite">
@@ -669,19 +690,20 @@ export function RiderAccountSettings({ user, onUserUpdated, onError, onReviewTut
                 </>}
             </section>
             <section className="seller-settings-section rider-settings-panel" id="rider-settings-panel-notifications" role="tabpanel" aria-labelledby="rider-settings-tab-notifications" hidden={tab !== 'notifications'} tabIndex={-1}>
-                <div className="seller-work-heading"><div><p className="eyebrow">Communication controls</p><h3>Notification settings</h3></div></div>
+                <RiderSettingsHeading icon="notifications" eyebrow="Communication controls" title="Notification settings" description="Control in-app updates and direct-message privacy." />
                 <p>These controls apply to in-app updates for your account.</p>
                 <label className="buyer-account-setting-toggle"><span><strong>Order and delivery updates</strong><small>Assignment and order status notifications.</small></span><input type="checkbox" checked={preferences.order_notifications} disabled={preferenceBusy} onChange={(event) => void updatePreference('order_notifications', event.target.checked)} /></label>
                 <label className="buyer-account-setting-toggle"><span><strong>Chat notifications</strong><small>In-app notification when a direct message arrives.</small></span><input type="checkbox" checked={preferences.chat_notifications} disabled={preferenceBusy} onChange={(event) => void updatePreference('chat_notifications', event.target.checked)} /></label>
                 <label className="buyer-account-setting-toggle"><span><strong>Allow direct messages</strong><small>Allow eligible buyers and sellers to start or continue a direct conversation.</small></span><input type="checkbox" checked={preferences.allow_direct_messages} disabled={preferenceBusy} onChange={(event) => void updatePreference('allow_direct_messages', event.target.checked)} /></label>
             </section>
             <section className="seller-settings-section rider-settings-panel" id="rider-settings-panel-location" role="tabpanel" aria-labelledby="rider-settings-tab-location" hidden={tab !== 'location'} tabIndex={-1}>
-                <div className="seller-work-heading"><div><p className="eyebrow">Device permissions</p><h3>Location access</h3></div></div>
+                <RiderSettingsHeading icon="distance" eyebrow="Device permissions" title="Location access" description="Control location permission for delivery matching and verification." />
                 <p>When you are marked available and the rider dashboard is open, FARMGATE periodically uses your device location to match offers within the assignment distance. Active-delivery location sharing is started separately and can be stopped at any time. FARMGATE does not request background location access.</p>
                 <div className="rider-location-permission"><span>Browser permission</span><strong>{permissionLabel}</strong></div>
                 <button className="seller-inline-action" type="button" onClick={() => void checkLocationAccess()} disabled={locationPermission === 'unsupported'}>{locationPermission === 'granted' ? 'Check location access again' : 'Request location access'}</button>
                 <p className="rider-settings-field-note">You can change this permission in your browser or device settings. Delivery location sharing is started separately on an assigned delivery and can be stopped at any time.</p>
             </section>
         </>}
+        </section>
     </section>;
 }

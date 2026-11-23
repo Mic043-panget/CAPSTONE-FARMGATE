@@ -138,14 +138,26 @@ function ProfileMenuIcon({ name }: { name: (typeof profileSections)[number]['ico
     return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
 }
 
-function ProfileAvatar({ user, large = false }: { user: User; large?: boolean }) {
+function ProfileFieldIcon({ name }: { name: 'user' | 'email' | 'phone' | 'password' | 'calendar' }) {
+    const paths: Record<typeof name, React.ReactNode> = {
+        user: <><circle cx="12" cy="8" r="3.5" /><path d="M5 21a7 7 0 0 1 14 0" /></>,
+        email: <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m4 7 8 6 8-6" /></>,
+        phone: <path d="M7 3H5a2 2 0 0 0-2 2c0 8.8 7.2 16 16 16a2 2 0 0 0 2-2v-2l-4-2-2 2a13 13 0 0 1-6-6l2-2-2-4Z" />,
+        password: <><rect x="5" y="10" width="14" height="11" rx="2" /><path d="M8 10V7a4 4 0 1 1 8 0v3" /></>,
+        calendar: <><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" /></>,
+    };
+
+    return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
+}
+
+function ProfileAvatar({ user, large = false, summary = false }: { user: User; large?: boolean; summary?: boolean }) {
     const [imageFailed, setImageFailed] = React.useState(false);
 
     React.useEffect(() => {
         setImageFailed(false);
     }, [user.profile_photo_url]);
 
-    return <div className={`buyer-profile-avatar${large ? ' large' : ''}`}>
+    return <div className={`buyer-profile-avatar${large ? ' large' : ''}${summary ? ' summary' : ''}`}>
         {user.profile_photo_url && !imageFailed ? <img src={user.profile_photo_url} alt={`${user.name}'s profile`} onError={() => setImageFailed(true)} /> : <svg aria-label="Default profile image" role="img" viewBox="0 0 100 100"><circle cx="50" cy="50" r="49" /><path d="M50 52c12 0 20-10 20-23S62 8 50 8 30 17 30 29s8 23 20 23Zm0 8c-20 0-35 11-35 25v7h70v-7c0-14-15-25-35-25Z" /></svg>}
     </div>;
 }
@@ -193,6 +205,9 @@ function orderMatchesFilter(order: BuyerOrder, filter: OrderFilter): boolean {
 
 export function BuyerProfile({ user, onUserUpdated, onLogout, onNavigateHome, onOpenOrder, initialSection = 'profile' }: { user: User; onUserUpdated: (user: User) => void; onLogout: () => void; onNavigateHome: () => void; onOpenOrder: (orderId: number) => void; initialSection?: 'profile' | 'settings' | 'notification-settings' }) {
     const [section, setSection] = React.useState<ProfileSection>(initialSection === 'notification-settings' ? 'settings' : initialSection);
+    const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
+    const mobileMenuButtonRef = React.useRef<HTMLButtonElement | null>(null);
+    const profileSidebarRef = React.useRef<HTMLElement | null>(null);
     const notificationSettingsHeadingRef = React.useRef<HTMLHeadingElement | null>(null);
     const notificationSettingsFocusHandled = React.useRef(false);
     const [editing, setEditing] = React.useState(false);
@@ -238,6 +253,37 @@ export function BuyerProfile({ user, onUserUpdated, onLogout, onNavigateHome, on
     React.useEffect(() => {
         setSection(initialSection === 'notification-settings' ? 'settings' : initialSection);
     }, [initialSection]);
+
+    React.useEffect(() => {
+        if (!mobileMenuOpen) return undefined;
+        const sidebar = profileSidebarRef.current;
+        const firstItem = sidebar?.querySelector<HTMLButtonElement>('.buyer-profile-nav-group > button:not(:disabled)');
+        firstItem?.focus();
+
+        function handleMenuKeyDown(event: KeyboardEvent) {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                setMobileMenuOpen(false);
+                mobileMenuButtonRef.current?.focus();
+                return;
+            }
+            if (event.key !== 'Tab' || !sidebar) return;
+            const focusable = Array.from(sidebar.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), [tabindex]:not([tabindex="-1"])')).filter((item) => item.getClientRects().length > 0);
+            if (!focusable.length) return;
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first.focus();
+            }
+        }
+
+        window.addEventListener('keydown', handleMenuKeyDown);
+        return () => window.removeEventListener('keydown', handleMenuKeyDown);
+    }, [mobileMenuOpen]);
 
     React.useEffect(() => {
         if (section !== 'settings' || initialSection !== 'notification-settings' || notificationSettingsFocusHandled.current) return undefined;
@@ -542,30 +588,64 @@ export function BuyerProfile({ user, onUserUpdated, onLogout, onNavigateHome, on
     const safeReviewPage = Math.min(reviewPage, reviewLastPage);
     const visibleReviews = filteredReviews.slice((safeReviewPage - 1) * buyerOrdersPageSize, safeReviewPage * buyerOrdersPageSize);
 
+    function closeMobileMenu() {
+        setMobileMenuOpen(false);
+        if (mobileMenuOpen) mobileMenuButtonRef.current?.focus();
+    }
+
+    function selectProfileSection(item: ProfileSection) {
+        setSection(item);
+        setEditing(false);
+        closeMobileMenu();
+    }
+
     React.useEffect(() => {
         setOrderPage(1);
         setReviewPage(1);
     }, [orderFilter, orderSearch]);
 
     return <section className="buyer-profile-layout" aria-label="Buyer account">
-        <aside className="buyer-profile-sidebar">
+        {mobileMenuOpen && <button className="buyer-profile-menu-backdrop" type="button" aria-label="Close account menu" onClick={closeMobileMenu} />}
+        <aside
+            className={`buyer-profile-sidebar${mobileMenuOpen ? ' is-mobile-menu-open' : ''}`}
+            id="buyer-profile-sidebar"
+            aria-label={mobileMenuOpen ? undefined : 'Buyer account sections'}
+            aria-labelledby={mobileMenuOpen ? 'buyer-profile-drawer-title' : undefined}
+            aria-modal={mobileMenuOpen ? true : undefined}
+            role={mobileMenuOpen ? 'dialog' : undefined}
+            ref={profileSidebarRef}
+            tabIndex={mobileMenuOpen ? -1 : undefined}
+        >
+            {mobileMenuOpen && <div className="buyer-profile-drawer-header">
+                <h2 id="buyer-profile-drawer-title">Account menu</h2>
+                <button type="button" className="buyer-profile-drawer-close" aria-label="Close account menu" onClick={closeMobileMenu}>
+                    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="m6 6 12 12M18 6 6 18" /></svg>
+                </button>
+            </div>}
             <div className="buyer-profile-identity">
                 <ProfileAvatar user={user} />
-                <div><strong>{user.username ?? user.email.split('@')[0]}</strong><button type="button" onClick={() => { setSection('profile'); setEditing(true); }}>Edit Profile</button></div>
+                <div><strong>{user.name}</strong><small>@{user.username ?? user.email.split('@')[0]}</small><button type="button" onClick={() => { selectProfileSection('profile'); setEditing(true); }}>Edit Profile</button></div>
             </div>
-            <div className="buyer-profile-nav-group">
-                <h2><ProfileMenuIcon name="profile" /> My Account</h2>
-                {profileSections.slice(0, 4).map((item) => <button type="button" key={item.id} className={section === item.id ? 'active' : ''} aria-current={section === item.id ? 'page' : undefined} onClick={() => { setSection(item.id); setEditing(false); }}><ProfileMenuIcon name={item.icon} />{item.label}</button>)}
-            </div>
-            <div className="buyer-profile-nav-group">
-                <h2><ProfileMenuIcon name="orders" /> My Purchases</h2>
-                {profileSections.slice(4).map((item) => <button type="button" key={item.id} className={section === item.id ? 'active' : ''} aria-current={section === item.id ? 'page' : undefined} onClick={() => { setSection(item.id); setEditing(false); }}><ProfileMenuIcon name={item.icon} />{item.label}</button>)}
-            </div>
-            <button className="buyer-profile-logout" type="button" onClick={onLogout}><span aria-hidden="true">↪</span> Log out</button>
+            <nav className="buyer-profile-navigation" aria-label="Account sections">
+                <div className="buyer-profile-nav-group">
+                    <h2><ProfileMenuIcon name="profile" /> My Account</h2>
+                    {profileSections.slice(0, 4).map((item) => <button type="button" key={item.id} className={section === item.id ? 'active' : ''} aria-current={section === item.id ? 'page' : undefined} onClick={() => selectProfileSection(item.id)}><ProfileMenuIcon name={item.icon} />{item.label}</button>)}
+                </div>
+                <div className="buyer-profile-nav-group">
+                    <h2><ProfileMenuIcon name="orders" /> My Purchases</h2>
+                    {profileSections.slice(4).map((item) => <button type="button" key={item.id} className={section === item.id ? 'active' : ''} aria-current={section === item.id ? 'page' : undefined} onClick={() => selectProfileSection(item.id)}><ProfileMenuIcon name={item.icon} />{item.label}</button>)}
+                </div>
+            </nav>
+            <button className="buyer-profile-logout" type="button" onClick={() => { closeMobileMenu(); onLogout(); }}><span aria-hidden="true">↪</span> Log out</button>
         </aside>
 
         <section className="buyer-profile-main" aria-labelledby="buyer-profile-title">
-            <header className="buyer-profile-heading"><div><p className="eyebrow">Buyer account</p><h1 id="buyer-profile-title">{section === 'profile' ? 'My Profile' : selectedLabel}</h1><p>{section === 'profile' ? 'Manage and protect your account' : section === 'orders' ? 'Track your purchases and their status' : section === 'reviews' ? 'Feedback you have shared with sellers' : section === 'password' ? 'Keep your account secure' : section === 'addresses' ? 'Manage your delivery details' : 'Review your account information'}</p></div>{section === 'profile' && <button type="button" className="buyer-profile-edit" onClick={() => setEditing((current) => !current)}>{editing ? 'Cancel editing' : 'Edit profile'}</button>}</header>
+            <header className="buyer-profile-heading"><div><p className="eyebrow">Buyer account</p><h1 id="buyer-profile-title">{section === 'profile' ? 'My Profile' : selectedLabel}</h1><p>{section === 'profile' ? 'Manage and protect your account' : section === 'orders' ? 'Track your purchases and their status' : section === 'reviews' ? 'Feedback you have shared with sellers' : section === 'password' ? 'Keep your account secure' : section === 'addresses' ? 'Manage your delivery details' : 'Review your account information'}</p></div><div className="buyer-profile-heading-actions">{section === 'profile' && <button type="button" className="buyer-profile-edit" onClick={() => setEditing((current) => !current)}>{editing ? 'Cancel editing' : 'Edit profile'}</button>}<button ref={mobileMenuButtonRef} type="button" className="buyer-profile-menu-toggle" aria-label="Open account sections" aria-expanded={mobileMenuOpen} aria-controls="buyer-profile-sidebar" onClick={() => setMobileMenuOpen(true)}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 6h16M4 12h16M4 18h16" /></svg><span>Menu</span></button></div></header>
+
+            {section === 'profile' && <div className="buyer-profile-mobile-summary">
+                <ProfileAvatar user={user} summary />
+                <div><strong>{user.name}</strong><small>@{user.username ?? user.email.split('@')[0]}</small><button type="button" onClick={() => { setEditing(true); }}>Edit Profile</button></div>
+            </div>}
 
             <div className="buyer-profile-content">
                 {section === 'profile' && <>
@@ -579,12 +659,12 @@ export function BuyerProfile({ user, onUserUpdated, onLogout, onNavigateHome, on
                             <label>Member since<input value={memberSince(user.created_at)} readOnly /></label>
                             <button type="submit" disabled={saving}>{saving ? 'Saving...' : 'Save profile'}</button>
                         </form> : <dl className="buyer-profile-details">
-                            <div><dt>Name</dt><dd>{user.name}</dd></div>
-                            <div><dt>Username</dt><dd>{user.username ?? user.email.split('@')[0]}</dd></div>
-                            <div><dt>Email</dt><dd>{user.email} <span className={`profile-verification${user.email_verified_at ? ' verified' : ''}`}>{user.email_verified_at ? 'Verified' : 'Not verified'}</span></dd></div>
-                            <div><dt>Phone Number</dt><dd>{user.phone_number || 'Not added yet'} <span className={`profile-verification${user.phone_verified_at ? ' verified' : ''}`}>{user.phone_verified_at ? 'Verified' : user.phone_number ? 'Not verified' : 'Not added'}</span></dd></div>
-                            <div><dt>Password</dt><dd>••••••••</dd></div>
-                            <div><dt>Member Since</dt><dd>{memberSince(user.created_at)}</dd></div>
+                            <div><dt><ProfileFieldIcon name="user" /><span>Name</span></dt><dd>{user.name}</dd></div>
+                            <div><dt><ProfileFieldIcon name="user" /><span>Username</span></dt><dd>{user.username ?? user.email.split('@')[0]}</dd></div>
+                            <div><dt><ProfileFieldIcon name="email" /><span>Email</span></dt><dd>{user.email} <span className={`profile-verification${user.email_verified_at ? ' verified' : ''}`}>{user.email_verified_at ? 'Verified' : 'Not verified'}</span></dd></div>
+                            <div><dt><ProfileFieldIcon name="phone" /><span>Phone Number</span></dt><dd>{user.phone_number || 'Not added yet'} <span className={`profile-verification${user.phone_verified_at ? ' verified' : ''}`}>{user.phone_verified_at ? 'Verified' : user.phone_number ? 'Not verified' : 'Not added'}</span></dd></div>
+                            <div><dt><ProfileFieldIcon name="password" /><span>Password</span></dt><dd>••••••••</dd></div>
+                            <div><dt><ProfileFieldIcon name="calendar" /><span>Member Since</span></dt><dd>{memberSince(user.created_at)}</dd></div>
                         </dl>}
                     </div>
                     <aside className="buyer-profile-photo-panel">

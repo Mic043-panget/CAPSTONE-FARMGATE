@@ -5,6 +5,12 @@ The unified chat API is available to authenticated Sanctum users under
 conversations. The server derives the actor and role from the authenticated
 user; clients must not submit an actor, role, seller ID, or buyer ID.
 
+The public `POST /api/chat/guest-messages` endpoint supports AI-only visitor
+chat. It requires the web CSRF token and is rate-limited. Guest turns are not
+saved; the client may submit up to 10 previous user/assistant messages to
+continue a conversation in the current browser session. Guest requests receive
+no account, report, or other private context, and cannot start direct chats.
+
 ## Provider configuration
 
 Set these variables in the Laravel backend environment. Keep the API key

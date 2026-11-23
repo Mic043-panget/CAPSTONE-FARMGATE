@@ -2,6 +2,7 @@ import React from 'react';
 import api, { initializeCsrf } from '../../lib/api';
 import { confirmAction, showSuccess } from '../../lib/alerts';
 import { Pagination } from '../../shared/components/Pagination';
+import { LoadingSkeleton } from '../../shared/components/LoadingSkeleton';
 import { FarmgateDetailDialog } from '../shared/FarmgateDetailDialog';
 
 type EventStatus = 'SUBMITTED' | 'APPROVED' | 'REJECTED' | 'CANCELLED';
@@ -36,6 +37,7 @@ export function EventReviewQueue({ onError, onCountChange }: { onError: (message
     const [sort, setSort] = React.useState<SortOption>('submitted_desc');
     const [reason, setReason] = React.useState('');
     const [page, setPage] = React.useState(1);
+    const [filtersOpen, setFiltersOpen] = React.useState(false);
     const [lastPage, setLastPage] = React.useState(1);
     const [total, setTotal] = React.useState(0);
     const [loading, setLoading] = React.useState(true);
@@ -119,33 +121,37 @@ export function EventReviewQueue({ onError, onCountChange }: { onError: (message
 
     return <section className="admin-event-queue" aria-labelledby="admin-event-queue-title">
         <div className="admin-event-heading">
-            <div><h2 id="admin-event-queue-title">Event Review</h2><p>Search and review submitted events before they appear publicly.</p></div>
-            <label>Status
-                <select value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }}>
+            <div><p className="eyebrow">Promotion moderation</p><h2 id="admin-event-queue-title">Event Review</h2><p>Review submitted events before they appear publicly.</p></div>
+        </div>
+        <div className="admin-event-filter-panel">
+            <button type="button" className="admin-event-filter-toggle" aria-expanded={filtersOpen} aria-controls="admin-event-filters" onClick={() => setFiltersOpen((open) => !open)}>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16l-6.5 7.5v5L10 19v-6.5z" /></svg>
+                <span>Filters</span>
+            </button>
+            <div id="admin-event-filters" className={`admin-event-controls${filtersOpen ? ' is-open' : ''}`}>
+                <label>Search<input type="search" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Title, organizer, or category" /></label>
+                <label>Status<select value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }}>
                     <option value="">All statuses</option>
                     <option value="SUBMITTED">Submitted</option>
                     <option value="APPROVED">Approved</option>
                     <option value="REJECTED">Rejected</option>
                     <option value="CANCELLED">Cancelled</option>
-                </select>
-            </label>
+                </select></label>
+                <label>Sort by<select value={sort} onChange={(event) => { setSort(event.target.value as SortOption); setPage(1); }}>
+                    <option value="submitted_desc">Newest submitted</option>
+                    <option value="submitted_asc">Oldest submitted</option>
+                    <option value="title_asc">Title (A–Z)</option>
+                    <option value="title_desc">Title (Z–A)</option>
+                    <option value="organizer_asc">Organizer (A–Z)</option>
+                    <option value="event_date_asc">Event date (earliest)</option>
+                    <option value="event_date_desc">Event date (latest)</option>
+                    <option value="status_asc">Status</option>
+                </select></label>
+            </div>
         </div>
-        <div className="admin-event-controls">
-            <label>Search events<input type="search" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Title, organizer, or category" /></label>
-            <label>Sort by<select value={sort} onChange={(event) => { setSort(event.target.value as SortOption); setPage(1); }}>
-                <option value="submitted_desc">Newest submitted</option>
-                <option value="submitted_asc">Oldest submitted</option>
-                <option value="title_asc">Title (A–Z)</option>
-                <option value="title_desc">Title (Z–A)</option>
-                <option value="organizer_asc">Organizer (A–Z)</option>
-                <option value="event_date_asc">Event date (earliest)</option>
-                <option value="event_date_desc">Event date (latest)</option>
-                <option value="status_asc">Status</option>
-            </select></label>
-        </div>
-        {!loading && <p className="admin-event-count" aria-live="polite">{total} {total === 1 ? 'event' : 'events'}</p>}
+        {!loading && !loadError && <p className="admin-event-count" aria-live="polite"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h10l4 4v14H5z" /><path d="M14 3v5h5M8 12h8M8 16h8" /></svg>{total.toLocaleString()} {status === 'SUBMITTED' ? (total === 1 ? 'submitted event' : 'submitted events') : (total === 1 ? 'event' : 'events')}</p>}
         {loadError && <div className="admin-event-load-error" role="alert"><p>{loadError}</p><button type="button" onClick={() => void reload()}>Try again</button></div>}
-        {loading ? <p role="status">Loading event submissions...</p> : events.length ? <>
+        {loading ? <LoadingSkeleton variant="table" count={3} columns={7} label="Loading event submissions" /> : events.length ? <>
             <div className="data-table-wrap admin-event-table-wrap"><table className="data-table admin-event-table">
                 <thead><tr><th>Event title</th><th>Organizer</th><th>Category</th><th>Submitted</th><th>Event date</th><th>Status</th><th>Action</th></tr></thead>
                 <tbody>{events.map((event) => <tr key={event.id}>
@@ -158,6 +164,28 @@ export function EventReviewQueue({ onError, onCountChange }: { onError: (message
                     <td data-label="Action"><button type="button" className="admin-event-details-toggle" onClick={() => void openReview(event)}>Review</button></td>
                 </tr>)}</tbody>
             </table></div>
+            <div className="admin-event-mobile-cards">
+                {events.map((event) => <article className="admin-event-mobile-card" key={event.id}>
+                    <div className="admin-event-mobile-main">
+                        <div className={`admin-event-mobile-image${event.image_url ? '' : ' is-placeholder'}`}>
+                            {event.image_url ? <img src={event.image_url} alt={`${event.title} event`} loading="lazy" /> : <svg viewBox="0 0 48 48" role="img" aria-label="Event image unavailable"><circle cx="35" cy="12" r="5" /><path d="M4 37 17 22l8 9 5-6 14 12H4Z" /><path d="M8 42h32" /></svg>}
+                        </div>
+                        <div className="admin-event-mobile-content">
+                            <span className="admin-event-mobile-category">{event.category?.replaceAll('_', ' ') ?? 'Seller event'}</span>
+                            <h3>{event.title}</h3>
+                            <dl>
+                                <div><dt>Organizer</dt><dd>{event.organizer.name}</dd></div>
+                                <div><dt>Event date</dt><dd>{formatDate(event.starts_at, event.timezone)}</dd></div>
+                                <div><dt>Submitted</dt><dd>{formatDate(event.created_at)}</dd></div>
+                            </dl>
+                        </div>
+                    </div>
+                    <footer>
+                        <span className={`status-pill status-${event.status.toLowerCase()}`}>{event.status.replaceAll('_', ' ')}</span>
+                        <button type="button" className="admin-event-mobile-review" onClick={() => void openReview(event)}>Review <span aria-hidden="true">→</span></button>
+                    </footer>
+                </article>)}
+            </div>
             <Pagination page={page} lastPage={lastPage} onChange={setPage} />
         </> : !loadError && <div className="admin-empty-state"><h3>No matching event submissions</h3><p>Try changing the search or status filter.</p></div>}
 

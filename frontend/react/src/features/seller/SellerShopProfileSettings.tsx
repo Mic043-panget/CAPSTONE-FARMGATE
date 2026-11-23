@@ -1,5 +1,6 @@
 import React from 'react';
 import api from '../../lib/api';
+import { SettingsCategoryIcon } from '../shared/SettingsCategoryIcon';
 
 type VerificationStatus = 'NOT_SUBMITTED' | 'PENDING' | 'VERIFIED' | 'REJECTED';
 type ShopProfile = {
@@ -176,8 +177,9 @@ export function SellerShopProfileSettings({ defaultShopName, onSaved }: { defaul
     const preview = imagePreview ?? profile?.shop_image_url ?? null;
 
     return <div className="seller-shop-profile-settings">
-        <div className="seller-work-heading">
-            <div><p className="eyebrow">Public storefront</p><h3 id="seller-shop-profile-heading">Shop profile</h3></div>
+        <div className="seller-work-heading settings-category-heading">
+            <span className="settings-section-icon"><SettingsCategoryIcon name="seller" /></span>
+            <div><p className="eyebrow">Public storefront</p><h3 id="seller-shop-profile-heading">Shop profile</h3><p>Manage the public storefront and identity verification status.</p></div>
         </div>
         {loading ? <p className="seller-loading" role="status">Loading shop profile...</p> : <>
             <section className="seller-shop-settings-card" aria-labelledby="seller-shop-branding-title">

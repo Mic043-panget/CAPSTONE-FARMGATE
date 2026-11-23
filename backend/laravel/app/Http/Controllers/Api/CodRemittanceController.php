@@ -455,11 +455,28 @@ class CodRemittanceController extends Controller
     public function sellerPayouts(Request $request): JsonResponse
     {
         abort_unless($request->user()?->role === Role::SELLER, 403);
-        $payouts = SellerPayout::query()
+        $data = $request->validate([
+            'search' => ['nullable', 'string', 'max:120'],
+            'status' => ['nullable', Rule::in(['PENDING_SETUP', 'PENDING', 'PROCESSING', 'FAILED', 'PAID', 'RETURNED', 'DISPUTED'])],
+            'sort' => ['nullable', Rule::in(['newest', 'oldest', 'amount_desc', 'amount_asc'])],
+        ]);
+        $query = SellerPayout::query()
             ->where('seller_id', $request->user()->id)
-            ->with(['order:id,order_reference', 'destination', 'histories.actor:id,name'])
-            ->latest()
-            ->paginate(20);
+            ->with(['order:id,order_reference', 'destination', 'histories.actor:id,name']);
+        if (filled($data['status'] ?? null)) {
+            $query->where('status', $data['status']);
+        }
+        if (filled($data['search'] ?? null)) {
+            $term = trim($data['search']);
+            $query->whereHas('order', fn (Builder $order) => $order->where('order_reference', 'like', '%'.$term.'%'));
+        }
+        $query = match ($data['sort'] ?? 'newest') {
+            'oldest' => $query->orderBy('created_at')->orderBy('id'),
+            'amount_desc' => $query->orderByDesc('amount_cents')->orderByDesc('id'),
+            'amount_asc' => $query->orderBy('amount_cents')->orderBy('id'),
+            default => $query->orderByDesc('created_at')->orderByDesc('id'),
+        };
+        $payouts = $query->paginate(20)->withQueryString();
         $payouts->getCollection()->each(function (SellerPayout $payout): void {
             $payout->setAttribute('receipt_url', filled($payout->receipt_path) ? route('seller-payouts.receipt', $payout) : null);
             $payout->setAttribute('destination_masked', $this->destinationSummary($payout->destination));
@@ -467,7 +484,31 @@ class CodRemittanceController extends Controller
             $payout->unsetRelation('histories');
         });
 
-        return response()->json(['payouts' => $payouts]);
+        $sellerId = $request->user()->id;
+        $summary = SellerPayout::query()
+            ->where('seller_id', $sellerId)
+            ->selectRaw(
+                'COUNT(*) AS total_count,
+                COALESCE(SUM(amount_cents), 0) AS total_amount_cents,
+                COALESCE(SUM(CASE WHEN status IN (?, ?) THEN 1 ELSE 0 END), 0) AS pending_count,
+                COALESCE(SUM(CASE WHEN status IN (?, ?) THEN amount_cents ELSE 0 END), 0) AS pending_amount_cents,
+                COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) AS processing_count,
+                COALESCE(SUM(CASE WHEN status = ? THEN amount_cents ELSE 0 END), 0) AS processing_amount_cents,
+                COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) AS paid_count,
+                COALESCE(SUM(CASE WHEN status = ? THEN amount_cents ELSE 0 END), 0) AS paid_amount_cents',
+                ['PENDING_SETUP', 'PENDING', 'PENDING_SETUP', 'PENDING', 'PROCESSING', 'PROCESSING', 'PAID', 'PAID'],
+            )
+            ->first();
+
+        return response()->json([
+            'payouts' => $payouts,
+            'summary' => [
+                'total' => ['count' => (int) $summary->total_count, 'amount_cents' => (int) $summary->total_amount_cents],
+                'pending' => ['count' => (int) $summary->pending_count, 'amount_cents' => (int) $summary->pending_amount_cents],
+                'processing' => ['count' => (int) $summary->processing_count, 'amount_cents' => (int) $summary->processing_amount_cents],
+                'paid' => ['count' => (int) $summary->paid_count, 'amount_cents' => (int) $summary->paid_amount_cents],
+            ],
+        ]);
     }
 
     public function remittanceProof(Request $request, CodRemittance $remittance): StreamedResponse

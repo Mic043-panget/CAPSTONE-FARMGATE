@@ -180,12 +180,18 @@ export function NotificationDeviceSettingsControls({
                 ? 'Device notifications are not configured on this Farmgate server. In-app notifications and email remain available.'
                 : 'Allow browser permission to receive important updates on this device, even when Farmgate is closed.');
 
-    return <div className="buyer-notification-device-alerts">
-        <button type="button" onClick={() => void enableBrowserNotifications()} disabled={pushBusy || !pushConfig || pushSubscribed || browserPermission === 'unsupported' || pushConfig?.enabled === false}>
-            {pushBusy ? 'Updating...' : pushSubscribed ? 'Device notifications enabled' : 'Enable device notifications'}
-        </button>
-        {pushSubscribed && <button type="button" onClick={() => void disableDeviceNotifications()} disabled={pushBusy}>Disable on this device</button>}
+    return <div className="farmgate-notification-device">
+        <span className="farmgate-notification-device-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg>
+        </span>
+        <strong>{pushSubscribed ? 'Device notifications enabled' : 'Enable device notifications'}</strong>
         <p aria-live="polite">{message}</p>
+        <div className="farmgate-notification-device-actions">
+            {!pushSubscribed && <button type="button" onClick={() => void enableBrowserNotifications()} disabled={pushBusy || !pushConfig || browserPermission === 'unsupported' || pushConfig?.enabled === false}>
+                {pushBusy ? 'Updating...' : 'Enable'}
+            </button>}
+            {pushSubscribed && <button type="button" onClick={() => void disableDeviceNotifications()} disabled={pushBusy}>{pushBusy ? 'Updating...' : 'Disable on this device'}</button>}
+        </div>
     </div>;
 }
 

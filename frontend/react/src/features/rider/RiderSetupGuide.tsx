@@ -35,6 +35,10 @@ type RiderPayoutDestination = {
     wallet_number_masked: string | null;
     status: string;
 } | null;
+type RiderPayoutMethod = {
+    method_type: 'BANK' | 'GCASH';
+    status: string;
+};
 type SetupData = {
     application: RiderApplication;
     settings: RiderSettings;
@@ -114,26 +118,19 @@ export function RiderSetupGuide({ user, refreshKey, onOpenSection, onReviewTutor
         setLoading(true);
         setError('');
         try {
-            const [applicationResponse, settingsResponse, preferencesResponse, earningsResponse] = await Promise.all([
+            const [applicationResponse, settingsResponse, preferencesResponse, payoutResponse] = await Promise.all([
                 api.get<{ application: RiderApplication }>('/api/rider/application'),
                 api.get<{ settings: RiderSettings }>('/api/riders/settings'),
                 api.get<{ preferences_reviewed_at: string | null }>('/api/profile/settings'),
-                api.get<{ configuration_status: 'CONFIGURED' | 'NOT_CONFIGURED' }>('/api/rider/earnings', { params: { page: 1 } }),
+                api.get<{ destination: RiderPayoutDestination; methods: RiderPayoutMethod[] }>('/api/rider/payout-destination'),
             ]);
-            const configurationStatus = earningsResponse.data.configuration_status;
-            if (configurationStatus !== 'CONFIGURED' && configurationStatus !== 'NOT_CONFIGURED') {
-                throw new Error('Rider payout availability could not be determined.');
-            }
-            const payoutEnabled = configurationStatus === 'CONFIGURED';
-            const payoutResponse = payoutEnabled
-                ? await api.get<{ destination: RiderPayoutDestination }>('/api/rider/payout-destination')
-                : null;
+            const payoutEnabled = payoutResponse.data.methods.some((method) => method.status === 'ACTIVE');
 
             setData({
                 application: applicationResponse.data.application,
                 settings: settingsResponse.data.settings,
                 payoutEnabled,
-                payoutDestination: payoutResponse?.data.destination ?? null,
+                payoutDestination: payoutResponse.data.destination,
                 preferencesReviewedAt: preferencesResponse.data.preferences_reviewed_at,
             });
         } catch (requestError: unknown) {

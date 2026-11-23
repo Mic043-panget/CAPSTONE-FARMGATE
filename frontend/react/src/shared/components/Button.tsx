@@ -58,6 +58,7 @@ export function Button({
 type ViewDetailsActionProps = {
     onClick: React.MouseEventHandler<HTMLButtonElement>;
     contextLabel: string;
+    trailingIcon?: React.ReactNode;
     expanded?: boolean;
     controls?: string;
     disabled?: boolean;
@@ -68,6 +69,7 @@ type ViewDetailsActionProps = {
 export function ViewDetailsAction({
     onClick,
     contextLabel,
+    trailingIcon,
     expanded,
     controls,
     disabled,
@@ -83,6 +85,7 @@ export function ViewDetailsAction({
         onClick={onClick}
         disabled={disabled}
         loading={loading}
+        trailingIcon={trailingIcon}
         aria-label={`${label} for ${contextLabel}`}
         aria-expanded={expanded}
         aria-controls={controls}

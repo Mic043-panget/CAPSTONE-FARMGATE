@@ -335,12 +335,28 @@ class CodRemittanceWorkflowTest extends TestCase
             ->assertJsonPath('payouts.data.0.amount_cents', 8000)
             ->assertJsonPath('payouts.data.0.order.order_reference', $actors['order']->order_reference)
             ->assertJsonPath('payouts.data.0.destination_masked.identifier', '•••• 9012')
-            ->assertJsonMissingPath('payouts.data.0.destination.account_number');
+            ->assertJsonMissingPath('payouts.data.0.destination.account_number')
+            ->assertJsonPath('summary.total.count', 1)
+            ->assertJsonPath('summary.total.amount_cents', 8000)
+            ->assertJsonPath('summary.pending.amount_cents', 0)
+            ->assertJsonPath('summary.processing.amount_cents', 0)
+            ->assertJsonPath('summary.paid.amount_cents', 8000);
+        $this->actingAs($actors['seller'])
+            ->getJson('/api/seller/payouts?search='.$actors['order']->order_reference.'&status=PAID&sort=oldest')
+            ->assertOk()
+            ->assertJsonPath('payouts.total', 1)
+            ->assertJsonPath('payouts.data.0.order.order_reference', $actors['order']->order_reference);
+        $this->actingAs($actors['seller'])
+            ->getJson('/api/seller/payouts?search=not-a-real-order-reference')
+            ->assertOk()
+            ->assertJsonPath('payouts.total', 0);
         $otherSeller = User::factory()->create(['role' => Role::SELLER]);
         $this->actingAs($otherSeller)
             ->getJson('/api/seller/payouts')
             ->assertOk()
-            ->assertJsonCount(0, 'payouts.data');
+            ->assertJsonCount(0, 'payouts.data')
+            ->assertJsonPath('summary.total.count', 0)
+            ->assertJsonPath('summary.total.amount_cents', 0);
     }
 
     public function test_non_admin_cannot_reconcile_or_record_a_payout_and_online_payments_are_not_in_cod_payout_flow(): void

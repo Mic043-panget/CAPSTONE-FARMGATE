@@ -106,6 +106,16 @@ const APPROVED_POLICY_SECTIONS: PolicySections = {
     failed_returned: `Farmgate does not currently have a configured and verified automated PayMongo seller payout integration. PayMongo payouts must not be represented as active until the actual account capability and integration are configured and verified. For a manual external transfer, an authorized administrator records it as paid only after confirming the transfer completed outside Farmgate and recording the external reference, amount, and date; a private receipt is optional. Failed, returned, or unverified transfers remain unpaid or need review; an administrator documents the outcome and notifies the seller without exposing full destination details.`,
     dispute_corrections: `Sellers may report a missing, delayed, incorrect, failed, or returned payout through Farmgate support. Farmgate reviews the payout record and available evidence, communicates the outcome, and documents any correction. An administrator must provide a reason for a status correction or override, and original transaction history must be preserved. The application does not calculate or record separate seller credits, discretionary amount adjustments, or additional deductions. Holds are limited to amounts reasonably related to an unresolved refund, return, complaint, reversal, suspected error, or legal requirement; unaffected amounts may continue where the system supports it.`,
 };
+function PaymentsSettingsIcon({ name }: { name: 'bank' | 'qr' | 'review' | 'policy' | 'controls' | 'verified' }) {
+    return <span className="payments-setting-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        {name === 'bank' ? <><path d="m3 9 9-6 9 6M5 10v9M9 10v9M15 10v9M19 10v9M3 21h18M2 9h20" /></>
+            : name === 'qr' ? <><path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h3v3h-3zM19 14h2M19 18v3M17 21h-3" /></>
+                : name === 'review' ? <><circle cx="12" cy="12" r="9" /><path d="m7.5 12.5 3 3 6-7" /></>
+                    : name === 'policy' ? <><path d="M6 3h9l4 4v14H6zM15 3v5h5M9 12h7M9 16h7" /></>
+                        : name === 'controls' ? <><circle cx="12" cy="12" r="3" /><path d="m19.4 15 .1.1 1.2 1-1.6 2.8-1.5-.6a8 8 0 0 1-1.5.9l-.2 1.6h-3.2l-.2-1.6a8 8 0 0 1-1.5-.9l-1.5.6-1.6-2.8 1.2-1a8 8 0 0 1 0-1.8l-1.2-1L9 9.4l1.5.6a8 8 0 0 1 1.5-.9l.2-1.6h3.2l.2 1.6a8 8 0 0 1 1.5.9l1.5-.6 1.6 2.8-1.2 1a8 8 0 0 1 .4 1.8Z" /></>
+                            : <><path d="m12 3 8 3v5c0 5-3.5 8-8 10-4.5-2-8-5-8-10V6z" /><path d="m8 12 2.5 2.5L16 9" /></>}
+    </svg></span>;
+}
 function changedPolicySections(baseText: string, amendmentText: string): { label: string; previous: string; amended: string }[] {
     const base = parsePolicySections(baseText);
     const amendment = parsePolicySections(amendmentText);
@@ -154,6 +164,7 @@ export function CodReceivingSettings({
     const [summary, setSummary] = React.useState<Summary | null>(null);
     const [policies, setPolicies] = React.useState<PayoutPolicyPage | null>(null);
     const [loading, setLoading] = React.useState(true);
+    const [loadError, setLoadError] = React.useState('');
     const [busy, setBusy] = React.useState(false);
     const [currentAdminId, setCurrentAdminId] = React.useState<number | null>(null);
     const [destinationPage, setDestinationPage] = React.useState(1);
@@ -180,6 +191,7 @@ export function CodReceivingSettings({
 
     const refresh = React.useCallback(async () => {
         setLoading(true);
+        setLoadError('');
         try {
             const [methodsResponse, userResponse, summaryResponse, destinationResponse, policyResponse] = await Promise.all([
                 api.get<{ methods: ReceivingMethod[] }>('/api/admin/cod/receiving-methods'),
@@ -194,7 +206,9 @@ export function CodReceivingSettings({
             setDestinations(destinationResponse.data.destinations);
             setPolicies(policyResponse.data.policies);
         } catch (error: any) {
-            onError(error.userMessage ?? error.response?.data?.message ?? 'Payment settings could not be loaded.');
+            const message = error.userMessage ?? error.response?.data?.message ?? 'Payment settings could not be loaded.';
+            setLoadError(message);
+            onError(message);
         } finally {
             setLoading(false);
         }
@@ -493,20 +507,22 @@ export function CodReceivingSettings({
 
     return <section className="payments-settings-page" aria-labelledby="cod-receiving-settings-title">
         <div className="payments-page-heading">
-            <div><p className="eyebrow">Admin · finance controls</p><h2 id="cod-receiving-settings-title">Payment and COD Settings</h2><p>Configure inbound methods and review seller payout destinations. This page does not initiate transfers.</p></div>
+            <div><p className="eyebrow">Admin · finance controls</p><h2 id="cod-receiving-settings-title">Payment and COD Settings</h2><p>Manage receiving methods and payout controls.</p></div>
             <button type="button" className="seller-inline-action" onClick={() => void refresh()} disabled={loading}>{loading ? 'Loading…' : 'Refresh'}</button>
         </div>
         {message && <p className="payments-success" role="status">{message}</p>}
-        {loading ? <p role="status">Loading payment configuration…</p> : <>
+        {loading ? <p className="payments-loading" role="status">Loading payment configuration…</p>
+            : loadError ? <p className="payments-load-error" role="alert">{loadError} <button type="button" onClick={() => void refresh()}>Try again</button></p>
+                : <>
             <section className="payments-settings-card" aria-labelledby="payments-method-summary-title">
-                <div className="payments-section-heading"><div><h3 id="payments-method-summary-title">Farmgate COD receiving</h3><p>Configure where riders send COD collections.</p></div></div>
+                <div className="payments-section-heading"><div><h3 id="payments-method-summary-title">Farmgate COD receiving</h3></div></div>
                 <div className="payments-configuration-grid">
-                    <article><span>Active bank accounts</span><strong>{summary?.receiving_methods.active_bank ?? 0}</strong></article>
-                    <article><span>Active bank QR codes</span><strong>{summary?.receiving_methods.active_qr ?? 0}</strong></article>
-                    <article><span>Awaiting verification</span><strong>{summary?.receiving_methods.pending_verification ?? 0}</strong></article>
+                    <article><PaymentsSettingsIcon name="bank" /><span>Active bank methods</span><strong>{summary?.receiving_methods.active_bank ?? 0}</strong></article>
+                    <article><PaymentsSettingsIcon name="qr" /><span>Active QR methods</span><strong>{summary?.receiving_methods.active_qr ?? 0}</strong></article>
+                    <article><PaymentsSettingsIcon name="review" /><span>Needs verification</span><strong>{summary?.receiving_methods.pending_verification ?? 0}</strong></article>
                 </div>
                 <details className="payments-provider-details">
-                    <summary>PayMongo receiving setup · {summary?.payment_providers.paymongo.qr_receiving_ready ? 'Ready' : 'Setup required'}</summary>
+                    <summary>PayMongo setup · {summary?.payment_providers.paymongo.qr_receiving_ready ? 'Ready' : 'Setup required'}</summary>
                     <div className="payments-provider-status" role="status" aria-label="PayMongo configuration status">
                         <p>Server credentials <strong>{summary?.payment_providers.paymongo.credentials_configured ? 'Configured' : 'Missing'}</strong></p>
                         <p>Test-mode API key <strong>{summary?.payment_providers.paymongo.test_mode_credentials ? 'Valid test key' : 'Missing or not a test key'}</strong></p>
@@ -521,39 +537,53 @@ export function CodReceivingSettings({
                 </div>
                 <div className="payments-settings-subsection">
                     <h4>Receiving QR codes</h4>
-                    <p className="payments-inline-note">Upload a bank receive-money QR or a configured PayMongo receiving QR. Riders enter the exact amount; Farmgate verifies receipt manually.</p>
+                    <p className="payments-inline-note">Receive-only QR codes; admins verify receipt manually.</p>
                     {!qrMethods.length ? <p className="payments-inline-empty">No receive-only QR method configured.</p> : qrMethods.map((method) => <ReceivingMethodCard key={method.id} method={method} currentAdminId={currentAdminId} busy={busy} reason={verificationReason[method.id] ?? ''} confirmed={confirmation[method.id] ?? false} setReason={(reason) => setVerificationReason((current) => ({ ...current, [method.id]: reason }))} setConfirmed={(checked) => setConfirmation((current) => ({ ...current, [method.id]: checked }))} onVerify={() => void verifyMethod(method)} onDeactivate={() => void deactivateMethod(method)} onEnable={() => void enableMethod(method)} onUpdate={(data) => void updateMethod(method, data)} />)}
+                    <details className="payments-more-information">
+                        <summary>More information</summary>
+                        <p>Riders enter the exact amount. Farmgate does not mark a receipt complete until an admin verifies the funds.</p>
+                    </details>
+                    <details className="payments-configure-method">
+                        <summary>Add receiving method</summary>
+                        <form className="cod-receiving-form seller-account-form" onSubmit={(event) => void save(event)}>
+                            <label>Receiving type<select value={methodType} onChange={(event) => setMethodType(event.target.value as 'BANK_TRANSFER' | 'BANK_QR' | 'PAYMONGO_QR')}><option value="BANK_TRANSFER">Bank account</option><option value="BANK_QR">Online banking QR</option><option value="PAYMONGO_QR">PayMongo receiving QR</option></select></label>
+                            <label>Display label<input required maxLength={100} value={label} onChange={(event) => setLabel(event.target.value)} /></label>
+                            <label>Rider instructions<textarea required maxLength={1000} value={instructions} onChange={(event) => setInstructions(event.target.value)} /></label>
+                            <label>Farmgate account holder<input required maxLength={120} value={accountHolder} onChange={(event) => setAccountHolder(event.target.value)} /></label>
+                            <label>Bank or receiving institution<input required maxLength={100} value={bankName} onChange={(event) => setBankName(event.target.value)} /></label>
+                            <label>Receiving account identifier<input required minLength={5} maxLength={40} autoComplete="off" value={accountNumber} onChange={(event) => setAccountNumber(event.target.value)} /></label>
+                            {(methodType === 'BANK_QR' || methodType === 'PAYMONGO_QR') && <label>{methodType === 'PAYMONGO_QR' ? 'PayMongo receiving QR' : 'Bank receive-money QR'}<input required type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setQr(event.target.files?.[0] ?? null)} /></label>}
+                            <p className="cod-receiving-form-note">Another admin must verify new methods before use.</p>
+                            <button className="seller-inline-action" type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save inactive receiving method'}</button>
+                        </form>
+                    </details>
                 </div>
-                <details className="payments-configure-method">
-                    <summary>Add receiving method</summary>
-                    <form className="cod-receiving-form seller-account-form" onSubmit={(event) => void save(event)}>
-                        <label>Receiving type<select value={methodType} onChange={(event) => setMethodType(event.target.value as 'BANK_TRANSFER' | 'BANK_QR' | 'PAYMONGO_QR')}><option value="BANK_TRANSFER">Bank account</option><option value="BANK_QR">Online banking QR</option><option value="PAYMONGO_QR">PayMongo receiving QR</option></select></label>
-                        <label>Display label<input required maxLength={100} value={label} onChange={(event) => setLabel(event.target.value)} /></label>
-                        <label>Rider instructions<textarea required maxLength={1000} value={instructions} onChange={(event) => setInstructions(event.target.value)} /></label>
-                        <label>Farmgate account holder<input required maxLength={120} value={accountHolder} onChange={(event) => setAccountHolder(event.target.value)} /></label>
-                        <label>Bank or receiving institution<input required maxLength={100} value={bankName} onChange={(event) => setBankName(event.target.value)} /></label>
-                        <label>Receiving account identifier<input required minLength={5} maxLength={40} autoComplete="off" value={accountNumber} onChange={(event) => setAccountNumber(event.target.value)} /></label>
-                        {(methodType === 'BANK_QR' || methodType === 'PAYMONGO_QR') && <label>{methodType === 'PAYMONGO_QR' ? 'PayMongo receiving QR' : 'Bank receive-money QR'}<input required type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setQr(event.target.files?.[0] ?? null)} /></label>}
-                        <p className="cod-receiving-form-note">New methods stay pending until another admin verifies them.</p>
-                        <button className="seller-inline-action" type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save inactive receiving method'}</button>
-                    </form>
-                </details>
             </section>
 
             <section className="payments-settings-card" aria-labelledby="seller-payout-policy-title">
-                <div className="payments-section-heading"><div><h3 id="seller-payout-policy-title">Seller Payout Policy</h3><p>Initial policy terms must be entered by an authorized admin. Amendment drafts show the proposed terms beside the currently effective version; approval and publication remain separate audited actions.</p></div></div>
+                <div className="payments-section-heading"><div><h3 id="seller-payout-policy-title">Seller Payout Policy</h3></div></div>
+                <details className="payments-more-information">
+                    <summary>Policy workflow</summary>
+                    <p>Authorized admins enter policy terms. Amendments compare proposed terms with the effective version; approval and publication are separate audited actions.</p>
+                </details>
                 <div className="payments-configuration-grid">
-                    <article><span>Draft versions</span><strong>{summary?.seller_payout_policy.draft_count ?? 0}</strong></article>
-                    <article><span>Approved, not published</span><strong>{summary?.seller_payout_policy.approved_count ?? 0}</strong></article>
-                    <article><span>Published versions</span><strong>{summary?.seller_payout_policy.published_count ?? 0}</strong></article>
-                    <article><span>Effective policy</span><strong>{summary?.seller_payout_policy.effective_version ?? 'None'}</strong></article>
+                    <article><PaymentsSettingsIcon name="policy" /><span>Drafts</span><strong>{summary?.seller_payout_policy.draft_count ?? 0}</strong></article>
+                    <article><PaymentsSettingsIcon name="review" /><span>Approved, unpublished</span><strong>{summary?.seller_payout_policy.approved_count ?? 0}</strong></article>
+                    <article><PaymentsSettingsIcon name="verified" /><span>Published</span><strong>{summary?.seller_payout_policy.published_count ?? 0}</strong></article>
+                    <article><PaymentsSettingsIcon name="policy" /><span>Effective version</span><strong>{summary?.seller_payout_policy.effective_version ?? 'None'}</strong></article>
                 </div>
-                {!policies?.data.length ? <p className="payments-inline-empty">No seller payout policy versions are stored. No version is created or published automatically. An authorized admin must enter and approve the actual current policy before an amendment can be based on it.</p> : <div className="payments-policy-list">
+                {!policies?.data.length ? <div className="payments-empty-policy">
+                    <p className="payments-inline-empty">No seller payout policy is configured.</p>
+                    <details className="payments-more-information">
+                        <summary>Policy requirements</summary>
+                        <p>No policy is created or published automatically. An authorized admin must enter and approve the actual current terms before creating an amendment.</p>
+                    </details>
+                </div> : <div className="payments-policy-list">
                     {policies.data.map((policy) => <article className="payments-policy-card" key={policy.id}>
                         <div className="payments-section-heading"><div><h4>Version {policy.version}</h4><span className={`status-pill ${policy.is_effective ? 'status-active' : ''}`}>{policy.is_effective ? 'Effective' : policy.status.replaceAll('_', ' ')}</span></div><span>Effective {new Date(`${policy.effective_date}T00:00:00`).toLocaleDateString()}</span></div>
                         {policy.based_on && <div className="payments-policy-comparison">
                             <strong>Amendment based on version {policy.based_on.version}</strong>
-                            <p>{policy.amendment_reason}</p>
+                            <details className="payments-more-information"><summary>Amendment reason</summary><p>{policy.amendment_reason}</p></details>
                             <details><summary>Compare changed terms</summary>
                                 {changedPolicySections(policy.based_on.policy_text ?? '', policy.policy_text).map((change) => <section key={change.label}>
                                     <h5>{change.label}</h5><div><strong>Previous term</strong><p>{change.previous || 'No matching section in the source version.'}</p></div><div><strong>Amendment</strong><p>{change.amended}</p></div>
@@ -562,10 +592,13 @@ export function CodReceivingSettings({
                         </div>}
                         <details><summary>Review policy text</summary><pre>{policy.policy_text}</pre></details>
                         {policy.supporting_document_url && <a href={policy.supporting_document_url} target="_blank" rel="noreferrer">View private supporting document</a>}
-                        {!policy.supporting_document_url && <p className="payments-inline-note">The policy text is the approved source; no separate attachment is required.</p>}
-                        <p className="payments-policy-audit">Created by {policy.creator?.name ?? 'Admin'} · {new Date(policy.created_at).toLocaleString()}</p>
-                        {policy.approved_at && <p className="payments-policy-audit">Approved by {policy.approver?.name ?? 'Admin'} · {new Date(policy.approved_at).toLocaleString()} · {policy.approval_reason}</p>}
-                        {policy.published_at && <p className="payments-policy-audit">Published by {policy.publisher?.name ?? 'Admin'} · {new Date(policy.published_at).toLocaleString()} · {policy.publication_reason}</p>}
+                        {!policy.supporting_document_url && <p className="payments-inline-note">The policy text is the approved source.</p>}
+                        <details className="payments-policy-audit">
+                            <summary>Audit history</summary>
+                            <p>Created by {policy.creator?.name ?? 'Admin'} · {new Date(policy.created_at).toLocaleString()}</p>
+                            {policy.approved_at && <p>Approved by {policy.approver?.name ?? 'Admin'} · {new Date(policy.approved_at).toLocaleString()} · {policy.approval_reason}</p>}
+                            {policy.published_at && <p>Published by {policy.publisher?.name ?? 'Admin'} · {new Date(policy.published_at).toLocaleString()} · {policy.publication_reason}</p>}
+                        </details>
                         {policy.status === 'DRAFT' && <div className="payments-policy-actions">
                             <button className="payments-text-button" type="button" disabled={busy} onClick={() => editPolicy(policy)}>Edit draft</button>
                             {!isCanonicalPolicyText(policy.policy_text) && <p className="payments-inline-note">This saved draft needs normalization before approval. Edit it, review each required section, save the draft, then approve the saved version.</p>}
@@ -614,17 +647,17 @@ export function CodReceivingSettings({
 
             <section className="payments-settings-card" aria-labelledby="seller-payout-controls-title">
                 <div className="payments-section-heading"><div><h3 id="seller-payout-controls-title">Seller payout controls</h3><span className={`status-pill ${summary?.manual_seller_payouts_enabled ? 'status-active' : ''}`}>{summary?.manual_seller_payouts_enabled ? 'Manual payout recording enabled' : 'Manual payout recording disabled'}</span></div></div>
-                <p>Farmgate can record a payout completed outside the application. It cannot initiate a bank or PayMongo transfer.</p>
+                <p className="payments-security-note">Manual recording only. Farmgate does not initiate bank or PayMongo transfers.</p>
                 <div className="payments-configuration-grid">
-                    <article><span>Verified seller destinations</span><strong>{summary?.manual_payout_prerequisites.verified_destination_count ?? 0}</strong></article>
-                    <article><span>Destinations awaiting verification</span><strong>{summary?.seller_destinations.pending_verification ?? 0}</strong></article>
+                    <article><PaymentsSettingsIcon name="verified" /><span>Verified destinations</span><strong>{summary?.manual_payout_prerequisites.verified_destination_count ?? 0}</strong></article>
+                    <article><PaymentsSettingsIcon name="review" /><span>Awaiting review</span><strong>{summary?.seller_destinations.pending_verification ?? 0}</strong></article>
                 </div>
                 {!summary?.manual_seller_payouts_enabled && <div className="payments-blocked-card" role="status">
                     <strong>{summary?.manual_payout_prerequisites.unmet.length ? 'Manual payout recording is blocked.' : 'Manual payout recording is currently disabled.'}</strong>
                     {summary?.manual_payout_prerequisites.unmet.length ? <ul>{summary.manual_payout_prerequisites.unmet.map((item) => <li key={item}>{item}</li>)}</ul> : <p>Prerequisites are met. An authorized admin can enable manual payout recording with an audit reason.</p>}
                     {!summary?.manual_payout_prerequisites.destination_approval_active && <p>Seller destination approval is not active.</p>}
                 </div>}
-                {summary?.manual_seller_payouts_enabled && <p className="payments-inline-note">The audited manual-payout setting is enabled. Every seller still needs an acknowledgment of the effective policy and an individually verified destination before external payout recording.</p>}
+                {summary?.manual_seller_payouts_enabled && <p className="payments-inline-note">Each seller needs an acknowledged policy and verified destination before payout recording.</p>}
                 <div className="payments-payout-toggle">
                     <label>Reason for {summary?.manual_seller_payouts_enabled ? 'disabling' : 'enabling'} manual payout recording<input minLength={8} maxLength={255} value={payoutSettingReason} onChange={(event) => setPayoutSettingReason(event.target.value)} /></label>
                     <button type="button" className="seller-inline-action" disabled={busy} onClick={() => void toggleManualPayouts()}>{summary?.manual_seller_payouts_enabled ? 'Disable manual payout recording' : 'Enable manual payout recording'}</button>
@@ -634,13 +667,13 @@ export function CodReceivingSettings({
                     <h4>Seller destination review</h4>
                     {!destinations?.data.length ? <p className="payments-inline-empty">No seller payout destinations are awaiting review.</p> : <div className="data-table-wrap payments-table-wrap"><table className="data-table payments-table">
                         <thead><tr><th>Seller / submitted</th><th>Destination</th><th>Policy acknowledgment</th><th>Consent</th><th>Status</th><th>Review</th></tr></thead>
-                        <tbody>{destinations.data.map((destination) => <tr key={destination.id}>
-                            <td>{destination.seller?.name ?? 'Seller'}<small>{new Date(destination.submitted_at).toLocaleString()}</small></td>
-                            <td>{destination.destination_type} · {destination.account_holder_masked} · {destination.bank_name_masked ?? 'GCash'} · {destination.account_number_masked ?? destination.wallet_number_masked}</td>
-                            <td>{destination.effective_policy_version ? <>{destination.effective_policy_version} · {destination.effective_policy_acknowledged ? 'Acknowledged' : 'Not acknowledged'}{destination.effective_policy_acknowledged_at && <small>{new Date(destination.effective_policy_acknowledged_at).toLocaleString()}</small>}</> : 'No effective policy'}</td>
-                            <td>{destination.consent_version}<small>{new Date(destination.consent_accepted_at).toLocaleString()}</small></td>
-                            <td><span className="status-pill">{destination.status.replaceAll('_', ' ')}</span>{destination.verified_at && <small>Verified by {destination.verified_by_name ?? 'Admin'} · {new Date(destination.verified_at).toLocaleString()}</small>}</td>
-                            <td>{destination.status === 'PENDING_VERIFICATION' ? <div className="payments-destination-review"><label>Decision reason<input maxLength={500} value={verificationReason[destination.id] ?? ''} onChange={(event) => setVerificationReason((current) => ({ ...current, [destination.id]: event.target.value }))} /></label><button className="seller-inline-action" type="button" disabled={busy} onClick={() => void decideDestination(destination, 'verify')}>Verify destination</button><button className="payments-text-button" type="button" disabled={busy} onClick={() => void decideDestination(destination, 'reject')}>Reject</button>{destination.verification_history.length > 0 && <details><summary>Decision history</summary>{destination.verification_history.map((item, index) => <small key={`${item.action}-${index}`}>{item.action} · {item.actor ?? 'Admin'} · {new Date(item.created_at).toLocaleString()} · {item.reason}</small>)}</details>}</div> : <details><summary>Decision history</summary>{destination.verification_history.length ? destination.verification_history.map((item, index) => <small key={`${item.action}-${index}`}>{item.action} · {item.actor ?? 'Admin'} · {new Date(item.created_at).toLocaleString()} · {item.reason}</small>) : <small>No review actions recorded.</small>}</details>}</td>
+                        <tbody>{destinations.data.map((destination) => <tr key={destination.id} className="payments-destination-row">
+                            <td data-label="Seller / submitted">{destination.seller?.name ?? 'Seller'}<small>{new Date(destination.submitted_at).toLocaleString()}</small></td>
+                            <td data-label="Destination">{destination.destination_type} · {destination.account_holder_masked} · {destination.bank_name_masked ?? 'GCash'} · {destination.account_number_masked ?? destination.wallet_number_masked}</td>
+                            <td data-label="Policy acknowledgment">{destination.effective_policy_version ? <>{destination.effective_policy_version} · {destination.effective_policy_acknowledged ? 'Acknowledged' : 'Not acknowledged'}{destination.effective_policy_acknowledged_at && <small>{new Date(destination.effective_policy_acknowledged_at).toLocaleString()}</small>}</> : 'No effective policy'}</td>
+                            <td data-label="Consent">{destination.consent_version}<small>{new Date(destination.consent_accepted_at).toLocaleString()}</small></td>
+                            <td data-label="Status"><span className="status-pill">{destination.status.replaceAll('_', ' ')}</span>{destination.verified_at && <small>Verified by {destination.verified_by_name ?? 'Admin'} · {new Date(destination.verified_at).toLocaleString()}</small>}</td>
+                            <td data-label="Review">{destination.status === 'PENDING_VERIFICATION' ? <div className="payments-destination-review"><label>Decision reason<input maxLength={500} value={verificationReason[destination.id] ?? ''} onChange={(event) => setVerificationReason((current) => ({ ...current, [destination.id]: event.target.value }))} /></label><button className="seller-inline-action" type="button" disabled={busy} onClick={() => void decideDestination(destination, 'verify')}>Verify destination</button><button className="payments-text-button" type="button" disabled={busy} onClick={() => void decideDestination(destination, 'reject')}>Reject</button>{destination.verification_history.length > 0 && <details><summary>Decision history</summary>{destination.verification_history.map((item, index) => <small key={`${item.action}-${index}`}>{item.action} · {item.actor ?? 'Admin'} · {new Date(item.created_at).toLocaleString()} · {item.reason}</small>)}</details>}</div> : <details><summary>Decision history</summary>{destination.verification_history.length ? destination.verification_history.map((item, index) => <small key={`${item.action}-${index}`}>{item.action} · {item.actor ?? 'Admin'} · {new Date(item.created_at).toLocaleString()} · {item.reason}</small>) : <small>No review actions recorded.</small>}</details>}</td>
                         </tr>)}</tbody>
                     </table></div>}
                     {destinations && destinations.last_page > 1 && <Pagination page={destinationPage} lastPage={destinations.last_page} onChange={setDestinationPage} label="Seller payout destination pages" />}
@@ -669,12 +702,12 @@ function ReceivingMethodCard({
         : 'Bank account';
 
     return <article className="cod-receiving-method">
-        <div className="payments-section-heading"><div><h5>{method.label}</h5><span className="status-pill">{method.status.replaceAll('_', ' ')}</span></div><span>{methodLabel}</span></div>
-        <p>{method.instructions}</p>
-        <dl><div><dt>Account holder</dt><dd>{method.account_holder_masked ?? '—'}</dd></div><div><dt>Bank / institution</dt><dd>{method.bank_name ?? '—'}</dd></div><div><dt>Account</dt><dd>{method.account_number_masked ?? '—'}</dd></div></dl>
+        <div className="payments-section-heading"><div><h5>{method.label}</h5><span className={`status-pill ${method.status === 'ACTIVE' ? 'status-active' : ''}`}>{method.status.replaceAll('_', ' ')}</span></div><span>{methodLabel}</span></div>
+        <details className="payments-method-instructions"><summary>Rider instructions</summary><p>{method.instructions}</p></details>
+        <dl className="payments-method-details"><div><dt>Account holder</dt><dd>{method.account_holder_masked ?? '—'}</dd></div><div><dt>Bank / institution</dt><dd>{method.bank_name ?? '—'}</dd></div><div><dt>Account</dt><dd>{method.account_number_masked ?? '—'}</dd></div></dl>
         {method.qr_url && <a href={method.qr_url} target="_blank" rel="noreferrer">Review private receiving QR</a>}
-        <details>
-            <summary>Edit receiving details</summary>
+        <details className="payments-method-action">
+            <summary>Edit</summary>
             <form className="seller-account-form" onSubmit={(event) => {
                 event.preventDefault();
                 const data = new FormData();
@@ -704,8 +737,8 @@ function ReceivingMethodCard({
             <button className="seller-inline-action" type="button" disabled={busy || method.configured_by === currentAdminId} onClick={onVerify}>Verify and activate</button>
             {method.configured_by === currentAdminId && <p role="status">A different admin must verify this receiving method.</p>}
         </div>}
-        {method.status === 'ACTIVE' && <div className="cod-receiving-verification"><label>Reason to disable<input maxLength={1000} value={reason} onChange={(event) => setReason(event.target.value)} /></label><button type="button" className="seller-inline-action" disabled={busy} onClick={onDeactivate}>Disable receiving method</button></div>}
-        {method.status === 'DISABLED' && <div className="cod-receiving-verification"><label>Reason to re-enable<input maxLength={1000} value={reason} onChange={(event) => setReason(event.target.value)} /></label><button type="button" className="seller-inline-action" disabled={busy} onClick={onEnable}>Request reactivation</button><p>A different admin must verify the method before riders can use it.</p></div>}
-        {method.histories?.length ? <details><summary>Audit history</summary>{method.histories.map((entry, index) => <p key={`${entry.action}-${index}`}>{entry.action} · {entry.actor?.name ?? 'Admin'} · {new Date(entry.created_at).toLocaleString()} · {entry.reason}</p>)}</details> : null}
+        {method.status === 'ACTIVE' && <details className="payments-method-action"><summary>Disable</summary><div className="cod-receiving-verification"><label>Reason to disable<input maxLength={1000} value={reason} onChange={(event) => setReason(event.target.value)} /></label><button type="button" className="seller-inline-action" disabled={busy} onClick={onDeactivate}>Disable receiving method</button></div></details>}
+        {method.status === 'DISABLED' && <details className="payments-method-action"><summary>Re-enable</summary><div className="cod-receiving-verification"><label>Reason to re-enable<input maxLength={1000} value={reason} onChange={(event) => setReason(event.target.value)} /></label><button type="button" className="seller-inline-action" disabled={busy} onClick={onEnable}>Request reactivation</button><p>A different admin must verify the method before riders can use it.</p></div></details>}
+        {method.histories?.length ? <details className="payments-method-action"><summary>Audit history</summary>{method.histories.map((entry, index) => <p key={`${entry.action}-${index}`}>{entry.action} · {entry.actor?.name ?? 'Admin'} · {new Date(entry.created_at).toLocaleString()} · {entry.reason}</p>)}</details> : null}
     </article>;
 }

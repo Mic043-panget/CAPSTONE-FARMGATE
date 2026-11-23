@@ -19,6 +19,66 @@ class SellerPromotionTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_seller_promotion_list_includes_seller_scoped_status_summary_across_pages(): void
+    {
+        [$seller] = $this->sellerAndListing();
+        $now = now();
+
+        SellerPromotion::create([
+            'seller_id' => $seller->id,
+            'name' => 'Current promotion',
+            'discount_type' => 'PERCENTAGE',
+            'discount_value' => 10,
+            'applies_to_all' => true,
+            'status' => 'ACTIVE',
+            'starts_at' => $now->copy()->subHour(),
+            'ends_at' => $now->copy()->addHour(),
+        ]);
+        SellerPromotion::create([
+            'seller_id' => $seller->id,
+            'name' => 'Scheduled promotion',
+            'discount_type' => 'PERCENTAGE',
+            'discount_value' => 10,
+            'applies_to_all' => true,
+            'status' => 'ACTIVE',
+            'starts_at' => $now->copy()->addHours(2),
+            'ends_at' => $now->copy()->addHours(3),
+        ]);
+        for ($index = 1; $index <= 16; $index++) {
+            SellerPromotion::create([
+                'seller_id' => $seller->id,
+                'name' => 'Draft '.$index,
+                'discount_type' => 'PERCENTAGE',
+                'discount_value' => 10,
+                'applies_to_all' => true,
+                'status' => 'DRAFT',
+                'starts_at' => $now,
+                'ends_at' => $now->copy()->addDay(),
+            ]);
+        }
+        $otherSeller = User::factory()->create(['role' => Role::SELLER]);
+        SellerPromotion::create([
+            'seller_id' => $otherSeller->id,
+            'name' => 'Another seller promotion',
+            'discount_type' => 'PERCENTAGE',
+            'discount_value' => 10,
+            'applies_to_all' => true,
+            'status' => 'ACTIVE',
+            'starts_at' => $now->copy()->subHour(),
+            'ends_at' => $now->copy()->addHour(),
+        ]);
+
+        $response = $this->actingAs($seller)->getJson('/api/seller/promotions')
+            ->assertOk()
+            ->assertJsonPath('summary.active', 1)
+            ->assertJsonPath('summary.scheduled', 1)
+            ->assertJsonPath('summary.draft', 16)
+            ->assertJsonPath('promotions.total', 18)
+            ->assertJsonPath('promotions.per_page', 15);
+
+        $this->assertCount(15, $response->json('promotions.data'));
+    }
+
     public function test_seller_can_create_activate_and_apply_a_promotion_to_listing_and_checkout_prices(): void
     {
         [$seller, $listing] = $this->sellerAndListing();

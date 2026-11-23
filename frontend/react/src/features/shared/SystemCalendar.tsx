@@ -26,7 +26,6 @@ type CalendarEntry = {
     status: string;
     workflow_status?: string;
     creator: string | null;
-    creator_id: number | null;
     promotion_id: number | null;
     calendar_event_id?: number | null;
     can_manage: boolean;
@@ -151,10 +150,11 @@ export function SystemCalendar({ role, onError, onOpenDelivery }: {
     const [status, setStatus] = React.useState('');
     const [search, setSearch] = React.useState('');
     const [audience, setAudience] = React.useState('');
-    const [creatorId, setCreatorId] = React.useState('');
+    const [creator, setCreator] = React.useState('');
     const [dateFrom, setDateFrom] = React.useState(() => dateOnly(startOfMonth(new Date())));
     const [dateTo, setDateTo] = React.useState(() => dateOnly(new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0)));
     const [view, setView] = React.useState<'month' | 'list'>('month');
+    const [filtersOpen, setFiltersOpen] = React.useState(false);
     const [loading, setLoading] = React.useState(true);
     const [error, setError] = React.useState('');
     const [revision, setRevision] = React.useState(0);
@@ -181,7 +181,7 @@ export function SystemCalendar({ role, onError, onOpenDelivery }: {
                 category: category || undefined,
                 status: status || undefined,
                 audience: role === 'ADMIN' ? audience || undefined : undefined,
-                creator_id: role === 'ADMIN' ? creatorId || undefined : undefined,
+                creator: role === 'ADMIN' ? creator.trim() || undefined : undefined,
                 search: search.trim() || undefined,
                 timezone: timeZone,
                 page,
@@ -196,7 +196,7 @@ export function SystemCalendar({ role, onError, onOpenDelivery }: {
             if (current) setError(requestError.userMessage ?? requestError.response?.data?.message ?? 'The calendar could not be loaded. Check your connection and try again.');
         }).finally(() => { if (current) setLoading(false); });
         return () => { current = false; };
-    }, [audience, category, creatorId, dateFrom, dateTo, page, revision, role, search, status, timeZone]);
+    }, [audience, category, creator, dateFrom, dateTo, page, revision, role, search, status, timeZone]);
 
     React.useEffect(() => {
         const match = /^#calendar\/(event|promotion)\/(\d+)$/.exec(window.location.hash);
@@ -224,7 +224,7 @@ export function SystemCalendar({ role, onError, onOpenDelivery }: {
             setStatus('');
             setSearch('');
             setAudience('');
-            setCreatorId('');
+            setCreator('');
             setPage(1);
             setFocusEntryId(data.focus_id);
         }).catch((requestError: any) => {
@@ -411,7 +411,7 @@ export function SystemCalendar({ role, onError, onOpenDelivery }: {
         });
     }
 
-    return <section className="seller-work-section system-calendar" aria-labelledby="system-calendar-title">
+    return <section className={`seller-work-section system-calendar${role === 'ADMIN' || role === 'SELLER' || role === 'RIDER' ? ' system-calendar-admin' : ''}`} aria-labelledby="system-calendar-title">
         <div className="seller-work-heading">
             <div><p className="eyebrow">{role === 'RIDER' ? 'Your work schedule' : 'Farmgate schedule'}</p><h2 id="system-calendar-title">{role === 'SELLER' || role === 'BUYER' ? 'Events' : 'Calendar'}</h2><p>Browse approved events, promotion periods{role === 'RIDER' ? ', and your assigned deliveries.' : '.'}</p></div>
             <div className="calendar-view-switch" role="group" aria-label="Calendar display">
@@ -423,13 +423,11 @@ export function SystemCalendar({ role, onError, onOpenDelivery }: {
         </div>
 
         <div className="calendar-toolbar">
-            <div className="calendar-month-control">
-                <button type="button" aria-label="Previous month" onClick={() => moveMonth(-1)}>‹</button>
-                <h3>{month.toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone })}</h3>
-                <button type="button" aria-label="Next month" onClick={() => moveMonth(1)}>›</button>
-                <button type="button" onClick={() => { const today = startOfMonth(new Date()); setMonth(today); setDateFrom(dateOnly(today)); setDateTo(dateOnly(new Date(today.getFullYear(), today.getMonth() + 1, 0))); setPage(1); }}>Today</button>
-            </div>
-            <div className="calendar-filters">
+            {role === 'ADMIN' && <button className="calendar-admin-filter-toggle" type="button" aria-expanded={filtersOpen} aria-controls="calendar-admin-filters" onClick={() => setFiltersOpen((open) => !open)}>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16l-6.5 7.5v5L10 19v-6.5z" /></svg>
+                <span>Filters</span>
+            </button>}
+            <div id={role === 'ADMIN' ? 'calendar-admin-filters' : undefined} className={`calendar-filters${role === 'ADMIN' ? ` calendar-admin-filters${filtersOpen ? ' is-open' : ''}` : ''}`}>
                 <label>Search<input type="search" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Search events" /></label>
                 <label>Category<select value={category} onChange={(event) => { setCategory(event.target.value); setPage(1); }}>
                     <option value="">All categories</option>
@@ -448,8 +446,14 @@ export function SystemCalendar({ role, onError, onOpenDelivery }: {
                 <label>To date<input type="date" required value={dateTo} min={dateFrom || undefined} onChange={(event) => { setDateTo(event.target.value); if (event.target.value) setMonth(startOfMonth(new Date(`${event.target.value}T12:00:00`))); setPage(1); }} /></label>
                 {role === 'ADMIN' && <>
                     <label>Audience<select value={audience} onChange={(event) => { setAudience(event.target.value); setPage(1); }}><option value="">All audiences</option>{['PUBLIC', 'BUYERS', 'SELLERS', 'RIDERS', 'ADMINS'].map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
-                    <label>Creator ID<input type="number" min="1" value={creatorId} onChange={(event) => { setCreatorId(event.target.value); setPage(1); }} /></label>
+                    <label>Creator name<input type="search" value={creator} onChange={(event) => { setCreator(event.target.value); setPage(1); }} placeholder="Search creator name" /></label>
                 </>}
+            </div>
+            <div className="calendar-month-control">
+                <button type="button" aria-label="Previous month" onClick={() => moveMonth(-1)}>‹</button>
+                <h3>{month.toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone })}</h3>
+                <button type="button" aria-label="Next month" onClick={() => moveMonth(1)}>›</button>
+                <button type="button" onClick={() => { const today = startOfMonth(new Date()); setMonth(today); setDateFrom(dateOnly(today)); setDateTo(dateOnly(new Date(today.getFullYear(), today.getMonth() + 1, 0))); setPage(1); }}>Today</button>
             </div>
         </div>
 
@@ -469,6 +473,7 @@ export function SystemCalendar({ role, onError, onOpenDelivery }: {
                                     key={entry.id}
                                     className={`calendar-entry calendar-entry-${entry.status.toLowerCase()}${continuesBefore ? ' continues-before' : ''}${continuesAfter ? ' continues-after' : ''}`}
                                     style={{ gridColumn: `${startColumn + 1} / span ${span}`, gridRow: row }}
+                                    title={entry.title}
                                     aria-label={`${entry.title}, ${displayDate(entry.starts_at, entry.timezone)} ${entry.timezone} to ${displayDate(entry.ends_at, entry.timezone)} ${entry.timezone}${continuesBefore ? ', continues from previous week' : ''}${continuesAfter ? ', continues next week' : ''}`}
                                     onClick={() => openEntry(entry)}
                                 ><span>{continuesBefore ? '← ' : ''}{entry.title}{continuesAfter ? ' →' : ''}</span><small>{displayDate(entry.starts_at, entry.timezone)} {entry.timezone}</small></button>)}
@@ -477,7 +482,7 @@ export function SystemCalendar({ role, onError, onOpenDelivery }: {
                     })}
                 </div>
             </div> : null}
-            <div className="calendar-entry-list">
+            <div className={`calendar-entry-list${(role === 'ADMIN' || role === 'SELLER' || role === 'RIDER') && view === 'month' ? ' calendar-admin-month-fallback' : ''}`}>
                 {entries.map((entry) => {
                     const canManage = entry.can_manage && (entry.source_type === 'EVENT' || entry.calendar_event_id !== null && entry.calendar_event_id !== undefined);
                     const canEdit = canManage && ['SUBMITTED', 'APPROVED'].includes(entry.workflow_status ?? entry.status);

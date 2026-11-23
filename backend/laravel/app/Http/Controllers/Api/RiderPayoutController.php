@@ -308,6 +308,8 @@ class RiderPayoutController extends Controller
                 'action' => $data['decision'],
                 'from_status' => $previous,
                 'to_status' => $locked->status,
+                'previous_status' => $previous,
+                'new_status' => $locked->status,
                 'reason' => $reason,
             ]);
             $message = $data['decision'] === 'VERIFIED'

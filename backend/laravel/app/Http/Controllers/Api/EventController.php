@@ -42,6 +42,7 @@ class EventController extends Controller
             'status' => ['nullable', 'string', 'max:20'],
             'audience' => ['nullable', Rule::in(self::AUDIENCES)],
             'creator_id' => ['nullable', 'integer', 'min:1'],
+            'creator' => ['nullable', 'string', 'max:120'],
             'search' => ['nullable', 'string', 'max:120'],
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
@@ -369,6 +370,9 @@ class EventController extends Controller
             if (! empty($filters['creator_id'])) {
                 $query->where('organizer_id', $filters['creator_id']);
             }
+            if (! empty($filters['creator'])) {
+                $query->whereHas('organizer', fn (Builder $organizer) => $organizer->where('name', 'like', '%'.$filters['creator'].'%'));
+            }
             if (! empty($filters['status']) && in_array($filters['status'], ['SUBMITTED', 'APPROVED', 'REJECTED', 'CANCELLED'], true)) {
                 $query->where('status', $filters['status']);
             }
@@ -442,6 +446,9 @@ class EventController extends Controller
         }
         if (! empty($filters['creator_id']) && $user->role === Role::ADMIN) {
             $query->where('seller_id', $filters['creator_id']);
+        }
+        if (! empty($filters['creator']) && $user->role === Role::ADMIN) {
+            $query->whereHas('seller', fn (Builder $seller) => $seller->where('name', 'like', '%'.$filters['creator'].'%'));
         }
         if (! empty($filters['search'])) {
             $query->where('name', 'like', '%'.$filters['search'].'%');

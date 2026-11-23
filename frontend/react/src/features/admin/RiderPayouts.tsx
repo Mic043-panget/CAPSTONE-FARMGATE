@@ -1,5 +1,6 @@
 import React from 'react';
 import api from '../../lib/api';
+import { confirmAction } from '../../lib/alerts';
 import { Pagination } from '../../shared/components/Pagination';
 
 type Earning = {
@@ -64,6 +65,8 @@ export function RiderPayouts({ onError }: { onError: (message: string) => void }
     const [payouts, setPayouts] = React.useState<Page<Payout> | null>(null);
     const [destinations, setDestinations] = React.useState<Page<Destination> | null>(null);
     const [methods, setMethods] = React.useState<Method[]>([]);
+    const [loading, setLoading] = React.useState(true);
+    const [loadError, setLoadError] = React.useState('');
     const [busy, setBusy] = React.useState(false);
     const [expanded, setExpanded] = React.useState<number | null>(null);
     const [manualForm, setManualForm] = React.useState<{ id: number; reference: string; amount: string; date: string; reason: string; receipt: File | null } | null>(null);
@@ -71,6 +74,8 @@ export function RiderPayouts({ onError }: { onError: (message: string) => void }
     const [destinationReasons, setDestinationReasons] = React.useState<Record<number, string>>({});
 
     const refresh = React.useCallback(async () => {
+        setLoading(true);
+        setLoadError('');
         const params = new URLSearchParams({ page: String(pageNumber), per_page: '10', sort, search });
         if (status) params.set('status', status);
         try {
@@ -88,7 +93,11 @@ export function RiderPayouts({ onError }: { onError: (message: string) => void }
                 setMethods(response.data.methods);
             }
         } catch (error: any) {
-            onError(error.userMessage ?? error.response?.data?.message ?? 'Rider payout data could not be loaded.');
+            const message = error.userMessage ?? error.response?.data?.message ?? 'Rider payout data could not be loaded.';
+            setLoadError(message);
+            onError(message);
+        } finally {
+            setLoading(false);
         }
     }, [onError, pageNumber, search, sort, status, tab]);
 
@@ -119,7 +128,11 @@ export function RiderPayouts({ onError }: { onError: (message: string) => void }
     }
 
     async function markProcessing(payout: Payout) {
-        if (!await window.confirm('Record that the payout is being processed through an external bank or e-wallet transfer? Farmgate will not send money.')) return;
+        if (!await confirmAction({
+            title: 'Mark this payout as processing?',
+            text: 'Record that the payout is being processed through an external bank or e-wallet transfer. Farmgate will not send money.',
+            confirmText: 'Mark processing',
+        })) return;
         await runAction(() => api.post(`/api/admin/rider-payouts/${payout.id}/status`, { status: 'PROCESSING', reason: reasons.processing }), 'Payout could not be moved to processing.');
     }
 
@@ -161,10 +174,15 @@ export function RiderPayouts({ onError }: { onError: (message: string) => void }
     const rows = tab === 'earnings' ? earnings : tab === 'payouts' ? payouts : destinations;
 
     return <section className="rider-payout-admin" aria-labelledby="rider-payout-admin-title">
-        <div className="seller-work-heading"><div><p className="eyebrow">Admin · Payments</p><h2 id="rider-payout-admin-title">Rider payouts</h2></div></div>
-        <p>Rider earnings are separate from seller payouts and COD remittances. Provider disbursements are unavailable: no verified rider payout integration is configured. Manual external transfers must be completed outside Farmgate and independently confirmed by a different administrator.</p>
-        <p className="rider-settings-field-note">Create a separate payout for each eligible delivery; there are no scheduled runs or combined batches. Use an idempotency key, a verified destination, and a second admin to confirm the exact external transfer amount, reference, date, and private receipt.</p>
-        <div className="admin-promotions-tabs" role="tablist" aria-label="Rider payout operations">
+        <div className="payments-page-heading">
+            <div><p className="eyebrow">Admin operations</p><h2 id="rider-payout-admin-title">Rider payouts</h2><p>Track rider earnings, destination verification, and manual payouts.</p></div>
+        </div>
+        <div className="payments-notice" role="note"><strong>External transfers require independent admin confirmation.</strong><span>Farmgate does not initiate rider payouts. Manual transfers must be completed outside the app and confirmed by a different administrator.</span></div>
+        <details className="payments-how-it-works rider-payout-how-it-works">
+            <summary>How payouts work</summary>
+            <p>Earnings use the saved delivery calculation snapshot. Eligible earnings can be paid individually to a verified destination; there are no scheduled runs or combined batches. Record only a transfer already completed externally, with its exact amount, reference, date, and private receipt. A different authorized administrator must confirm it.</p>
+        </details>
+        <div className="admin-promotions-tabs rider-payout-tabs" role="tablist" aria-label="Rider payout operations">
             {([
                 ['earnings', 'Earnings ledger'],
                 ['payouts', 'Payout queue'],
@@ -173,7 +191,7 @@ export function RiderPayouts({ onError }: { onError: (message: string) => void }
             ] as const).map(([id, title]) => <button key={id} type="button" role="tab" aria-selected={tab === id} className={tab === id ? 'active' : ''} onClick={() => { setTab(id); setPageNumber(1); setStatus(''); }}>{title}</button>)}
         </div>
         {tab !== 'methods' && <>
-            <div className="admin-data-controls">
+            {tab !== 'destinations' && <div className="admin-data-controls">
                 <label>Search<input type="search" value={search} onChange={(event) => { setSearch(event.target.value); setPageNumber(1); }} placeholder="Rider, payout, delivery, or order reference" /></label>
                 <label>Status<select value={status} onChange={(event) => { setStatus(event.target.value); setPageNumber(1); }}>
                     <option value="">All statuses</option>
@@ -184,14 +202,20 @@ export function RiderPayouts({ onError }: { onError: (message: string) => void }
                 <label>Sort<select value={sort} onChange={(event) => setSort(event.target.value)}>
                     <option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="amount_desc">Amount: high to low</option><option value="amount_asc">Amount: low to high</option>
                 </select></label>
-            </div>
+            </div>}
+            {loading ? <p className="payments-loading" role="status">Loading rider payout records…</p>
+                : loadError ? <p className="payments-load-error" role="alert">{loadError} <button type="button" onClick={() => void refresh()}>Try again</button></p>
+                    : <>
             {tab === 'earnings' && <div className="admin-table-scroll"><table className="admin-data-table"><thead><tr><th>Rider</th><th>Delivery / order</th><th>Completed</th><th>Delivery fee</th><th>Gross</th><th>Deductions</th><th>Net</th><th>Eligibility / payout</th><th>Action</th></tr></thead><tbody>
-                {(earnings?.data ?? []).map((earning) => <React.Fragment key={earning.id}><tr>
-                    <td>{earning.rider?.name ?? `Rider ${earning.rider?.id ?? ''}`}</td><td>{earning.delivery_reference}<br />{earning.order_reference}<small>{earning.reference}</small></td>
-                    <td>{earning.completed_at ? new Date(earning.completed_at).toLocaleString() : '—'}</td>
-                    <td>{money(earning.delivery_fee_cents)}</td><td>{money(earning.gross_amount_cents)}</td><td>{money(earning.deductions_cents)}{earning.adjustment_cents ? ` · adj. ${money(earning.adjustment_cents)}` : ''}</td><td>{money(earning.net_amount_cents)}</td>
-                    <td><span className="status-pill">{readable(earning.eligibility_status)}</span><small>{earning.eligibility_reason}</small></td>
-                    <td><button type="button" className="payments-text-button" aria-expanded={expanded === earning.id} onClick={() => setExpanded(expanded === earning.id ? null : earning.id)}>Details</button>
+                {(earnings?.data ?? []).map((earning) => <React.Fragment key={earning.id}><tr className="rider-payout-mobile-card rider-payout-earning-card">
+                    <td className="rider-payout-card-identity" data-label="Rider"><div className="rider-payout-card-person"><span className="rider-payout-card-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="3.2" stroke="currentColor" strokeWidth="1.7" /><path d="M5.5 19c.5-3.1 2.8-4.8 6.5-4.8s6 1.7 6.5 4.8" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /></svg></span><span><strong>{earning.rider?.name ?? `Rider ${earning.rider?.id ?? ''}`}</strong></span></div></td>
+                    <td className="rider-payout-card-reference" data-label="Delivery / order"><span>{earning.delivery_reference}</span><small>{earning.order_reference}</small><small>{earning.reference}</small></td>
+                    <td className="rider-payout-card-completed" data-label="Completed">{earning.completed_at ? new Date(earning.completed_at).toLocaleString() : '—'}</td>
+                    <td className="rider-payout-card-fee" data-label="Delivery fee">{money(earning.delivery_fee_cents)}</td><td className="rider-payout-card-gross" data-label="Gross">{money(earning.gross_amount_cents)}</td>
+                    <td className="rider-payout-card-deductions" data-label="Deductions">{money(earning.deductions_cents)}{earning.adjustment_cents ? ` · adj. ${money(earning.adjustment_cents)}` : ''}</td>
+                    <td className="rider-payout-card-net" data-label="Net">{money(earning.net_amount_cents)}</td>
+                    <td className="rider-payout-card-status" data-label="Eligibility / payout"><span className="status-pill">{readable(earning.eligibility_status)}</span><small>{earning.eligibility_reason}</small></td>
+                    <td className="rider-payout-card-actions" data-label="Actions"><button type="button" className="payments-text-button" aria-expanded={expanded === earning.id} onClick={() => setExpanded(expanded === earning.id ? null : earning.id)}>Details</button>
                         {earning.eligibility_status === 'READY' && earning.payout_status === 'AVAILABLE' && earning.rider && <button className="seller-inline-action" type="button" disabled={busy} onClick={() => void createPayout(earning)}>Create payout for delivery</button>}
                         {['PENDING_ELIGIBILITY', 'NEEDS_REVIEW'].includes(earning.eligibility_status) && <button className="payments-text-button" type="button" disabled={busy} onClick={() => {
                             const decision = window.prompt('Enter APPROVE or REJECT after reviewing the verified delivery evidence:');
@@ -206,17 +230,20 @@ export function RiderPayouts({ onError }: { onError: (message: string) => void }
                             if (!Number.isSafeInteger(cents) || cents === 0 || !reason?.trim()) return;
                             void runAction(() => api.post(`/api/admin/rider-earnings/${earning.id}/adjustment`, { adjustment_cents: cents, reason }), 'Earning adjustment could not be saved.');
                         }}>Adjust</button>}</td>
-                </tr>{expanded === earning.id && <tr><td colSpan={9}><details open className="rider-payout-detail"><summary>Frozen calculation and audit history</summary>
+                </tr>{expanded === earning.id && <tr className="rider-payout-expanded-row"><td colSpan={9}><details open className="rider-payout-detail"><summary>Frozen calculation and audit history</summary>
                         <pre>{JSON.stringify(earning.calculation_snapshot ?? {}, null, 2)}</pre>
                         <ol>{(earning.history ?? []).map((item, index) => <li key={`${item.action}-${index}`}>{readable(item.action)} · {item.actor} · {item.reason}</li>)}</ol>
                     </details></td></tr>}</React.Fragment>)}
+                {!earnings?.data.length && <tr className="rider-payout-empty-row"><td colSpan={9} className="payments-table-empty">No earnings match this view.</td></tr>}
             </tbody></table></div>}
             {tab === 'payouts' && <div className="admin-table-scroll"><table className="admin-data-table"><thead><tr><th>Payout / rider</th><th>Amount</th><th>Destination</th><th>Status</th><th>Transfer record</th><th>Actions / details</th></tr></thead><tbody>
-                {(payouts?.data ?? []).map((payout) => <React.Fragment key={payout.id}><tr>
-                    <td><strong>{payout.reference}</strong><br />{payout.rider?.name ?? 'Rider'}<small>{payout.method}</small></td><td>{money(payout.amount_cents)}</td>
-                    <td>{payout.destination ? `${payout.destination.destination_type} · ${payout.destination.account_holder_masked} · ${payout.destination.account_number_masked ?? payout.destination.wallet_number_masked}` : 'Unavailable'}</td>
-                    <td><span className="status-pill">{readable(payout.status)}</span></td><td>{payout.transfer_reference_masked ?? 'Not recorded'}{payout.transfer_date && <small>{payout.transfer_date}</small>}{payout.receipt_url && <a href={payout.receipt_url}>Private receipt</a>}</td>
-                    <td><button type="button" className="payments-text-button" aria-expanded={expanded === payout.id} onClick={() => setExpanded(expanded === payout.id ? null : payout.id)}>Details</button>
+                {(payouts?.data ?? []).map((payout) => <React.Fragment key={payout.id}><tr className="rider-payout-mobile-card rider-payout-record-card">
+                    <td className="rider-payout-card-identity" data-label="Payout / rider"><div className="rider-payout-card-person"><span className="rider-payout-card-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M4.5 7.5h15v11h-15zM4.5 10.5h15M8 15h3" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" strokeLinecap="round" /><path d="M7 4.5h10" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /></svg></span><span><strong>{payout.reference}</strong><span>{payout.rider?.name ?? 'Rider'}</span><small>{payout.method}</small></span></div></td>
+                    <td className="rider-payout-card-amount" data-label="Amount">{money(payout.amount_cents)}</td>
+                    <td className="rider-payout-card-destination" data-label="Destination">{payout.destination ? `${payout.destination.destination_type} · ${payout.destination.account_holder_masked} · ${payout.destination.account_number_masked ?? payout.destination.wallet_number_masked}` : 'Unavailable'}</td>
+                    <td className="rider-payout-card-status" data-label="Status"><span className="status-pill">{readable(payout.status)}</span></td>
+                    <td className="rider-payout-card-transfer" data-label="Transfer record">{payout.transfer_reference_masked ?? 'Not recorded'}{payout.transfer_date && <small>{payout.transfer_date}</small>}{payout.receipt_url && <a href={payout.receipt_url}>Private receipt</a>}</td>
+                    <td className="rider-payout-card-actions" data-label="Actions"><button type="button" className="payments-text-button" aria-expanded={expanded === payout.id} onClick={() => setExpanded(expanded === payout.id ? null : payout.id)}>Details</button>
                         {['PENDING', 'NEEDS_REVIEW'].includes(payout.status) && <button type="button" className="seller-inline-action" disabled={busy} onClick={() => void markProcessing(payout)}>Record external transfer started</button>}
                         {payout.status === 'PROCESSING' && <><button type="button" className="seller-inline-action" disabled={busy} onClick={() => setManualForm({ id: payout.id, reference: '', amount: (payout.amount_cents / 100).toFixed(2), date: new Date().toISOString().slice(0, 10), reason: '', receipt: null })}>Confirm completed transfer</button>
                             <button type="button" className="payments-text-button" disabled={busy} onClick={() => {
@@ -227,7 +254,7 @@ export function RiderPayouts({ onError }: { onError: (message: string) => void }
                             <ul>{payout.earnings.map((item) => <li key={item.reference}>{item.delivery_reference} · {item.order_reference} · {money(item.amount_cents)}</li>)}</ul>
                             <ol>{(payout.history ?? []).map((item, index) => <li key={`${item.action}-${index}`}>{readable(item.action)} · {item.actor ?? 'System'} · {item.reason}</li>)}</ol>
                         </details>}</td>
-                </tr>{manualForm?.id === payout.id && <tr><td colSpan={6}><form className="seller-account-form rider-manual-transfer-form" onSubmit={(event) => void confirmTransfer(event)}>
+                </tr>{manualForm?.id === payout.id && <tr className="rider-payout-expanded-row"><td colSpan={6}><form className="seller-account-form rider-manual-transfer-form" onSubmit={(event) => void confirmTransfer(event)}>
                     <h4>Record an externally completed transfer</h4><p>Confirm only after independently checking that the transfer completed outside Farmgate. This action records payment; it does not initiate a transfer.</p>
                     <label>External transfer reference<input required minLength={4} maxLength={120} value={manualForm.reference} onChange={(event) => setManualForm({ ...manualForm, reference: event.target.value })} /></label>
                     <label>Transferred amount (PHP)<input required type="number" min="0.01" step="0.01" value={manualForm.amount} onChange={(event) => setManualForm({ ...manualForm, amount: event.target.value })} /></label>
@@ -237,17 +264,24 @@ export function RiderPayouts({ onError }: { onError: (message: string) => void }
                     <button className="seller-inline-action" type="submit" disabled={busy}>{busy ? 'Recording…' : 'Confirm external payment'}</button>
                     <button className="payments-text-button" type="button" onClick={() => setManualForm(null)}>Cancel</button>
                 </form></td></tr>}</React.Fragment>)}
+                {!payouts?.data.length && <tr className="rider-payout-empty-row"><td colSpan={6} className="payments-table-empty">No payouts match this view.</td></tr>}
             </tbody></table></div>}
             {tab === 'destinations' && <div className="admin-table-scroll"><table className="admin-data-table"><thead><tr><th>Rider</th><th>Destination</th><th>Account holder</th><th>Status</th><th>Verification decision</th></tr></thead><tbody>
-                {(destinations?.data ?? []).map((destination) => <tr key={destination.id}><td>{destination.rider?.name ?? 'Rider'}</td>
-                    <td>{destination.destination_type} · {destination.bank_name_masked ?? destination.account_number_masked ?? destination.wallet_number_masked}</td><td>{destination.account_holder_masked}</td><td>{readable(destination.status)}</td>
-                    <td>{destination.status === 'PENDING_VERIFICATION' && <><label>Reason<input maxLength={500} value={destinationReasons[destination.id] ?? ''} onChange={(event) => setDestinationReasons({ ...destinationReasons, [destination.id]: event.target.value })} /></label>
+                {(destinations?.data ?? []).map((destination) => <tr className="rider-payout-mobile-card rider-payout-destination-card" key={destination.id}><td className="rider-payout-card-identity" data-label="Rider"><div className="rider-payout-card-person"><span className="rider-payout-card-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="3.2" stroke="currentColor" strokeWidth="1.7" /><path d="M5.5 19c.5-3.1 2.8-4.8 6.5-4.8s6 1.7 6.5 4.8" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /></svg></span><span><strong>{destination.rider?.name ?? 'Rider'}</strong></span></div></td>
+                    <td className="rider-payout-card-destination" data-label="Destination">{destination.destination_type} · {destination.bank_name_masked ?? destination.account_number_masked ?? destination.wallet_number_masked}</td>
+                    <td className="rider-payout-card-holder" data-label="Account holder">{destination.account_holder_masked}</td>
+                    <td className="rider-payout-card-status" data-label="Status"><span className="rider-payout-destination-status">{readable(destination.status)}</span></td>
+                    <td className="rider-payout-card-actions" data-label="Verification decision">{destination.status === 'PENDING_VERIFICATION' && <><label>Reason<input maxLength={500} value={destinationReasons[destination.id] ?? ''} onChange={(event) => setDestinationReasons({ ...destinationReasons, [destination.id]: event.target.value })} /></label>
                         <button className="seller-inline-action" type="button" disabled={busy} onClick={() => void decideDestination(destination, 'VERIFIED')}>Verify</button>
                         <button className="payments-text-button" type="button" disabled={busy} onClick={() => void decideDestination(destination, 'REJECTED')}>Reject</button></>}</td></tr>)}
+                {!destinations?.data.length && <tr className="rider-payout-empty-row"><td colSpan={5} className="payments-table-empty">No rider destinations to review.</td></tr>}
             </tbody></table></div>}
             {rows && <div className="rider-delivery-pagination"><span>Page {rows.current_page} of {rows.last_page} · {rows.total} records</span><Pagination page={rows.current_page} lastPage={rows.last_page} onChange={setPageNumber} label="Rider payout pagination" /></div>}
+                    </>}
         </>}
-        {tab === 'methods' && <section className="rider-payout-method-config">
+        {tab === 'methods' && (loading ? <p className="payments-loading" role="status">Loading rider payout methods…</p>
+            : loadError ? <p className="payments-load-error" role="alert">{loadError} <button type="button" onClick={() => void refresh()}>Try again</button></p>
+                : <section className="rider-payout-method-config">
             <h3>Configured methods</h3><p>A method is offered to riders only after one authorized admin configures it and another authorized admin verifies it.</p>
             <label>Configuration reason<input maxLength={500} value={methodReason} onChange={(event) => setMethodReason(event.target.value)} /></label>
             {(['BANK', 'GCASH'] as const).map((methodType) => {
@@ -261,6 +295,6 @@ export function RiderPayouts({ onError }: { onError: (message: string) => void }
                     }}>{configured?.status === 'PENDING_VERIFICATION' ? 'Verify (different admin required)' : `Configure ${methodType}`}</button> : <span>Active and verified</span>}
                 </article>;
             })}
-        </section>}
+        </section>)}
     </section>;
 }

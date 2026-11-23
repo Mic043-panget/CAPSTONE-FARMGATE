@@ -15,13 +15,18 @@ import { SellerPromotions } from './SellerPromotions';
 import { NotificationsPage } from '../buyer/NotificationsPage';
 import { NavigationBadge, navigationBadgeLabel } from '../../shared/components/NavigationBadge';
 import { SellerPayouts } from './SellerPayouts';
-import { WorkspaceMobileHeader } from '../shared/WorkspaceMobileHeader';
+import { WorkspaceAccountControl, WorkspaceMobileHeader, useWorkspaceMobileMenu } from '../shared/WorkspaceMobileHeader';
+import { WorkspaceBannerArtwork } from '../shared/WorkspaceBannerArtwork';
+import { RoleMobileBottomNavigation } from '../shared/RoleMobileBottomNavigation';
 import { SellerShopProfileSettings } from './SellerShopProfileSettings';
 import { SellerSetupGuide } from './SellerSetupGuide';
+import { SettingsCategoryIcon } from '../shared/SettingsCategoryIcon';
+import { FarmgateBrand } from '../shared/FarmgateBrand';
+import { WorkspaceSidebarIcon } from '../shared/WorkspaceSidebarIcon';
 
 const LocationMap = React.lazy(() => import('../../shared/components/LocationMap').then((module) => ({ default: module.LocationMap })));
 
-type SellerPage = 'dashboard' | 'orders' | 'payouts' | 'notifications' | 'listings' | 'promotions' | 'interests' | 'complaints' | 'reviews' | 'reports' | 'chats' | 'location' | 'account';
+type SellerPage = 'dashboard' | 'orders' | 'payouts' | 'notifications' | 'listings' | 'promotions' | 'complaints' | 'reviews' | 'reports' | 'chats' | 'location' | 'account';
 type SellerSettingsTab = 'profile' | 'shop' | 'password' | 'phone' | 'preferences' | 'pickup';
 type SellerNavigationBadge = 'orders' | 'notifications' | 'complaints' | 'chats';
 type SellerAccountPreference = 'order_notifications' | 'chat_notifications' | 'allow_direct_messages';
@@ -43,7 +48,6 @@ type SellerSummary = {
     orders_needing_confirmation: number;
     active_listings: number;
     sold_listings: number;
-    interested_buyers: number;
     recent_orders: { id: number; order_reference: string; status: string; total_amount: string; created_at: string; delivery?: { status: string; has_delivery_proof?: boolean; proof_captured_at?: string | null } | null }[];
 };
 
@@ -65,6 +69,7 @@ type SellerNotification = {
 type SellerListing = Listing & {
     status: string;
     created_at?: string;
+    updated_at?: string | null;
     breed?: string | null;
     sex?: string | null;
     age_months?: number | null;
@@ -73,9 +78,8 @@ type SellerListing = Listing & {
     health_information?: string | null;
     vaccination_information?: string | null;
 };
-type ListingSortColumn = 'name' | 'category' | 'price' | 'quantity' | 'status';
-type SellerInterest = { id: number; status: string; created_at: string; buyer?: { name: string }; listing?: { name: string } };
-
+type SellerListingSummary = { total: number; active: number; pending_review: number; draft: number };
+type ListingSortColumn = 'name' | 'category' | 'price' | 'quantity' | 'status' | 'created_at' | 'updated_at';
 const navigation: { id: SellerPage; label: string; icon: string; badge?: SellerNavigationBadge }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: '◈' },
     { id: 'orders', label: 'Orders', icon: '▣', badge: 'orders' },
@@ -89,12 +93,58 @@ const navigation: { id: SellerPage; label: string; icon: string; badge?: SellerN
     { id: 'chats', label: 'Chats', icon: '✦', badge: 'chats' },
     { id: 'account', label: 'Settings', icon: '◉' },
 ];
+const sellerMobileDestinations = [
+    { id: 'dashboard', label: 'Home', icon: 'home' },
+    { id: 'chats', label: 'Chats', icon: 'chat' },
+    { id: 'listings', label: 'Listings', icon: 'document' },
+    { id: 'account', label: 'Settings', icon: 'settings' },
+] as const;
 
-const interestStatuses = ['INTERESTED', 'CONTACTED', 'NEGOTIATING', 'PURCHASED', 'CLOSED'];
+const listingStatuses = ['ACTIVE', 'PENDING_REVIEW', 'DRAFT', 'REJECTED', 'SOLD', 'DISABLED', 'ARCHIVED'];
+const listingSortOptions: { value: `${ListingSortColumn}:${'asc' | 'desc'}`; label: string }[] = [
+    { value: 'created_at:desc', label: 'Newest first' },
+    { value: 'created_at:asc', label: 'Oldest first' },
+    { value: 'updated_at:desc', label: 'Recently updated' },
+    { value: 'updated_at:asc', label: 'Least recently updated' },
+    { value: 'name:asc', label: 'Name A–Z' },
+    { value: 'name:desc', label: 'Name Z–A' },
+    { value: 'category:asc', label: 'Category A–Z' },
+    { value: 'category:desc', label: 'Category Z–A' },
+    { value: 'price:asc', label: 'Price: low to high' },
+    { value: 'price:desc', label: 'Price: high to low' },
+    { value: 'quantity:asc', label: 'Available: low to high' },
+    { value: 'quantity:desc', label: 'Available: high to low' },
+    { value: 'status:asc', label: 'Status A–Z' },
+    { value: 'status:desc', label: 'Status Z–A' },
+];
+
+type SellerListingIconName = 'total' | 'active' | 'pending' | 'draft' | 'livestock' | 'search' | 'category' | 'status' | 'sort' | 'view' | 'edit' | 'delete' | 'submit' | 'cancel' | 'rejected';
+
+function SellerListingIcon({ name }: { name: SellerListingIconName }) {
+    const icons: Record<SellerListingIconName, React.ReactNode> = {
+        total: <><path d="m4 7 8-4 8 4-8 4-8-4Z" /><path d="m4 12 8 4 8-4M4 17l8 4 8-4" /></>,
+        active: <><circle cx="12" cy="12" r="9" /><path d="m8 12 2.5 2.5L16 9" /></>,
+        pending: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
+        draft: <><path d="M6 3h8l4 4v14H6z" /><path d="M14 3v5h5" /></>,
+        livestock: <><path d="M3.5 13c0-3 2.3-5 5.7-5h6.2l2.1-2 2.2 1.2-.5 2.4c1.3.9 2.3 2.3 2.3 4v2h-2.2v2h-2v-2H8v2H6v-2H3.5z" /><circle cx="14.5" cy="10.8" r=".7" /></>,
+        search: <><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4.5 4.5" /></>,
+        category: <><path d="M20 13 13 20 3 10V4h6l11 9Z" /><circle cx="7.5" cy="7.5" r="1" /></>,
+        status: <><path d="M4 6h16M4 12h16M4 18h16" /><circle cx="8" cy="6" r="2" /><circle cx="15" cy="12" r="2" /><circle cx="10" cy="18" r="2" /></>,
+        sort: <><path d="M8 4v16M4 8l4-4 4 4M16 20V4m-4 12 4 4 4-4" /></>,
+        view: <><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" /><circle cx="12" cy="12" r="2.5" /></>,
+        edit: <><path d="m4 16.5-.8 4.3 4.3-.8L19 8.5 15.5 5 4 16.5Z" /><path d="m13.8 6.7 3.5 3.5" /></>,
+        delete: <><path d="M4 7h16M10 11v6M14 11v6M6 7l1 14h10l1-14M9 7V4h6v3" /></>,
+        submit: <><path d="M21 3 10 14" /><path d="m21 3-7 18-4-7-7-4 18-7Z" /></>,
+        cancel: <><circle cx="12" cy="12" r="9" /><path d="m9 9 6 6m0-6-6 6" /></>,
+        rejected: <><circle cx="12" cy="12" r="9" /><path d="M12 7v6m0 4h.01" /></>,
+    };
+
+    return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{icons[name]}</svg>;
+}
 
 export function SellerWorkspace({ categories, error, user, onError, onUserUpdated, onLogout }: SellerWorkspaceProps) {
     const [page, setPage] = React.useState<SellerPage>(() => window.location.hash === '#notifications' ? 'notifications' : 'dashboard');
-    const [mobileNavOpen, setMobileNavOpen] = React.useState(false);
+    const [mobileNavOpen, setMobileNavOpen] = useWorkspaceMobileMenu();
     const [notificationCaseReference, setNotificationCaseReference] = React.useState<string | null>(null);
     const [notificationOrderId, setNotificationOrderId] = React.useState<number | null>(null);
     const [settingsTab, setSettingsTab] = React.useState<SellerSettingsTab>('profile');
@@ -112,19 +162,19 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
     const [summaryLoading, setSummaryLoading] = React.useState(false);
     const [listings, setListings] = React.useState<SellerListing[]>([]);
     const [listingLoading, setListingLoading] = React.useState(false);
+    const [listingLoadingError, setListingLoadingError] = React.useState<string | null>(null);
+    const [listingSummary, setListingSummary] = React.useState<SellerListingSummary | null>(null);
+    const [listingResultRange, setListingResultRange] = React.useState<{ from: number | null; to: number | null; total: number }>({ from: null, to: null, total: 0 });
     const [listingPage, setListingPage] = React.useState(1);
     const [listingLastPage, setListingLastPage] = React.useState(1);
     const [listingRevision, setListingRevision] = React.useState(0);
     const [listingSearch, setListingSearch] = React.useState('');
-    const [listingSort, setListingSort] = React.useState<ListingSortColumn>('name');
-    const [listingSortDirection, setListingSortDirection] = React.useState<'asc' | 'desc'>('asc');
+    const [listingCategoryFilter, setListingCategoryFilter] = React.useState('');
+    const [listingStatusFilter, setListingStatusFilter] = React.useState('');
+    const [listingSort, setListingSort] = React.useState<ListingSortColumn>('created_at');
+    const [listingSortDirection, setListingSortDirection] = React.useState<'asc' | 'desc'>('desc');
     const [editingListingId, setEditingListingId] = React.useState<number | null>(null);
     const [listingActionId, setListingActionId] = React.useState<number | null>(null);
-    const [interests, setInterests] = React.useState<SellerInterest[]>([]);
-    const [interestLoading, setInterestLoading] = React.useState(false);
-    const [interestPage, setInterestPage] = React.useState(1);
-    const [interestLastPage, setInterestLastPage] = React.useState(1);
-    const [interestRevision, setInterestRevision] = React.useState(0);
     const [listingFormOpen, setListingFormOpen] = React.useState(false);
     const [notice, setNotice] = React.useState<string | null>(null);
     const [pickupLocation, setPickupLocation] = React.useState<{ latitude: number; longitude: number } | null>(null);
@@ -324,35 +374,44 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
         if (page !== 'listings') return;
         let active = true;
         setListingLoading(true);
-        api.get<{ listings: { data: SellerListing[]; last_page: number } }>('/api/seller/listings', {
-            params: { page: listingPage, q: listingSearch.trim() || undefined, sort: listingSort, direction: listingSortDirection },
+        setListingLoadingError(null);
+        api.get<{
+            listings: { data: SellerListing[]; from: number | null; to: number | null; total: number; last_page: number };
+            summary: SellerListingSummary;
+        }>('/api/seller/listings', {
+            params: {
+                page: listingPage,
+                q: listingSearch.trim() || undefined,
+                category_id: listingCategoryFilter || undefined,
+                status: listingStatusFilter || undefined,
+                sort: listingSort,
+                direction: listingSortDirection,
+            },
         })
             .then((response) => {
                 if (!active) return;
+                setListingLoadingError(null);
                 const lastPage = response.data.listings.last_page;
                 setListingLastPage(lastPage);
+                setListingSummary(response.data.summary);
+                setListingResultRange({
+                    from: response.data.listings.from,
+                    to: response.data.listings.to,
+                    total: response.data.listings.total,
+                });
                 if (listingPage > lastPage) {
                     setListingPage(lastPage);
                     return;
                 }
                 setListings(response.data.listings.data);
             })
-            .catch(() => { if (active) onError('Your listings could not be loaded.'); })
+            .catch(() => {
+                if (!active) return;
+                setListingLoadingError('Your listings could not be loaded.');
+            })
             .finally(() => { if (active) setListingLoading(false); });
         return () => { active = false; };
-    }, [listingPage, listingRevision, listingSearch, listingSort, listingSortDirection, onError, page]);
-
-    React.useEffect(() => {
-        if (page !== 'interests') return;
-        setInterestLoading(true);
-        api.get<{ interests: { data: SellerInterest[]; last_page: number } }>('/api/seller/interests', { params: { page: interestPage } })
-            .then((response) => {
-                setInterests(response.data.interests.data);
-                setInterestLastPage(response.data.interests.last_page);
-            })
-            .catch(() => onError('Buyer interest could not be loaded.'))
-            .finally(() => setInterestLoading(false));
-    }, [interestPage, interestRevision, onError, page]);
+    }, [listingCategoryFilter, listingPage, listingRevision, listingSearch, listingSort, listingSortDirection, listingStatusFilter, page]);
 
     React.useEffect(() => {
         if (page !== 'location' && page !== 'account') return;
@@ -558,18 +617,6 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
         }
     }
 
-    async function updateInterest(interest: SellerInterest, status: string) {
-        if (!await confirmAction({ title: 'Update buyer interest?', text: `The interest status will change to ${status.replaceAll('_', ' ').toLowerCase()}.`, confirmText: 'Update status' })) return;
-        try {
-            await initializeCsrf();
-            await api.patch(`/api/seller/interests/${interest.id}`, { status });
-            setInterestRevision((revision) => revision + 1);
-            showSuccess('Buyer interest updated.');
-        } catch (requestError: any) {
-            onError(requestError.userMessage ?? requestError.response?.data?.message ?? 'Buyer interest could not be updated.');
-        }
-    }
-
     function locatePickupLocation() {
         if (!navigator.geolocation) {
             onError('Location services are unavailable. Use a supported browser over HTTPS or localhost.');
@@ -681,7 +728,7 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
                         </li>;
                     })}</ul>
                 </section>}
-                <div className="seller-quick-actions"><button type="button" onClick={() => { setPage('listings'); setListingFormOpen(true); }}>Add a listing</button><button type="button" onClick={() => setPage('interests')}>Review buyer interest</button></div>
+                <div className="seller-quick-actions"><button type="button" onClick={() => { setPage('listings'); setListingFormOpen(true); }}>Add a listing</button></div>
             </>;
         }
 
@@ -693,8 +740,27 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
                 aria-label={`Sort by ${label}${listingSort === column ? `, currently ${listingSortDirection === 'asc' ? 'ascending' : 'descending'}` : ''}`}
             >{label}{listingSort === column ? <span aria-hidden="true">{listingSortDirection === 'asc' ? ' ↑' : ' ↓'}</span> : <span aria-hidden="true"> ↕</span>}</button>;
             const editingListing = listings.find((listing) => listing.id === editingListingId);
-            return <section className="seller-work-section">
-                <div className="seller-work-heading"><div><p className="eyebrow">Catalog</p><h2>My listings</h2></div><button className="seller-inline-action" type="button" onClick={() => setListingFormOpen((open) => !open)}>{listingFormOpen ? 'Close form' : 'Add listing +'}</button></div>
+            const listingSummaryCards: { label: string; value: number | undefined; icon: SellerListingIconName; tone: string }[] = [
+                { label: 'Total listings', value: listingSummary?.total, icon: 'total', tone: 'total' },
+                { label: 'Active', value: listingSummary?.active, icon: 'active', tone: 'active' },
+                { label: 'Pending review', value: listingSummary?.pending_review, icon: 'pending', tone: 'pending' },
+                { label: 'Drafts', value: listingSummary?.draft, icon: 'draft', tone: 'draft' },
+            ];
+            const hasListingFilter = Boolean(listingSearch.trim() || listingCategoryFilter || listingStatusFilter);
+            return <section className="seller-work-section seller-listings-page">
+                <div className="seller-listing-summary-grid" aria-label="Listing summary">
+                    {listingSummaryCards.map((card) => <article className={`seller-listing-summary-card seller-listing-summary-card--${card.tone}`} key={card.label}>
+                        <span className="seller-listing-summary-icon"><SellerListingIcon name={card.icon} /></span>
+                        <span className="seller-listing-summary-copy"><span>{card.label}</span><strong>{card.value ?? (listingLoading ? '…' : '—')}</strong></span>
+                    </article>)}
+                </div>
+                <div className="seller-listing-catalog-panel">
+                    <div className="seller-work-heading">
+                        <div><p className="eyebrow">Catalog</p><h2>My listings</h2></div>
+                        <button className="seller-inline-action seller-listing-add-action" type="button" onClick={() => setListingFormOpen((open) => !open)}>
+                            {listingFormOpen ? 'Close form' : <><span>Add listing</span><span aria-hidden="true">+</span></>}
+                        </button>
+                    </div>
                 {notice && <p className="seller-notice" role="status">{notice}</p>}
                 {listingFormOpen && <div className="seller-listing-form-wrap"><SellerListingForm categories={categories} onSaved={() => { setNotice('Draft saved. Submit it for review when it is ready.'); setListingFormOpen(false); setListingRevision((revision) => revision + 1); }} onError={onError} /></div>}
                 {editingListing && <SellerListingEditor key={editingListing.id} listing={editingListing} categories={categories} onCancel={() => setEditingListingId(null)} onError={onError} onSaved={() => {
@@ -703,53 +769,106 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
                     setListingRevision((revision) => revision + 1);
                     showSuccess('Listing changes saved.');
                 }} />}
-                <label className="seller-listing-search">Search listings by name or category
-                    <input type="search" value={listingSearch} onChange={(event) => {
-                        setListingSearch(event.target.value);
-                        setListingPage(1);
-                    }} placeholder="e.g. Native pig or Swine" aria-label="Search listings by name or category" />
-                </label>
-                {listingLoading ? <p className="seller-loading" role="status">Loading your listings...</p> : listings.length ? <div className="data-table-wrap"><table className="data-table seller-listings-table">
-                    <caption className="sr-only">Your livestock listings. Activate a column heading to sort ascending or descending.</caption>
-                    <thead><tr>
-                        <th aria-sort={listingSort === 'name' ? listingSortDirection === 'asc' ? 'ascending' : 'descending' : 'none'}>{sortButton('name', 'Listing')}</th>
-                        <th aria-sort={listingSort === 'category' ? listingSortDirection === 'asc' ? 'ascending' : 'descending' : 'none'}>{sortButton('category', 'Category')}</th>
-                        <th aria-sort={listingSort === 'price' ? listingSortDirection === 'asc' ? 'ascending' : 'descending' : 'none'}>{sortButton('price', 'Price')}</th>
-                        <th aria-sort={listingSort === 'quantity' ? listingSortDirection === 'asc' ? 'ascending' : 'descending' : 'none'}>{sortButton('quantity', 'Available')}</th>
-                        <th aria-sort={listingSort === 'status' ? listingSortDirection === 'asc' ? 'ascending' : 'descending' : 'none'}>{sortButton('status', 'Status')}</th>
-                        <th>Actions</th>
-                    </tr></thead>
-                    <tbody>{listings.map((listing) => {
-                        const editable = ['DRAFT', 'REJECTED'].includes(listing.status);
-                        const cancellable = ['ACTIVE', 'PENDING_REVIEW'].includes(listing.status);
-                        const busy = listingActionId === listing.id;
-                        const price = listing.pricing_type === 'PER_KILO' ? listing.price_per_kilo : listing.price_per_head;
-                        return <tr key={listing.id} className={listing.id === notificationListingId ? 'seller-listing-notification-target' : undefined} aria-current={listing.id === notificationListingId ? 'true' : undefined}>
-                            <td data-label="Listing"><strong>{listing.name}</strong></td>
-                            <td data-label="Category">{listing.category.name}</td>
-                            <td data-label="Price">PHP {Number(price ?? 0).toLocaleString()} / {listing.pricing_type === 'PER_KILO' ? 'kg' : 'head'}</td>
-                            <td data-label="Available">{listing.quantity} {listing.pricing_type === 'PER_KILO' ? 'kg' : 'head'}</td>
-                            <td data-label="Status"><span className={`status-pill status-${listing.status.toLowerCase()}`}>{listing.status.replaceAll('_', ' ')}</span></td>
-                            <td data-label="Actions"><div className="seller-listing-actions">{editable ? <>
-                                <button className="seller-table-action" type="button" disabled={busy} onClick={() => setEditingListingId(listing.id)} aria-label={`Edit ${listing.name}`}>Edit</button>
-                                <button className="seller-table-action seller-listing-delete" type="button" disabled={busy} onClick={() => void deleteListing(listing)} aria-label={`Delete ${listing.name}`}>{busy ? 'Working...' : 'Delete'}</button>
-                                <button className="seller-table-action" type="button" disabled={busy} onClick={() => void submitListing(listing)} aria-label={`Submit ${listing.name} for review`}>{busy ? 'Working...' : 'Submit'}</button>
-                            </> : cancellable ? <button className="seller-table-action seller-listing-delete" type="button" disabled={busy} onClick={() => void cancelListing(listing)} aria-label={`${listing.status === 'PENDING_REVIEW' ? 'Cancel submission for' : 'Cancel active listing'} ${listing.name}`}>{busy ? 'Working...' : 'Cancel'}</button> : <span className="seller-muted">No actions available</span>}</div></td>
-                        </tr>;
-                    })}</tbody>
-                </table></div> : <p className="seller-empty">{listingSearch.trim() ? 'No listings match your search.' : 'You have not created any listings yet.'}</p>}
-                <Pagination page={listingPage} lastPage={listingLastPage} onChange={setListingPage} />
+                    <div className="seller-listing-toolbar">
+                        <label className="seller-listing-control seller-listing-search">
+                            <span>Search listings</span>
+                            <span className="seller-listing-control-input"><SellerListingIcon name="search" /><input type="search" value={listingSearch} onChange={(event) => {
+                                setListingSearch(event.target.value);
+                                setListingPage(1);
+                            }} placeholder="Search by name or category" aria-label="Search listings by name or category" /></span>
+                        </label>
+                        <label className="seller-listing-control">
+                            <span>Category</span>
+                            <span className="seller-listing-control-input"><SellerListingIcon name="category" /><select value={listingCategoryFilter} onChange={(event) => {
+                                setListingCategoryFilter(event.target.value);
+                                setListingPage(1);
+                            }} aria-label="Filter listings by category">
+                                <option value="">All categories</option>
+                                {categories.map((category) => <option value={category.id} key={category.id}>{category.name}</option>)}
+                            </select></span>
+                        </label>
+                        <label className="seller-listing-control">
+                            <span>Status</span>
+                            <span className="seller-listing-control-input"><SellerListingIcon name="status" /><select value={listingStatusFilter} onChange={(event) => {
+                                setListingStatusFilter(event.target.value);
+                                setListingPage(1);
+                            }} aria-label="Filter listings by status">
+                                <option value="">All statuses</option>
+                                {listingStatuses.map((status) => <option value={status} key={status}>{status.toLowerCase().replaceAll('_', ' ').replace(/^./, (letter) => letter.toUpperCase())}</option>)}
+                            </select></span>
+                        </label>
+                        <label className="seller-listing-control">
+                            <span>Sort by</span>
+                            <span className="seller-listing-control-input"><SellerListingIcon name="sort" /><select value={`${listingSort}:${listingSortDirection}`} onChange={(event) => {
+                                const [sort, direction] = event.target.value.split(':') as [ListingSortColumn, 'asc' | 'desc'];
+                                setListingSort(sort);
+                                setListingSortDirection(direction);
+                                setListingPage(1);
+                            }} aria-label="Sort listings">
+                                {listingSortOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}
+                            </select></span>
+                        </label>
+                    </div>
+                    {listingLoading ? <p className="seller-loading seller-listing-state" role="status">Loading your listings...</p> : listingLoadingError ? <div className="seller-listing-state seller-listing-load-error">
+                        <p role="alert">{listingLoadingError}</p>
+                        <button className="seller-inline-action" type="button" onClick={() => setListingRevision((revision) => revision + 1)}>Try again</button>
+                    </div> : listings.length ? <div className="data-table-wrap seller-listings-table-wrap"><table className="data-table seller-listings-table">
+                        <caption className="sr-only">Your livestock listings. Activate a column heading to sort ascending or descending.</caption>
+                        <thead><tr>
+                            <th aria-sort={listingSort === 'name' ? listingSortDirection === 'asc' ? 'ascending' : 'descending' : 'none'}>{sortButton('name', 'Listing')}</th>
+                            <th aria-sort={listingSort === 'category' ? listingSortDirection === 'asc' ? 'ascending' : 'descending' : 'none'}>{sortButton('category', 'Category')}</th>
+                            <th aria-sort={listingSort === 'price' ? listingSortDirection === 'asc' ? 'ascending' : 'descending' : 'none'}>{sortButton('price', 'Price')}</th>
+                            <th aria-sort={listingSort === 'quantity' ? listingSortDirection === 'asc' ? 'ascending' : 'descending' : 'none'}>{sortButton('quantity', 'Available')}</th>
+                            <th aria-sort={listingSort === 'status' ? listingSortDirection === 'asc' ? 'ascending' : 'descending' : 'none'}>{sortButton('status', 'Status')}</th>
+                            <th aria-sort={listingSort === 'updated_at' ? listingSortDirection === 'asc' ? 'ascending' : 'descending' : 'none'}>{sortButton('updated_at', 'Updated')}</th>
+                            <th>Actions</th>
+                        </tr></thead>
+                        <tbody>{listings.map((listing) => {
+                            const editable = ['DRAFT', 'REJECTED'].includes(listing.status);
+                            const cancellable = ['ACTIVE', 'PENDING_REVIEW'].includes(listing.status);
+                            const viewable = listing.status === 'ACTIVE';
+                            const busy = listingActionId === listing.id;
+                            const price = listing.pricing_type === 'PER_KILO' ? listing.price_per_kilo : listing.price_per_head;
+                            const statusIcon: SellerListingIconName = listing.status === 'ACTIVE' ? 'active' : listing.status === 'PENDING_REVIEW' ? 'pending' : listing.status === 'DRAFT' ? 'draft' : listing.status === 'REJECTED' ? 'rejected' : 'total';
+                            const statusLabel = listing.status.toLowerCase().replaceAll('_', ' ').replace(/^./, (letter) => letter.toUpperCase());
+                            const updatedAt = listing.updated_at ? new Date(listing.updated_at) : null;
+                            const updatedAtValid = updatedAt && !Number.isNaN(updatedAt.getTime());
+                            return <tr key={listing.id} className={listing.id === notificationListingId ? 'seller-listing-notification-target' : undefined} aria-current={listing.id === notificationListingId ? 'true' : undefined}>
+                                <td data-label="Listing"><span className="seller-listing-identity">
+                                    {listing.images?.[0]?.url
+                                        ? <img className="seller-listing-thumbnail" src={listing.images[0].url} alt="" loading="lazy" />
+                                        : <span className="seller-listing-thumbnail seller-listing-thumbnail--empty"><SellerListingIcon name="livestock" /></span>}
+                                    <strong>{listing.name}</strong>
+                                </span></td>
+                                <td data-label="Category"><span className="seller-listing-category">{listing.category.name}</span></td>
+                                <td data-label="Price"><strong className="seller-listing-price">{price == null ? '—' : `₱${Number(price).toLocaleString('en-PH', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} / ${listing.pricing_type === 'PER_KILO' ? 'kg' : 'head'}`}</strong></td>
+                                <td data-label="Available">{listing.quantity} {listing.pricing_type === 'PER_KILO' ? 'kg' : 'head'}</td>
+                                <td data-label="Status"><span className={`seller-listing-status seller-listing-status--${listing.status.toLowerCase()}`}><SellerListingIcon name={statusIcon} />{statusLabel}</span></td>
+                                <td data-label="Updated">{updatedAtValid && listing.updated_at ? <time className="seller-listing-updated" dateTime={listing.updated_at}>
+                                    <span>{updatedAt.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                                    <small>{updatedAt.toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' })}</small>
+                                </time> : '—'}</td>
+                                <td data-label="Actions"><div className="seller-listing-actions">
+                                    {viewable && <a className="seller-table-action seller-listing-view" href={`#listing/${listing.id}`} aria-label={`View ${listing.name}`}><SellerListingIcon name="view" /><span>View</span></a>}
+                                    {editable && <>
+                                        <button className="seller-table-action seller-listing-edit" type="button" disabled={busy} onClick={() => setEditingListingId(listing.id)} aria-label={`Edit ${listing.name}`}><SellerListingIcon name="edit" /><span>Edit</span></button>
+                                        <button className="seller-table-action seller-listing-delete" type="button" disabled={busy} onClick={() => void deleteListing(listing)} aria-label={`Delete ${listing.name}`}><SellerListingIcon name="delete" /><span>{busy ? 'Working...' : 'Delete'}</span></button>
+                                        <button className="seller-table-action seller-listing-submit" type="button" disabled={busy} onClick={() => void submitListing(listing)} aria-label={`Submit ${listing.name} for review`}><SellerListingIcon name="submit" /><span>{busy ? 'Working...' : 'Submit'}</span></button>
+                                    </>}
+                                    {cancellable && <button className="seller-table-action seller-listing-delete" type="button" disabled={busy} onClick={() => void cancelListing(listing)} aria-label={`${listing.status === 'PENDING_REVIEW' ? 'Cancel submission for' : 'Cancel active listing'} ${listing.name}`}><SellerListingIcon name="cancel" /><span>{busy ? 'Working...' : 'Cancel'}</span></button>}
+                                    {!viewable && !editable && !cancellable && <span className="seller-muted" aria-label="No actions available">—</span>}
+                                </div></td>
+                            </tr>;
+                        })}</tbody>
+                    </table></div> : <p className="seller-empty seller-listing-state">{hasListingFilter ? 'No listings match your filters.' : 'You have not created any listings yet.'}</p>}
+                    <div className="seller-listing-results-footer">
+                            <p role="status">{listingLoading ? 'Loading listing results…' : listingLoadingError ? 'Listing results are unavailable.' : listingResultRange.total === 0 ? 'Showing 0 of 0 listings' : `Showing ${listingResultRange.from ?? 1}–${listingResultRange.to ?? listings.length} of ${listingResultRange.total} listings`}</p>
+                            {!listingLoading && !listingLoadingError && <Pagination page={listingPage} lastPage={listingLastPage} onChange={setListingPage} />}
+                    </div>
+                </div>
             </section>;
         }
         if (page === 'promotions') return <SellerPromotions onError={onError} />;
-        if (page === 'interests') {
-            return <section className="seller-work-section">
-                <div className="seller-work-heading"><div><p className="eyebrow">Sales pipeline</p><h2>Buyer interest</h2></div></div>
-                {interestLoading ? <p className="seller-loading">Loading buyer interest...</p> : interests.length ? <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Buyer</th><th>Listing</th><th>Received</th><th>Interest status</th></tr></thead><tbody>{interests.map((interest) => <tr key={interest.id}><td>{interest.buyer?.name ?? 'Buyer'}</td><td><strong>{interest.listing?.name ?? 'Listing'}</strong></td><td>{new Date(interest.created_at).toLocaleDateString()}</td><td><label className="seller-status-control"><span className="sr-only">Update interest status for {interest.buyer?.name ?? 'buyer'}</span><select value={interest.status} onChange={(event) => updateInterest(interest, event.target.value)}>{interestStatuses.map((status) => <option key={status} value={status}>{status.replaceAll('_', ' ')}</option>)}</select></label></td></tr>)}</tbody></table></div> : <p className="seller-empty">No buyers have expressed interest in your listings yet.</p>}
-                <Pagination page={interestPage} lastPage={interestLastPage} onChange={setInterestPage} />
-            </section>;
-        }
-
         if (page === 'complaints') return <ComplaintList onError={onError} initialCaseReference={notificationCaseReference} onInitialCaseHandled={() => setNotificationCaseReference(null)} />;
         if (page === 'reviews') return <ReviewList onError={onError} />;
         if (page === 'chats') return <AIChatPage
@@ -762,8 +881,13 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
                 void refreshNavigationCounts();
             }}
         />;
-        if (page === 'account' || page === 'location') return <section className="seller-work-section seller-settings-page">
-            <div className="seller-work-heading"><div><p className="eyebrow">Seller portal settings</p><h2>Settings</h2></div></div>
+        if (page === 'account' || page === 'location') return <section className="seller-work-section seller-settings-page settings-panel" aria-labelledby="seller-settings-title">
+            <header className="admin-section-heading settings-page-heading">
+                <div className="settings-page-title">
+                    <span className="settings-page-icon"><SettingsCategoryIcon name="system" /></span>
+                    <div><p className="eyebrow">Seller portal settings</p><h2 id="seller-settings-title">Settings</h2></div>
+                </div>
+            </header>
             <SellerSetupGuide
                 user={user}
                 refreshKey={setupRefreshKey}
@@ -783,18 +907,18 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
                     }
                 }}
             />
-            <div className="seller-settings-tabs" role="tablist" aria-label="Seller settings">
+            <nav className="seller-settings-tabs settings-category-nav" role="tablist" aria-label="Seller settings">
                 {([
-                    ['profile', 'Profile & business'],
-                    ['shop', 'Shop profile'],
-                    ['password', 'Password'],
-                    ['phone', 'Phone security'],
-                    ['preferences', 'Notifications & privacy'],
-                    ['pickup', 'Pickup location'],
-                ] as const).map(([tab, label]) => <button
+                    ['profile', 'Profile & business', 'account'],
+                    ['shop', 'Shop profile', 'seller'],
+                    ['password', 'Password', 'security'],
+                    ['phone', 'Phone security', 'security'],
+                    ['preferences', 'Notifications & privacy', 'notifications'],
+                    ['pickup', 'Pickup location', 'delivery'],
+                ] as const).map(([tab, label, icon]) => <button
                     key={tab}
                     id={`seller-settings-tab-${tab}`}
-                    className="seller-settings-tab"
+                    className={`seller-settings-tab settings-category-tab${settingsTab === tab ? ' is-active' : ''}`}
                     type="button"
                     role="tab"
                     aria-selected={settingsTab === tab}
@@ -810,12 +934,12 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
                         setSettingsTab(tabs[next]);
                         document.getElementById(`seller-settings-tab-${tabs[next]}`)?.focus();
                     }}
-                >{label}</button>)}
-            </div>
-            <section className="seller-account-management" aria-labelledby="seller-account-management-heading">
+                ><SettingsCategoryIcon name={icon} /><span>{label}</span></button>)}
+            </nav>
+            <section className="seller-account-management settings-focused-panel" aria-labelledby="seller-account-management-heading">
                 <p id="seller-account-management-heading" className="seller-account-management-heading">Account management</p>
                 <section className="seller-settings-section" id="seller-settings-panel-profile" role="tabpanel" aria-labelledby="seller-settings-tab-profile" hidden={settingsTab !== 'profile'} tabIndex={-1}>
-                    <div className="seller-work-heading"><div><p className="eyebrow">Seller account</p><h3 id="seller-profile-settings-heading">Settings</h3></div></div>
+                    <div className="seller-work-heading settings-category-heading"><span className="settings-section-icon"><SettingsCategoryIcon name="account" /></span><div><p className="eyebrow">Seller account</p><h3 id="seller-profile-settings-heading">Profile &amp; business</h3><p>Manage your seller account and business contact details.</p></div></div>
                     <form className="seller-account-form" onSubmit={saveSellerAccount}>
                         <label>Account name<input type="text" autoComplete="name" maxLength={120} required value={sellerName} onChange={(event) => setSellerName(event.target.value)} /></label>
                         <label>Username<input type="text" autoComplete="username" minLength={3} maxLength={32} pattern="[A-Za-z0-9_\-]+" required value={sellerUsername} onChange={(event) => setSellerUsername(event.target.value)} /></label>
@@ -832,7 +956,7 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
                     <SellerShopProfileSettings defaultShopName={user.name} onSaved={() => setSetupRefreshKey((revision) => revision + 1)} />
                 </section>
                 <section className="seller-settings-section" id="seller-settings-panel-password" role="tabpanel" aria-labelledby="seller-settings-tab-password" hidden={settingsTab !== 'password'} tabIndex={-1}>
-                    <div className="seller-work-heading"><div><p className="eyebrow">Profile protection</p><h3 id="seller-password-settings-heading">{user.password_setup_complete ? 'Change password' : 'Set a password'}</h3></div></div>
+                    <div className="seller-work-heading settings-category-heading"><span className="settings-section-icon"><SettingsCategoryIcon name="security" /></span><div><p className="eyebrow">Profile protection</p><h3 id="seller-password-settings-heading">{user.password_setup_complete ? 'Change password' : 'Set a password'}</h3><p>Update the password used to sign in to your account.</p></div></div>
                     <form className="seller-account-form" onSubmit={changeSellerPassword}>
                         {user.password_setup_complete
                             ? <label>Current password<input type="password" autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} required /></label>
@@ -843,8 +967,7 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
                     </form>
                 </section>
                 <section className="seller-settings-section" id="seller-settings-panel-phone" role="tabpanel" aria-labelledby="seller-settings-tab-phone" hidden={settingsTab !== 'phone'} tabIndex={-1}>
-                    <div className="seller-work-heading"><div><p className="eyebrow">Profile protection</p><h3 id="seller-account-security-heading">Phone verification</h3></div></div>
-                    <p>Verify a Philippine mobile number for your account. Codes expire after 10 minutes.</p>
+                    <div className="seller-work-heading settings-category-heading"><span className="settings-section-icon"><SettingsCategoryIcon name="security" /></span><div><p className="eyebrow">Profile protection</p><h3 id="seller-account-security-heading">Phone verification</h3><p>Verify a Philippine mobile number for your account. Codes expire after 10 minutes.</p></div></div>
                     <p>{user.phone_number || 'No phone number added'} · {user.phone_verified_at ? 'Verified' : 'Not verified'}</p>
                     <label>Phone number<input type="tel" inputMode="tel" autoComplete="tel" maxLength={30} placeholder="09XXXXXXXXX or +639XXXXXXXXX" value={phoneNumber} onChange={(event) => setPhoneNumber(event.target.value)} /></label>
                     <button className="seller-inline-action" type="button" disabled={phoneBusy || !phoneNumber.trim()} onClick={() => void sendPhoneCode()}>{phoneBusy ? 'Sending...' : user.phone_number === phoneNumber && user.phone_verified_at ? 'Phone verified' : user.phone_number === phoneNumber ? 'Send / resend code' : 'Verify this number'}</button>
@@ -854,8 +977,7 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
                     </form>}
                 </section>
                 <section className="seller-settings-section" id="seller-settings-panel-preferences" role="tabpanel" aria-labelledby="seller-settings-tab-preferences" hidden={settingsTab !== 'preferences'} tabIndex={-1}>
-                    <div className="seller-work-heading"><div><p className="eyebrow">Communication controls</p><h3 id="seller-notification-preferences-heading">Notifications &amp; privacy</h3></div></div>
-                    <p>Choose which in-app updates you receive and whether other users can start or continue direct messages with you.</p>
+                    <div className="seller-work-heading settings-category-heading"><span className="settings-section-icon"><SettingsCategoryIcon name="notifications" /></span><div><p className="eyebrow">Communication controls</p><h3 id="seller-notification-preferences-heading">Notifications &amp; privacy</h3><p>Control in-app updates and direct-message privacy.</p></div></div>
                     {accountSettingsLoading ? <p className="seller-loading" role="status">Loading account preferences...</p> : <>
                         <label className="buyer-account-setting-toggle">
                             <span><strong>Order notifications</strong><small>In-app notifications when buyers place orders or your order status changes.</small></span>
@@ -872,7 +994,7 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
                     </>}
                 </section>
                 <section className="seller-settings-section" id="seller-settings-panel-pickup" role="tabpanel" aria-labelledby="seller-settings-tab-pickup" hidden={settingsTab !== 'pickup'} tabIndex={-1}>
-                    <div className="seller-work-heading"><div><p className="eyebrow">Delivery setup</p><h3 id="seller-pickup-location-heading">Pickup location</h3></div></div>
+                    <div className="seller-work-heading settings-category-heading"><span className="settings-section-icon"><SettingsCategoryIcon name="delivery" /></span><div><p className="eyebrow">Delivery setup</p><h3 id="seller-pickup-location-heading">Pickup location</h3></div></div>
                     <p className="seller-location-help">Delivery fees require a pickup pin that you have explicitly saved. Move the pin to the exact place where buyers or delivery providers should collect livestock; the map-center pin is only a visual starting point and is never used until you save it.</p>
                     {locationLoading ? <p className="seller-loading">Loading pickup location...</p> : <>
                         <button className="seller-inline-action" type="button" disabled={locationLocating || locationSaving} onClick={locatePickupLocation}>{locationLocating ? 'Locating...' : 'Use my current location'}</button>
@@ -891,22 +1013,32 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
                 </section>
             </section>
         </section>;
-        return <ReportPanel role="SELLER" preparedBy={user.name} onError={onError} onAnalyze={analyzeReport} />;
+        return <ReportPanel role="SELLER" preparedBy={user.name} onError={onError} onAnalyze={analyzeReport} sellerReportsPage />;
     }
 
     const activeNavigation = navigation.find((item) => item.id === page) ?? (page === 'location' ? navigation.find((item) => item.id === 'account') : undefined);
-    const pageTitle = page === 'location' || page === 'account' ? 'Settings' : activeNavigation?.label ?? (page === 'interests' ? 'Buyer interest' : '');
+    const pageTitle = page === 'location' || page === 'account' ? 'Settings' : activeNavigation?.label ?? '';
 
     return <main className={`admin-shell seller-shell${page === 'dashboard' ? ' seller-dashboard-open' : ''}`}>
         <aside className={`admin-sidebar role-sidebar${mobileNavOpen ? ' mobile-open' : ''}`} onKeyDown={(event) => {
             if (event.key === 'Escape') setMobileNavOpen(false);
         }}>
-            <WorkspaceMobileHeader role="seller" menuOpen={mobileNavOpen} controlsId="seller-mobile-navigation" onToggle={() => setMobileNavOpen((open) => !open)} />
+            <WorkspaceMobileHeader
+                role="seller"
+                menuOpen={mobileNavOpen}
+                controlsId="seller-mobile-navigation"
+                onToggle={() => setMobileNavOpen((open) => !open)}
+                location="Bongabong, Oriental Mindoro"
+                notificationCount={navigationCounts.notifications}
+                notificationsActive={page === 'notifications'}
+                onOpenNotifications={() => { setPage('notifications'); setMobileNavOpen(false); }}
+            />
             <div className="role-mobile-menu-panel" id="seller-mobile-navigation">
-            <a className="brand" href="/">FARM<span>GATE</span></a>
+            <FarmgateBrand />
             <div className="admin-sidebar-label">SELLER PORTAL</div>
             <nav aria-label="Seller navigation">{navigation.map((item) => {
                 const badgeCount = item.badge ? navigationCounts[item.badge] : 0;
+                const mobileMenuExcluded = ['notifications', 'chats', 'listings'].includes(item.id);
                 const badgeDescription = item.badge === 'orders'
                     ? navigationBadgeLabel(badgeCount, 'order awaiting confirmation', 'orders awaiting confirmation')
                     : item.badge === 'notifications'
@@ -917,7 +1049,7 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
                                 ? navigationBadgeLabel(badgeCount, 'unread message', 'unread messages')
                                 : '';
                 const selected = page === item.id || (page === 'location' && item.id === 'account');
-                return <button type="button" key={item.id} className={selected ? 'active' : ''} aria-current={selected ? 'page' : undefined} aria-label={badgeCount > 0 ? `${item.label}, ${badgeDescription}${item.badge === 'orders' ? '. Separate from unread notifications.' : ''}` : item.label} title={badgeCount > 0 ? `${item.label}, ${badgeDescription}${item.badge === 'orders' ? ' (separate from unread notifications)' : ''}` : item.label} onClick={() => { setPage(item.id); setNotice(null); setMobileNavOpen(false); }}><span className="nav-icon" aria-hidden="true">{item.id === 'notifications' ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg> : item.icon}</span><span className="seller-nav-label">{item.label}</span>{item.badge === 'orders' && badgeCount > 0
+                return <button type="button" key={item.id} className={`${selected ? 'active' : ''}${mobileMenuExcluded ? ' role-mobile-menu-excluded' : ''}`} aria-current={selected ? 'page' : undefined} aria-label={badgeCount > 0 ? `${item.label}, ${badgeDescription}${item.badge === 'orders' ? '. Separate from unread notifications.' : ''}` : item.label} title={badgeCount > 0 ? `${item.label}, ${badgeDescription}${item.badge === 'orders' ? ' (separate from unread notifications)' : ''}` : item.label} onClick={() => { setPage(item.id); setNotice(null); setMobileNavOpen(false); }}><span className="nav-icon"><WorkspaceSidebarIcon name={item.id} /></span><span className="seller-nav-label">{item.label}</span>{item.badge === 'orders' && badgeCount > 0
                     ? <span className="seller-orders-pending-badge" aria-hidden="true">{badgeCount > 99 ? '99+' : Math.floor(badgeCount)} pending</span>
                     : <NavigationBadge count={badgeCount} />}</button>;
             })}</nav>
@@ -925,11 +1057,17 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
             </div>
         </aside>
         <section className={`admin-content seller-content${page === 'dashboard' ? ' seller-content-dashboard' : ''}`}>
-            <header className="admin-header"><div><p className="eyebrow">FARMGATE seller workspace</p><h1>{pageTitle}</h1><p>Manage your listings, orders, and buyer relationships.</p></div><span className="admin-role">SELLER</span></header>
+            <header className="admin-header workspace-banner-header"><div><p className="eyebrow">FARMGATE seller workspace</p><h1>{pageTitle}</h1><p>Manage your listings, orders, and buyer relationships.</p></div><WorkspaceBannerArtwork /><div className="role-header-context"><span className="admin-role">SELLER</span><WorkspaceAccountControl role="seller" userName={user.name} profilePhotoUrl={user.profile_photo_url} onOpenAccount={() => { setSettingsTab('profile'); setPage('account'); }} /></div></header>
             <div className={page === 'dashboard' ? 'seller-dashboard-scroll' : undefined} tabIndex={page === 'dashboard' ? 0 : undefined} aria-label={page === 'dashboard' ? 'Seller dashboard content' : undefined}>
                 {error && <p className="seller-error" role="alert">{error}</p>}
                 {renderPage()}
             </div>
         </section>
+        <RoleMobileBottomNavigation
+            items={sellerMobileDestinations}
+            activeId={page === 'location' ? 'account' : page}
+            navigationLabel="Key seller destinations"
+            onNavigate={(destination) => { setPage(destination); setNotice(null); setMobileNavOpen(false); }}
+        />
     </main>;
 }

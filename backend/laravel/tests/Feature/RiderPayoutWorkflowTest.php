@@ -16,6 +16,7 @@ use App\Services\RiderEarningsService;
 use App\Services\SystemSettingsService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Routing\Middleware\ThrottleRequests;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
@@ -23,6 +24,12 @@ use Tests\TestCase;
 class RiderPayoutWorkflowTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->withoutMiddleware(ThrottleRequests::class);
+    }
 
     public function test_verified_delivery_uses_a_frozen_rider_rate_snapshot_and_is_idempotent(): void
     {
@@ -138,7 +145,7 @@ class RiderPayoutWorkflowTest extends TestCase
         $this->actingAs($creator)->postJson('/api/admin/rider-payouts', $payload)->assertCreated()->assertJsonPath('payout.id', $payoutId);
         $this->assertDatabaseCount('rider_payouts', 1);
         $this->assertCount(1, $firstResponse->json('payout.earnings'));
-        $this->assertSame($actors['delivery']->reference, $firstResponse->json('payout.earnings.0.delivery_reference'));
+        $this->assertSame($actors['delivery']->delivery_reference, $firstResponse->json('payout.earnings.0.delivery_reference'));
         $this->assertDatabaseHas('rider_earnings', [
             'delivery_id' => $actors['delivery']->id,
             'payout_id' => $payoutId,
@@ -153,7 +160,7 @@ class RiderPayoutWorkflowTest extends TestCase
         $secondPayoutId = $secondPayoutResponse->json('payout.id');
         $this->assertNotSame($payoutId, $secondPayoutId);
         $this->assertCount(1, $secondPayoutResponse->json('payout.earnings'));
-        $this->assertSame($secondDelivery['delivery']->reference, $secondPayoutResponse->json('payout.earnings.0.delivery_reference'));
+        $this->assertSame($secondDelivery['delivery']->delivery_reference, $secondPayoutResponse->json('payout.earnings.0.delivery_reference'));
         $this->assertSame($secondEarning->net_amount_cents, $secondPayoutResponse->json('payout.amount_cents'));
 
         $this->actingAs($creator)->postJson('/api/admin/rider-payouts/'.$secondPayoutId.'/status', [
@@ -165,16 +172,16 @@ class RiderPayoutWorkflowTest extends TestCase
             'reason' => 'The external transfer failed and must be attempted again.',
         ])->assertOk();
         $this->actingAs($creator)
-            ->getJson('/api/admin/rider-payouts?status=FAILED&search='.$secondDelivery['delivery']->reference)
+            ->getJson('/api/admin/rider-payouts?status=FAILED&search='.$secondDelivery['delivery']->delivery_reference)
             ->assertOk()
-            ->assertJsonPath('payouts.data.0.earnings.0.delivery_reference', $secondDelivery['delivery']->reference);
+            ->assertJsonPath('payouts.data.0.earnings.0.delivery_reference', $secondDelivery['delivery']->delivery_reference);
         $retryResponse = $this->actingAs($creator)->postJson('/api/admin/rider-payouts', [
             'earning_id' => $secondEarning->id,
             'reason' => 'Create a new individual payout after the prior transfer failed.',
             'idempotency_key' => 'rider-delivery-idempotency-retry',
         ])->assertCreated();
         $this->assertNotSame($secondPayoutId, $retryResponse->json('payout.id'));
-        $this->assertSame($secondDelivery['delivery']->reference, $retryResponse->json('payout.earnings.0.delivery_reference'));
+        $this->assertSame($secondDelivery['delivery']->delivery_reference, $retryResponse->json('payout.earnings.0.delivery_reference'));
         $riderEarnings = $this->actingAs($actors['rider'])->getJson('/api/rider/earnings')->assertOk()->json('earnings.data');
         $secondRiderEarning = collect($riderEarnings)->firstWhere('id', $secondEarning->id);
         $this->assertNotNull($secondRiderEarning);
@@ -317,6 +324,7 @@ class RiderPayoutWorkflowTest extends TestCase
             'recipient_confirmed' => true,
             'delivery_recipient_name' => 'Recipient Example',
         ])->save();
+        $delivery->refresh();
 
         return compact('rider', 'order', 'delivery');
     }

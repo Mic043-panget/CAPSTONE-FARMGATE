@@ -135,10 +135,12 @@ export function ComplaintList({ onError, initialCaseReference, onInitialCaseHand
         }
     }
 
-    return <section className="complaint-queue seller-complaint-queue">
-        <div className="section-heading"><div><p className="eyebrow">Seller response</p><h2>Complaints and return requests</h2></div><span className="record-count" aria-live="polite">{total} {total === 1 ? 'case' : 'cases'}</span></div>
-        <p className="seller-complaint-guidance">You can respond or request information. Cases requiring a policy decision are handled by an admin.</p>
-        <div className="list-tools"><label className="control-search"><span className="sr-only">Search cases</span><input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Case reference, order, buyer, type, or reason" /></label></div>
+    return <section className="complaint-queue seller-complaint-queue" aria-labelledby="seller-complaints-title">
+        <header className="complaint-queue-heading">
+            <div><p className="eyebrow">Seller response</p><h2 id="seller-complaints-title">Complaints and return requests</h2><p>You can respond or request information. Cases requiring a policy decision are handled by an admin.</p></div>
+            <strong className="complaint-count" aria-live="polite">{total.toLocaleString()} matching {total === 1 ? 'case' : 'cases'}</strong>
+        </header>
+        <div className="complaint-queue-tools seller-complaint-queue-tools"><label className="control-search"><span>Search cases</span><input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Case reference, order, buyer, type, or reason" /></label></div>
         {loading ? <LoadingSkeleton variant="list" count={3} label="Loading complaint cases" /> : loadError ? <p className="complaint-queue-state" role="alert">{loadError}</p> : complaints.map((complaint) => {
             const expanded = Boolean(expandedCases[complaint.id]);
             const deadline = complaint.seller_response_deadline ? new Date(complaint.seller_response_deadline) : null;
@@ -195,7 +197,7 @@ export function ComplaintList({ onError, initialCaseReference, onInitialCaseHand
                 </div>
             </article>;
         })}
-        {!loading && !loadError && !complaints.length && <p className="empty-state">No complaints or return requests match your search.</p>}
+        {!loading && !loadError && !complaints.length && <p className="complaint-queue-state" role="status">No complaints or return requests match your search.</p>}
         {!loading && !loadError && total > 0 && <Pagination page={page} lastPage={lastPage} onChange={setPage} />}
     </section>;
 }

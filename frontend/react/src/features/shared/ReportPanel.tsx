@@ -106,9 +106,56 @@ type ReportPanelProps = {
     title?: string;
     hideTypeSelector?: boolean;
     preparedBy?: string;
+    adminReportsPage?: boolean;
+    sellerReportsPage?: boolean;
 };
 
-export function ReportPanel({ role, onError, onAnalyze, title, hideTypeSelector = false, preparedBy = 'Not provided' }: ReportPanelProps) {
+type AdminReportOverview = {
+    total_sales: string;
+    total_orders: number;
+    total_users: number;
+};
+
+function ReportOverviewIcon({ name }: { name: 'sales' | 'transactions' | 'users' | 'complaints' }) {
+    return <span className={`report-overview-icon report-overview-icon--${name}`} aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            {name === 'sales' && <><path d="M3 4h2l2.2 11.2a2 2 0 0 0 2 1.6h8.5a2 2 0 0 0 1.9-1.4L22 8H6" /><circle cx="10" cy="20" r="1" /><circle cx="18" cy="20" r="1" /></>}
+            {name === 'transactions' && <><path d="M4 7h15l-3-3m4 13H5l3 3" /><path d="M19 7l-3 3M5 17l3-3" /></>}
+            {name === 'users' && <><circle cx="9" cy="8" r="3" /><path d="M3 20v-1a6 6 0 0 1 12 0v1M16 5.2a3 3 0 0 1 0 5.6M18 14a5 5 0 0 1 3 4.6V20" /></>}
+            {name === 'complaints' && <><path d="m12 3 9 17H3L12 3Z" /><path d="M12 9v5m0 3h.01" /></>}
+        </svg>
+    </span>;
+}
+
+function ReportActionIcon({ name }: { name: 'export' | 'print' | 'analyze' | 'clear' | 'refresh' }) {
+    return <svg className="report-action-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        {name === 'export' && <><path d="M13 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10z" /><path d="M13 3v7h7M8 14h8m-8 4h8m-8-8h2" /></>}
+        {name === 'print' && <><path d="M7 8V3h10v5M7 17H5a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" /><path d="M7 14h10v7H7zM17 11h.01" /></>}
+        {name === 'analyze' && <><path d="m12 3 1.5 5.5L19 10l-5.5 1.5L12 17l-1.5-5.5L5 10l5.5-1.5L12 3Z" /><path d="m19 15 .8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15ZM5 3l.6 1.4L7 5l-1.4.6L5 7l-.6-1.4L3 5l1.4-.6L5 3Z" /></>}
+        {name === 'clear' && <><path d="M20 7v5h-5" /><path d="M19 12a7 7 0 1 1-2.1-5" /></>}
+        {name === 'refresh' && <><path d="M20 7v5h-5" /><path d="M20 12a8 8 0 1 1-2.35-5.65L20 9" /></>}
+    </svg>;
+}
+
+function ReportTypeIcon({ name }: { name: 'sales' | 'transactions' | 'users' | 'complaints' | 'listings' | 'deliveries' | 'filter' }) {
+    return <svg className="report-type-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        {name === 'sales' && <><path d="M3 4h2l2.2 11.2a2 2 0 0 0 2 1.6h8.5a2 2 0 0 0 1.9-1.4L22 8H6" /><circle cx="10" cy="20" r="1" /><circle cx="18" cy="20" r="1" /></>}
+        {name === 'transactions' && <><path d="M4 7h15l-3-3m4 13H5l3 3" /><path d="M19 7l-3 3M5 17l3-3" /></>}
+        {name === 'users' && <><circle cx="9" cy="8" r="3" /><path d="M3 20v-1a6 6 0 0 1 12 0v1M16 5.2a3 3 0 0 1 0 5.6M18 14a5 5 0 0 1 3 4.6V20" /></>}
+        {name === 'complaints' && <><path d="m12 3 9 17H3L12 3Z" /><path d="M12 9v5m0 3h.01" /></>}
+        {name === 'listings' && <><path d="M4 5h16M4 10h16M4 15h10M4 20h10" /><circle cx="19" cy="18" r="2" /></>}
+        {name === 'deliveries' && <><path d="M3 6h11v11H3zM14 10h4l3 3v4h-7z" /><circle cx="7.5" cy="18" r="1.8" /><circle cx="17.5" cy="18" r="1.8" /></>}
+        {name === 'filter' && <path d="M3 5h18l-7 8v5l-4 2v-7L3 5Z" />}
+    </svg>;
+}
+
+function ReportDetailsArrow() {
+    return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M5 12h14m-6-6 6 6-6 6" />
+    </svg>;
+}
+
+export function ReportPanel({ role, onError, onAnalyze, title, hideTypeSelector = false, preparedBy = 'Not provided', adminReportsPage = false, sellerReportsPage = false }: ReportPanelProps) {
     const reportTypes = role === 'ADMIN' ? ['sales', 'transactions', 'users', 'complaints'] : role === 'SELLER' ? ['sales', 'transactions', 'listings', 'deliveries'] : role === 'RIDER' ? ['deliveries'] : ['transactions', 'deliveries'];
     const [reportType, setReportType] = React.useState(reportTypes[0]);
     const [reportRows, setReportRows] = React.useState<Record<string, any>[]>([]);
@@ -136,8 +183,15 @@ export function ReportPanel({ role, onError, onAnalyze, title, hideTypeSelector 
     const [reportSort, setReportSort] = React.useState('created_at');
     const [reportDirection, setReportDirection] = React.useState<'asc' | 'desc'>('desc');
     const [selectedReportRow, setSelectedReportRow] = React.useState<Record<string, any> | null>(null);
+    const [reportFiltersOpen, setReportFiltersOpen] = React.useState(true);
+    const [adminOverview, setAdminOverview] = React.useState<AdminReportOverview | null>(null);
+    const [adminComplaintTotal, setAdminComplaintTotal] = React.useState<number | null>(null);
+    const [adminOverviewLoading, setAdminOverviewLoading] = React.useState(false);
+    const [adminOverviewError, setAdminOverviewError] = React.useState(false);
+    const [adminOverviewRevision, setAdminOverviewRevision] = React.useState(0);
     const debouncedSearch = useDebouncedValue(reportSearch);
     const isAdminReport = role === 'ADMIN' && ['sales', 'transactions', 'users', 'complaints'].includes(reportType);
+    const workspaceReportStyle = adminReportsPage || sellerReportsPage || role === 'RIDER';
 
     React.useEffect(() => {
         const refresh = () => {
@@ -153,6 +207,29 @@ export function ReportPanel({ role, onError, onAnalyze, title, hideTypeSelector 
             document.removeEventListener('visibilitychange', refresh);
         };
     }, []);
+
+    React.useEffect(() => {
+        if (!adminReportsPage || role !== 'ADMIN') return undefined;
+        let active = true;
+        setAdminOverviewLoading(true);
+        setAdminOverviewError(false);
+        Promise.all([
+            api.get<{ summary: AdminReportOverview }>('/api/dashboard/admin')
+                .then((response) => response.data.summary)
+                .catch(() => null),
+            api.get<{ case_counts: { total: number } }>('/api/admin/complaints', { params: { summary: true } })
+                .then((response) => response.data.case_counts.total)
+                .catch(() => null),
+        ]).then(([overview, complaintTotal]) => {
+            if (!active) return;
+            setAdminOverview(overview);
+            setAdminComplaintTotal(complaintTotal);
+            setAdminOverviewError(overview === null || complaintTotal === null);
+        }).finally(() => {
+            if (active) setAdminOverviewLoading(false);
+        });
+        return () => { active = false; };
+    }, [adminOverviewRevision, adminReportsPage, reportRevision, role]);
 
     function closeReportDetails() {
         setSelectedReportRow(null);
@@ -182,11 +259,31 @@ export function ReportPanel({ role, onError, onAnalyze, title, hideTypeSelector 
         } else {
             filters.status = reportStatus || undefined;
         }
-        if (role === 'RIDER' && reportType === 'deliveries') {
+        if (adminReportsPage) {
+            filters.sort = reportSort;
+            filters.direction = reportDirection;
+        } else if (role === 'RIDER' && reportType === 'deliveries') {
             filters.sort = reportSort;
             filters.direction = reportDirection;
         }
         return filters;
+    }
+
+    function changeReportType(value: string) {
+        setReportType(value);
+        setReportStatus('');
+        setOrderStatus('');
+        setPaymentStatus('');
+        setPaymentMethod('');
+        setUserRole('');
+        setAccountStatus('');
+        setComplaintType('');
+        setResolutionStatus('');
+        setAmountMin('');
+        setAmountMax('');
+        setReportSort('created_at');
+        setReportDirection('desc');
+        setPage(1);
     }
 
     React.useEffect(() => {
@@ -260,6 +357,32 @@ export function ReportPanel({ role, onError, onAnalyze, title, hideTypeSelector 
                                     ['CANCELLED', 'Cancelled'],
                                 ]
                             : [];
+    const adminSortOptions = reportType === 'sales' || reportType === 'transactions'
+        ? [
+            ['created_at:desc', 'Newest first'],
+            ['created_at:asc', 'Oldest first'],
+            ['total_amount:desc', 'Amount: high to low'],
+            ['total_amount:asc', 'Amount: low to high'],
+        ]
+        : reportType === 'users'
+            ? [
+                ['created_at:desc', 'Newest first'],
+                ['created_at:asc', 'Oldest first'],
+                ['name:asc', 'Name: A to Z'],
+                ['name:desc', 'Name: Z to A'],
+            ]
+            : [
+                ['created_at:desc', 'Newest first'],
+                ['created_at:asc', 'Oldest first'],
+                ['status:asc', 'Status: A to Z'],
+                ['status:desc', 'Status: Z to A'],
+            ];
+    const selectedAdminSort = `${reportSort}:${reportDirection}`;
+
+    function reportTypeIcon(type: string): 'sales' | 'transactions' | 'users' | 'complaints' | 'listings' | 'deliveries' {
+        if (type === 'sales' || type === 'transactions' || type === 'users' || type === 'listings' || type === 'deliveries') return type;
+        return 'complaints';
+    }
 
     function displayDate(value: unknown): string {
         if (typeof value !== 'string' || !value) return '—';
@@ -710,8 +833,21 @@ export function ReportPanel({ role, onError, onAnalyze, title, hideTypeSelector 
     const invalidDateRange = Boolean(reportFrom && reportTo && reportTo < reportFrom);
     const invalidAmountRange = amountMin !== '' && amountMax !== '' && Number(amountMin) > Number(amountMax);
 
-    return <section className="report-panel" aria-label={title ?? 'Reports'}>
-        <div className="report-heading"><div><p className="eyebrow">Operations</p><h2>{title ?? 'Reports'}</h2></div><div className="report-heading-actions">{['ADMIN', 'SELLER'].includes(role) && <><button type="button" onClick={() => void exportSpreadsheet()} disabled={exporting || reportLoading || invalidDateRange || invalidAmountRange}>{exporting ? 'Preparing spreadsheet...' : 'Export Excel'}</button><button type="button" onClick={() => void printReport()} disabled={exporting || reportLoading || invalidDateRange || invalidAmountRange}>{exporting ? 'Preparing report...' : 'Print / Save PDF'}</button></>}{(onAnalyze || isAdminReport) && <div className="report-analyze-actions">{onAnalyze && <button type="button" disabled={invalidDateRange || invalidAmountRange} onClick={() => {
+    const reportStart = reportTotal > 0 ? (page - 1) * 15 + 1 : 0;
+    const reportEnd = Math.min(page * 15, reportTotal);
+
+    return <section className={`report-panel${workspaceReportStyle ? ' admin-reports-panel' : ''}${sellerReportsPage ? ' seller-reports-panel' : ''}`} aria-label={title ?? 'Reports'}>
+        <div className="report-heading"><div><p className="eyebrow">Operations</p><h2>{title ?? 'Reports'}</h2></div><div className="report-heading-actions">{['ADMIN', 'SELLER'].includes(role) && <>
+            <button className="report-action-button report-action-button--export" type="button" aria-label={exporting ? 'Preparing spreadsheet' : 'Export Excel'} title={exporting ? 'Preparing spreadsheet' : 'Export Excel'} aria-busy={exporting} onClick={() => void exportSpreadsheet()} disabled={exporting || reportLoading || invalidDateRange || invalidAmountRange}>
+                {workspaceReportStyle && <ReportActionIcon name="export" />}<span className="report-action-label">{exporting ? 'Preparing spreadsheet...' : 'Export Excel'}</span>
+            </button>
+            <button className="report-action-button report-action-button--print" type="button" aria-label={exporting ? 'Preparing report' : 'Print / Save PDF'} title={exporting ? 'Preparing report' : 'Print / Save PDF'} aria-busy={exporting} onClick={() => void printReport()} disabled={exporting || reportLoading || invalidDateRange || invalidAmountRange}>
+                {workspaceReportStyle && <ReportActionIcon name="print" />}<span className="report-action-label">{exporting ? 'Preparing report...' : 'Print / Save PDF'}</span>
+            </button>
+            {adminReportsPage && <button className="report-action-button report-action-button--refresh" type="button" aria-label={adminOverviewLoading || reportLoading ? 'Refreshing report' : 'Refresh'} title="Refresh" aria-busy={adminOverviewLoading || reportLoading} onClick={() => setReportRevision((revision) => revision + 1)} disabled={reportLoading || adminOverviewLoading}>
+                <ReportActionIcon name="refresh" /><span className="report-action-label">Refresh</span>
+            </button>}
+        </>}{(onAnalyze || isAdminReport) && <div className="report-analyze-actions">{onAnalyze && <button className="report-action-button report-action-button--analyze" type="button" aria-label="Analyze with AI" title="Analyze with AI" disabled={invalidDateRange || invalidAmountRange} onClick={() => {
             const filters = activeFilters(reportSearch);
             onAnalyze({
                 type: reportType,
@@ -731,32 +867,37 @@ export function ReportPanel({ role, onError, onAnalyze, title, hideTypeSelector 
                 amount_max: typeof filters.amount_max === 'string' ? filters.amount_max : undefined,
                 requestId: Date.now(),
             });
-        }}>Analyze with AI</button>}{isAdminReport && <button className="report-clear-filters" type="button" onClick={clearFilters}>Clear filters</button>}</div>}</div></div>
-        {!hideTypeSelector && <TabNav label="Report type" value={reportType} onChange={(value) => {
-            setReportType(value);
-            setReportStatus('');
-            setOrderStatus('');
-            setPaymentStatus('');
-            setPaymentMethod('');
-            setUserRole('');
-            setAccountStatus('');
-            setComplaintType('');
-            setResolutionStatus('');
-            setAmountMin('');
-            setAmountMax('');
-            setPage(1);
-        }} options={reportTypes.map((type) => ({ value: type, label: type[0].toUpperCase() + type.slice(1) }))} />}
-        <div className="report-controls">
+        }}>{workspaceReportStyle && <ReportActionIcon name="analyze" />}<span className="report-action-label">Analyze with AI</span></button>}{isAdminReport && <button className={`report-clear-filters${adminReportsPage ? ' report-action-button report-action-button--clear' : ''}`} type="button" aria-label={adminReportsPage ? 'Clear filters' : undefined} title={adminReportsPage ? 'Clear filters' : undefined} onClick={clearFilters}>{adminReportsPage && <ReportActionIcon name="clear" />}<span className="report-action-label">Clear filters</span></button>}</div>}</div></div>
+        {adminReportsPage && <section className="report-overview" aria-label="Marketplace overview" aria-busy={adminOverviewLoading}>
+            <div className="report-overview-heading"><h3>Marketplace overview</h3><span>Live totals · not affected by report filters</span></div>
+            <div className="report-overview-grid">
+                <article className="report-overview-card report-overview-card--sales"><ReportOverviewIcon name="sales" /><div><span>Total sales</span><strong>{adminOverviewLoading ? '…' : adminOverview ? displayMoney(adminOverview.total_sales) : '—'}</strong></div></article>
+                <article className="report-overview-card report-overview-card--transactions"><ReportOverviewIcon name="transactions" /><div><span>Transactions</span><strong>{adminOverviewLoading ? '…' : adminOverview ? adminOverview.total_orders.toLocaleString() : '—'}</strong></div></article>
+                <article className="report-overview-card report-overview-card--users"><ReportOverviewIcon name="users" /><div><span>Users</span><strong>{adminOverviewLoading ? '…' : adminOverview ? adminOverview.total_users.toLocaleString() : '—'}</strong></div></article>
+                <article className="report-overview-card report-overview-card--complaints"><ReportOverviewIcon name="complaints" /><div><span>Complaints</span><strong>{adminOverviewLoading ? '…' : adminComplaintTotal !== null ? adminComplaintTotal.toLocaleString() : '—'}</strong></div></article>
+            </div>
+            {adminOverviewError && !adminOverviewLoading && <p className="report-overview-error" role="status">Some overview totals could not be loaded. <button type="button" onClick={() => setAdminOverviewRevision((revision) => revision + 1)}>Retry</button></p>}
+        </section>}
+        <div className={workspaceReportStyle ? 'admin-report-workspace' : undefined}>
+        {!hideTypeSelector && (workspaceReportStyle
+            ? <nav className="tab-nav admin-report-tabs" aria-label="Report type">
+                {reportTypes.map((type) => <button className={`fg-button fg-button-sm${type === reportType ? ' active' : ''}`} type="button" key={type} aria-current={type === reportType ? 'page' : undefined} onClick={() => changeReportType(type)}>
+                    <ReportTypeIcon name={reportTypeIcon(type)} /><span>{type[0].toUpperCase() + type.slice(1)}</span>
+                </button>)}
+            </nav>
+            : <TabNav label="Report type" value={reportType} onChange={changeReportType} options={reportTypes.map((type) => ({ value: type, label: type[0].toUpperCase() + type.slice(1) }))} />)}
+        <details className={workspaceReportStyle ? 'admin-report-filters' : undefined} open={workspaceReportStyle ? reportFiltersOpen : undefined}>
+            {workspaceReportStyle && <summary onClick={(event) => { event.preventDefault(); setReportFiltersOpen((open) => !open); }}><ReportTypeIcon name="filter" /><span>Filters</span><span className="report-filter-chevron" aria-hidden="true">⌄</span></summary>}
+            <div className={workspaceReportStyle ? 'admin-report-filter-content' : undefined}>
+        <div className={`report-controls${workspaceReportStyle ? ' admin-report-controls' : ''}`}>
             <label>Search<input value={reportSearch} onChange={(event) => { setReportSearch(event.target.value); setPage(1); }} placeholder={role === 'RIDER' && reportType === 'deliveries' ? 'Order reference' : isAdminReport ? ({
-                sales: 'Order reference, buyer, seller, payment reference',
-                transactions: 'Transaction/order reference, payer, payee, type',
-                users: 'Name, email, user ID, phone, role',
+                sales: 'Order or payment reference, buyer, seller',
+                transactions: 'Order or payment reference, buyer, seller, method',
+                users: 'Name, email, phone, role',
                 complaints: 'Complaint/order reference, complainant, type',
             }[reportType] ?? 'Search records') : 'Search records'} /></label>
             {!isAdminReport && statusOptions.length > 0 && <label>Status<select value={reportStatus} onChange={(event) => { setReportStatus(event.target.value); setPage(1); }}><option value="">All statuses</option>{statusOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
             {role !== 'ADMIN' && statusOptions.length === 0 && ['sales', 'transactions', 'listings', 'deliveries'].includes(reportType) && !(role === 'RIDER' && reportType === 'deliveries') && <label>Status<input value={reportStatus} onChange={(event) => { setReportStatus(event.target.value); setPage(1); }} placeholder="Any status" /></label>}
-            <label>Start date<input type="date" value={reportFrom} max={reportTo || undefined} onChange={(event) => { setReportFrom(event.target.value); setPage(1); }} /></label>
-            <label>End date<input type="date" value={reportTo} min={reportFrom || undefined} onChange={(event) => { setReportTo(event.target.value); setPage(1); }} /></label>
             {isAdminReport && <label>Date range<select value="" onChange={(event) => {
                 if (event.target.value) applyDatePreset(event.target.value as 'today' | '7days' | '30days' | 'month');
             }}>
@@ -766,6 +907,8 @@ export function ReportPanel({ role, onError, onAnalyze, title, hideTypeSelector 
                 <option value="30days">Last 30 days</option>
                 <option value="month">This month</option>
             </select></label>}
+            <label>Start date<input type="date" value={reportFrom} max={reportTo || undefined} onChange={(event) => { setReportFrom(event.target.value); setPage(1); }} /></label>
+            <label>End date<input type="date" value={reportTo} min={reportFrom || undefined} onChange={(event) => { setReportTo(event.target.value); setPage(1); }} /></label>
         </div>
         {isAdminReport && <>
             <details className="report-advanced-filters">
@@ -813,13 +956,24 @@ export function ReportPanel({ role, onError, onAnalyze, title, hideTypeSelector 
                 </div>
             </details>
         </>}
+        </div>
+        </details>
         {invalidDateRange && <p className="report-filter-error" role="alert">End date must be on or after the start date.</p>}
         {invalidAmountRange && <p className="report-filter-error" role="alert">Maximum amount must be at least the minimum amount.</p>}
-        <p className="report-count">{reportLoading ? 'Loading report...' : `${reportTotal} records · ${reportTitle}`}</p>
+        <div className={workspaceReportStyle ? 'admin-report-results-heading' : undefined}>
+            <p className="report-count" role="status" aria-live="polite">{reportLoading ? 'Loading report…' : reportError ? 'Report results are unavailable.' : `Showing ${reportStart}–${reportEnd} of ${reportTotal} records · ${reportTitle}`}</p>
+            {adminReportsPage && <label className="report-sort-control">Sort<select value={selectedAdminSort} onChange={(event) => {
+                const [sort, direction] = event.target.value.split(':');
+                setReportSort(sort);
+                setReportDirection(direction as 'asc' | 'desc');
+                setPage(1);
+            }}>{adminSortOptions.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>}
+        </div>
         {reportType === 'deliveries' && proofSummary && <p className="report-count" role="status">Proof recorded: {proofSummary.with_proof} · Delivered without proof: {proofSummary.delivered_without_proof}</p>}
         {reportLoading
-            ? <LoadingSkeleton variant="table" count={6} columns={tableColumns().length + 1} label="Loading report data" />
+            ? <LoadingSkeleton variant={workspaceReportStyle ? 'cards' : 'table'} count={workspaceReportStyle ? 4 : 6} columns={tableColumns().length + 1} label="Loading report data" />
             : (
+                <>
                 <div className="report-table-wrap">
                     <table className="report-table">
                         <thead>
@@ -839,16 +993,29 @@ export function ReportPanel({ role, onError, onAnalyze, title, hideTypeSelector 
                             </tr>)}
                         </tbody>
                     </table>
-                    {!reportRows.length && <p className="empty-state" role={reportError ? 'alert' : undefined}>
-                        {reportError
-                            ? <>{reportError} <button type="button" onClick={() => setReportRevision((revision) => revision + 1)}>Try again</button></>
-                            : role === 'RIDER' && reportType === 'deliveries'
-                                ? 'No deliveries match your filters.'
-                                : 'No records match these filters.'}
-                    </p>}
                 </div>
+                {workspaceReportStyle && reportRows.length > 0 && <div className="report-mobile-cards" aria-label={`${reportTitle} report records`}>
+                    {reportRows.map((row) => {
+                        const columns = tableColumns();
+                        const mobileColumns = adminReportsPage ? columns.slice(1) : columns;
+                        return <article className="report-mobile-card" key={row.id}>
+                            <div className="report-mobile-card-heading"><strong>{reportRowReference(row) ?? reportTitle}</strong></div>
+                            <dl>{mobileColumns.map((column) => <div key={column.header}><dt>{column.header}</dt><dd>{column.render(row)}</dd></div>)}</dl>
+                            <ViewDetailsAction className="report-view-action" contextLabel={String(reportRowReference(row) || 'report record')} onClick={() => setSelectedReportRow(row)} trailingIcon={<ReportDetailsArrow />} />
+                        </article>;
+                    })}
+                </div>}
+                {!reportRows.length && <p className="empty-state report-empty-state" role={reportError ? 'alert' : undefined}>
+                    {reportError
+                        ? <>{reportError} <button type="button" onClick={() => setReportRevision((revision) => revision + 1)}>Try again</button></>
+                        : role === 'RIDER' && reportType === 'deliveries'
+                            ? 'No deliveries match your filters.'
+                            : 'No records match these filters.'}
+                </p>}
+                </>
             )}
         <Pagination page={page} lastPage={Math.ceil(reportTotal / 15)} onChange={setPage} />
+        </div>
         {selectedReportRow && <FarmgateDetailDialog
             eyebrow={`${reportTitle} record`}
             title="Record details"

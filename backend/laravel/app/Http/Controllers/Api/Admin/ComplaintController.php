@@ -28,7 +28,7 @@ class ComplaintController extends Controller
             'order.items.listing:id,name',
             'opener:id,name,email',
             'respondent:id,name,email',
-            'statusHistory',
+            'statusHistory.actor:id,name',
             'messages.sender:id,name,role',
             'media',
         ]);
@@ -57,6 +57,26 @@ class ComplaintController extends Controller
         if ($request->filled('case_id')) {
             $data = $request->validate(['case_id' => ['integer', 'min:1']]);
             $query->whereKey($data['case_id']);
+        }
+
+        if ($request->boolean('summary')) {
+            $statuses = array_fill_keys(
+                array_map(fn (ComplaintStatus $status): string => $status->value, ComplaintStatus::cases()),
+                0,
+            );
+            $counts = (clone $query)->toBase()
+                ->select('status')
+                ->selectRaw('COUNT(*) as aggregate_count')
+                ->groupBy('status')
+                ->get();
+            foreach ($counts as $row) {
+                $statuses[(string) $row->status] = (int) $row->aggregate_count;
+            }
+
+            return response()->json(['case_counts' => [
+                'total' => array_sum($statuses),
+                'statuses' => $statuses,
+            ]]);
         }
 
         $sort = $request->validate(['sort' => ['nullable', 'in:newest,oldest']])['sort'] ?? 'newest';

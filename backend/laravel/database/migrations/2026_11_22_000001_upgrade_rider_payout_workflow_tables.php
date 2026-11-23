@@ -87,7 +87,7 @@ return new class extends Migration
             $table->string('to_status', 24);
             $table->text('reason');
             $table->timestamps();
-            $table->index(['rider_payout_method_id', 'created_at']);
+            $table->index(['rider_payout_method_id', 'created_at'], 'rpmh_method_created_idx');
         });
 
         Schema::create('rider_payout_earnings', function (Blueprint $table): void {

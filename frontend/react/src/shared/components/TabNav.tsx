@@ -1,7 +1,7 @@
 import React from 'react';
 import { Button } from './Button';
 
-export type TabOption = { value: string; label: string; id?: string };
+export type TabOption = { value: string; label: React.ReactNode; id?: string };
 
 type TabNavProps = {
     label: string;

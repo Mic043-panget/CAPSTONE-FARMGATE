@@ -7,9 +7,18 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-#[Fillable(['user_id', 'recipient_id', 'listing_id', 'direct_key', 'kind', 'title', 'report_context', 'needs_human_attention', 'attention_notified_at', 'ai_paused'])]
+#[Fillable(['user_id', 'ai_owner_id', 'recipient_id', 'listing_id', 'direct_key', 'kind', 'title', 'report_context', 'needs_human_attention', 'attention_notified_at', 'ai_paused'])]
 class ChatConversation extends Model
 {
+    protected static function booted(): void
+    {
+        static::creating(function (ChatConversation $conversation): void {
+            if (($conversation->kind ?? 'ai') === 'ai') {
+                $conversation->ai_owner_id = $conversation->user_id;
+            }
+        });
+    }
+
     protected function casts(): array
     {
         return [

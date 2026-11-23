@@ -39,8 +39,9 @@ function formatDate(value?: string | null): string {
     return value ? new Date(value).toLocaleString() : 'Not recorded';
 }
 
-export function AdminDeliveryDetails({ deliveryId, onError, onCorrected }: {
+export function AdminDeliveryDetails({ deliveryId, deliveryReference, onError, onCorrected }: {
     deliveryId: number;
+    deliveryReference: string;
     onError: (message: string) => void;
     onCorrected: () => void;
 }) {
@@ -64,7 +65,7 @@ export function AdminDeliveryDetails({ deliveryId, onError, onCorrected }: {
     }, [deliveryId, onError, open, revision]);
 
     return <>
-        <ViewDetailsAction contextLabel={`delivery ${deliveryId}`} className="admin-inline-action" onClick={() => setOpen(true)} />
+        <ViewDetailsAction contextLabel={`delivery ${deliveryReference}`} className="admin-inline-action" onClick={() => setOpen(true)} />
         {open && <FarmgateDetailDialog
             eyebrow="Delivery details"
             title={delivery?.delivery_reference ?? 'Delivery'}

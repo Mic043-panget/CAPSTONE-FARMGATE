@@ -147,6 +147,51 @@ class FarmgateEventTest extends TestCase
         $this->actingAs($buyer)->getJson("/api/events/{$eventIds['BUYERS']}")->assertNotFound();
     }
 
+    public function test_admin_calendar_filters_events_and_promotions_by_creator_name(): void
+    {
+        $admin = User::factory()->create(['role' => Role::ADMIN]);
+        $creator = User::factory()->create(['role' => Role::SELLER, 'name' => 'Mina Ramos']);
+        $otherCreator = User::factory()->create(['role' => Role::SELLER, 'name' => 'Other Seller']);
+        $startsAt = now()->addDays(2);
+
+        foreach ([$creator, $otherCreator] as $organizer) {
+            FarmgateEvent::create([
+                'organizer_id' => $organizer->id,
+                'category' => 'SELLER_EVENT',
+                'title' => $organizer === $creator ? 'Mina community event' : 'Other community event',
+                'description' => 'A scheduled community event.',
+                'starts_at' => $startsAt,
+                'ends_at' => $startsAt->copy()->addHour(),
+                'timezone' => 'Asia/Manila',
+                'audience' => 'PUBLIC',
+                'status' => 'APPROVED',
+            ]);
+            SellerPromotion::create([
+                'seller_id' => $organizer->id,
+                'name' => $organizer === $creator ? 'Mina livestock offer' : 'Other livestock offer',
+                'description' => 'A scheduled seller promotion.',
+                'discount_type' => 'PERCENTAGE',
+                'discount_value' => 10,
+                'applies_to_all' => true,
+                'starts_at' => $startsAt,
+                'ends_at' => $startsAt->copy()->addDays(2),
+                'status' => 'ACTIVE',
+            ]);
+        }
+
+        $query = http_build_query([
+            'from' => now()->toDateString(),
+            'to' => now()->addDays(7)->toDateString(),
+            'timezone' => 'Asia/Manila',
+            'creator' => 'Mina',
+        ]);
+        $this->actingAs($admin)->getJson('/api/calendar?'.$query)
+            ->assertOk()
+            ->assertJsonCount(2, 'data')
+            ->assertJsonFragment(['title' => 'Mina community event'])
+            ->assertJsonFragment(['title' => 'Mina livestock offer']);
+    }
+
     public function test_calendar_shows_sellers_only_their_own_promotion_schedule(): void
     {
         $seller = User::factory()->create(['role' => Role::SELLER]);

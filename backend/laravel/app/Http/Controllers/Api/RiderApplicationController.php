@@ -692,6 +692,7 @@ class RiderApplicationController extends Controller
             'status' => ['nullable', Rule::in(['DRAFT', 'SUBMITTED', 'UNDER_REVIEW', 'MORE_INFORMATION_REQUIRED', 'APPROVED', 'REJECTED'])],
             'search' => ['nullable', 'string', 'max:120'],
             'page' => ['nullable', 'integer', 'min:1'],
+            'sort' => ['nullable', Rule::in(['newest', 'oldest'])],
         ]);
         $query = RiderApplication::query()->with('user:id,name,email');
         if (isset($filters['status'])) {
@@ -703,7 +704,8 @@ class RiderApplicationController extends Controller
                 ->where('application_reference', 'like', $term)
                 ->orWhereHas('user', fn (Builder $users) => $users->where('name', 'like', $term)->orWhere('email', 'like', $term)));
         }
-        $applications = $query->latest()->paginate(15)->withQueryString();
+        $direction = ($filters['sort'] ?? 'newest') === 'oldest' ? 'asc' : 'desc';
+        $applications = $query->orderBy('created_at', $direction)->orderBy('id', $direction)->paginate(15)->withQueryString();
         $applications->getCollection()->transform(fn (RiderApplication $application): array => [
             'id' => $application->id,
             'application_reference' => $application->application_reference,
@@ -793,7 +795,9 @@ class RiderApplicationController extends Controller
             'search' => ['nullable', 'string', 'max:120'],
             'status' => ['nullable', Rule::in(['PENDING', 'APPROVED', 'REJECTED', 'MORE_INFORMATION_REQUIRED'])],
             'page' => ['nullable', 'integer', 'min:1'],
+            'sort' => ['nullable', Rule::in(['newest', 'oldest'])],
         ]);
+        $direction = ($filters['sort'] ?? 'newest') === 'oldest' ? 'asc' : 'desc';
         $changes = RiderVehicleChange::query()
             ->with('user:id,name,email')
             ->when(isset($filters['status']), fn (Builder $query) => $query->where('status', $filters['status']))
@@ -804,7 +808,8 @@ class RiderApplicationController extends Controller
                     ->orWhere('plate_number', 'like', $term)
                     ->orWhereHas('user', fn (Builder $user) => $user->where('name', 'like', $term)->orWhere('email', 'like', $term)));
             })
-            ->latest()
+            ->orderBy('created_at', $direction)
+            ->orderBy('id', $direction)
             ->paginate(15)
             ->withQueryString();
         $changes->getCollection()->transform(fn (RiderVehicleChange $change): array => [

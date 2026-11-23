@@ -42,7 +42,7 @@ export function AdminRiderPage({
         }
     }
 
-    return <section className="admin-promotions-page" aria-labelledby="admin-rider-title">
+    return <section className="admin-promotions-page admin-rider-page" aria-labelledby="admin-rider-title">
         <h2 id="admin-rider-title" className="sr-only">Rider</h2>
         <div className="admin-promotions-tabs" role="tablist" aria-label="Rider administration" aria-orientation="horizontal">
             <button ref={(element) => { tabRefs.current.applications = element; }} type="button" role="tab" id="admin-rider-applications-tab" aria-controls="admin-rider-applications-panel" aria-selected={activeTab === 'applications'} tabIndex={activeTab === 'applications' ? 0 : -1} className={activeTab === 'applications' ? 'active' : ''} onKeyDown={(event) => handleTabKeyDown(event, 'applications')} onClick={() => setActiveTab('applications')}>Rider applications &amp; vehicles</button>

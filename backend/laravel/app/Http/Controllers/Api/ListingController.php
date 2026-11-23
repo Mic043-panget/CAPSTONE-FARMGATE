@@ -207,10 +207,22 @@ class ListingController extends Controller
 
         $filters = $request->validate([
             'q' => ['nullable', 'string', 'max:120'],
-            'sort' => ['nullable', Rule::in(['name', 'category', 'price', 'quantity', 'status'])],
+            'category_id' => ['nullable', 'integer', Rule::exists('categories', 'id')],
+            'status' => ['nullable', Rule::in(array_map(static fn (ListingStatus $status): string => $status->value, ListingStatus::cases()))],
+            'sort' => ['nullable', Rule::in(['name', 'category', 'price', 'quantity', 'status', 'created_at', 'updated_at'])],
             'direction' => ['nullable', Rule::in(['asc', 'desc'])],
             'page' => ['nullable', 'integer', 'min:1'],
         ]);
+        $statusCounts = $request->user()->livestockListings()
+            ->selectRaw('status, COUNT(*) AS listing_count')
+            ->groupBy('status')
+            ->pluck('listing_count', 'status');
+        $summary = [
+            'total' => (int) $statusCounts->sum(),
+            'active' => (int) $statusCounts->get(ListingStatus::ACTIVE->value, 0),
+            'pending_review' => (int) $statusCounts->get(ListingStatus::PENDING_REVIEW->value, 0),
+            'draft' => (int) $statusCounts->get(ListingStatus::DRAFT->value, 0),
+        ];
         $query = $request->user()->livestockListings()->with(['category', 'images']);
         $term = trim((string) ($filters['q'] ?? ''));
         if ($term !== '') {
@@ -222,6 +234,12 @@ class ListingController extends Controller
                 }
             });
         }
+        if (isset($filters['category_id'])) {
+            $query->where('category_id', $filters['category_id']);
+        }
+        if (isset($filters['status'])) {
+            $query->where('status', $filters['status']);
+        }
 
         $sort = $filters['sort'] ?? 'created_at';
         $direction = $filters['direction'] ?? 'desc';
@@ -231,11 +249,16 @@ class ListingController extends Controller
             'price' => $query->orderByRaw('COALESCE(price_per_head, price_per_kilo) '.strtoupper($direction)),
             'quantity' => $query->orderBy('quantity', $direction),
             'status' => $query->orderBy('status', $direction),
+            'created_at' => $query->orderBy('created_at', $direction),
+            'updated_at' => $query->orderBy('updated_at', $direction),
             default => $query->orderByDesc('created_at'),
         };
         $query->orderByDesc('id');
 
-        return response()->json(['listings' => $query->paginate(15)->appends($request->query())]);
+        return response()->json([
+            'listings' => $query->paginate(15)->appends($request->query()),
+            'summary' => $summary,
+        ]);
     }
 
     public function store(Request $request, SystemSettingsService $settings): JsonResponse

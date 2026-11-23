@@ -96,12 +96,14 @@ function addressText(order: AdminReceiptOrder): string {
     ].filter(Boolean).join(', ') || (order.delivery_method === 'SELF_PICKUP' ? 'Buyer will pick up' : 'Address not provided');
 }
 
-export function AdminOrderReceipt({ orderId, reference, onError, openInitially = false, onOpenStarted }: {
+export function AdminOrderReceipt({ orderId, reference, onError, openInitially = false, onOpenStarted, triggerLabel, showMoreActions = false }: {
     orderId: number;
     reference: string;
     onError: (message: string) => void;
     openInitially?: boolean;
     onOpenStarted?: () => void;
+    triggerLabel?: string;
+    showMoreActions?: boolean;
 }) {
     const [order, setOrder] = React.useState<AdminReceiptOrder | null>(null);
     const [open, setOpen] = React.useState(false);
@@ -150,6 +152,16 @@ export function AdminOrderReceipt({ orderId, reference, onError, openInitially =
         document.body.classList.remove('printing-admin-order-receipt');
     }
 
+    function openReceipt(event?: React.MouseEvent<HTMLButtonElement>) {
+        const disclosure = event?.currentTarget.closest('details');
+        if (disclosure) {
+            disclosure.open = false;
+            disclosure.querySelector('summary')?.focus();
+        }
+        setOrder(null);
+        setOpen(true);
+    }
+
     async function correctPrematureCompletion(event: React.FormEvent<HTMLFormElement>) {
         event.preventDefault();
         if (!order || !evidenceReviewed || correctionReason.trim().length < 10) return;
@@ -177,7 +189,21 @@ export function AdminOrderReceipt({ orderId, reference, onError, openInitially =
     const shopName = order?.seller?.seller_profile?.business_name || order?.seller?.name || 'Farmgate Seller';
 
     return <>
-        <button className="admin-order-reference" type="button" onClick={() => { setOrder(null); setOpen(true); }}>{reference}</button>
+        <div className="admin-order-row-actions">
+            <button className={triggerLabel ? 'admin-order-view-details' : 'admin-order-reference'} type="button" onClick={() => openReceipt()}>{triggerLabel ?? reference}</button>
+            {showMoreActions && <details className="admin-order-more-actions" onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                    event.preventDefault();
+                    event.currentTarget.open = false;
+                    event.currentTarget.querySelector('summary')?.focus();
+                }
+            }}>
+                <summary aria-label={`More actions for order ${reference}`} title="More actions"><span aria-hidden="true">⋮</span></summary>
+                <div className="admin-order-more-menu" aria-label={`Additional actions for order ${reference}`}>
+                    <button type="button" onClick={(event) => openReceipt(event)}>View payment, delivery &amp; order history</button>
+                </div>
+            </details>}
+        </div>
         {open && <div className="buyer-order-receipt-backdrop" role="presentation" onMouseDown={(event) => {
             if (event.target === event.currentTarget) setOpen(false);
         }}>

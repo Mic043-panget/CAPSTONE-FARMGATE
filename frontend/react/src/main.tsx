@@ -10,9 +10,11 @@ import { RiderDashboard } from './features/rider/RiderDashboard';
 import { RiderRegistrationPage } from './features/rider/RiderRegistrationPage';
 import { SellerWorkspace } from './features/seller/SellerWorkspace';
 import { AIChatPage } from './features/shared/AIChatPage';
+import { GuestAIChatPage } from './features/shared/GuestAIChatPage';
 import { PromotionsPage } from './features/shared/PromotionsPage';
 import { SellerShopPage } from './features/shared/SellerShopPage';
 import { OrderVerificationPage } from './features/shared/OrderVerificationPage';
+import { MobileBottomNavigation } from './features/shared/RoleMobileBottomNavigation';
 import api, { initializeCsrf } from './lib/api';
 import { confirmAction, showError, showSuccess } from './lib/alerts';
 import type { Category, Listing, User } from './shared/types';
@@ -305,6 +307,32 @@ function FarmgateApp() {
     const [categories, setCategories] = React.useState<Category[]>([]);
     const [listings, setListings] = React.useState<Listing[]>([]);
     const [showcasePromotions, setShowcasePromotions] = React.useState<Listing[]>([]);
+    const [mobileFeatureTab, setMobileFeatureTab] = React.useState(0);
+    const mobileFeatureTabRef = React.useRef(0);
+    const promoFeatureTrackRef = React.useRef<HTMLDivElement>(null);
+    const promoAutoScrollPauseUntilRef = React.useRef(0);
+    React.useEffect(() => {
+        const timer = window.setInterval(() => {
+            const track = promoFeatureTrackRef.current;
+            if (
+                !track
+                || !window.matchMedia('(max-width: 640px)').matches
+                || window.matchMedia('(prefers-reduced-motion: reduce)').matches
+                || document.visibilityState !== 'visible'
+                || Date.now() < promoAutoScrollPauseUntilRef.current
+                || track.matches(':hover')
+                || track.contains(document.activeElement)
+            ) return;
+
+            const slideCount = track.querySelectorAll('.promo-main, .promo-side-card').length;
+            if (track.clientWidth === 0 || slideCount < 2) return;
+            const next = (mobileFeatureTabRef.current + 1) % slideCount;
+            mobileFeatureTabRef.current = next;
+            setMobileFeatureTab(next);
+            track.scrollLeft = next * track.clientWidth;
+        }, 7000);
+        return () => window.clearInterval(timer);
+    }, []);
     const [showcasePromotionsError, setShowcasePromotionsError] = React.useState('');
     const [showcasePromotionsLoading, setShowcasePromotionsLoading] = React.useState(true);
     const [search, setSearch] = React.useState('');
@@ -776,7 +804,7 @@ function FarmgateApp() {
             return;
         }
 
-        const confirmed = await confirmAction({ title: 'Log out?', text: 'You will need to sign in again to place orders.', confirmText: 'Log out', danger: true });
+        const confirmed = await confirmAction({ title: 'Log out?', text: 'You will need to sign in again to access your account.', confirmText: 'Log out', danger: true });
         if (!confirmed) return;
 
         logoutInFlightRef.current = true;
@@ -996,13 +1024,34 @@ function FarmgateApp() {
         return null;
     }
 
-    const listingPhotos = listings.flatMap((listing) => listing.images.map((image) => ({
-        url: image.url,
-        alt: image.alt_text ?? listing.name,
-    })));
-    const mainPromoPhoto = listingPhotos[0] ?? { url: '/images/farmgate-cattle-field.jpg', alt: 'Three Holstein cows in a green pasture' };
-    const newListingsPhoto = listingPhotos[1] ?? { url: '/images/farmgate-cattle-pasture.jpg', alt: 'Cattle grazing in a sunny pasture' };
+    const mainPromoPhoto = { url: '/images/farmgate-cattle-field.jpg', alt: 'Cattle standing in a green pasture' };
+    const newListingsPhoto = { url: '/images/farmgate-cattle-pasture.jpg', alt: 'Cattle grazing in a sunny pasture' };
+    function pausePromoAutoScroll() {
+        promoAutoScrollPauseUntilRef.current = Date.now() + 5000;
+    }
 
+    function selectMobileFeature(index: number) {
+        pausePromoAutoScroll();
+        mobileFeatureTabRef.current = index;
+        setMobileFeatureTab(index);
+        promoFeatureTrackRef.current?.scrollTo({ left: index * promoFeatureTrackRef.current.clientWidth, behavior: 'smooth' });
+    }
+
+    function syncMobileFeature(event: React.UIEvent<HTMLDivElement>) {
+        const { scrollLeft, clientWidth } = event.currentTarget;
+        if (clientWidth > 0) {
+            const index = Math.min(2, Math.max(0, Math.round(scrollLeft / clientWidth)));
+            mobileFeatureTabRef.current = index;
+            setMobileFeatureTab(index);
+        }
+    }
+
+    const isMarketplaceHome = !isPromotionsPage
+        && productListingId === null
+        && sellerShopId === null
+        && orderDetailsId === null
+        && (user?.role !== 'BUYER' || buyerTab === 'home');
+    const showMobileMarketplaceNavigation = user?.role === 'BUYER' || !user;
     if (window.location.pathname === '/rider/register') {
         return <RiderRegistrationPage initialUser={user ?? undefined} onError={reportError} onLogout={logout} />;
     }
@@ -1016,7 +1065,7 @@ function FarmgateApp() {
     }
 
     if (user?.role === 'ADMIN') {
-        return <AdminWorkspace userName={user.name} onError={reportError} onLogout={logout} />;
+        return <AdminWorkspace userName={user.name} profilePhotoUrl={user.profile_photo_url} onError={reportError} onLogout={logout} />;
     }
 
     if (user?.role === 'SELLER') {
@@ -1034,10 +1083,22 @@ function FarmgateApp() {
     }
 
     return (
-        <main className={`app-shell${user?.role === 'BUYER' ? ' buyer-app-shell' : ''}`}>
+        <main className={`app-shell${user?.role === 'BUYER' ? ' buyer-app-shell' : ''}${isMarketplaceHome || productListingId !== null || isPromotionsPage ? ' marketplace-app-shell' : ''}${showMobileMarketplaceNavigation ? ' has-mobile-marketplace-nav' : ''}`}>
             <header className="site-header">
-                <a className="brand" href="/">FARM<span>GATE</span></a>
-                <div className="header-actions"><div className="header-meta"><span className="location-dot" /> Bongabong, Oriental Mindoro {user && <><span className="header-divider" /> {user.role}</>}</div>{user?.role === 'BUYER' && <button className="buyer-cart-toggle" type="button" aria-label={`Open shopping cart${cartCount ? ` with ${cartCount} units of livestock` : ''}`} onClick={() => setCartOpen(true)}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M5 8h14l1 13H4L5 8Z" /><path d="M9 8a3 3 0 0 1 6 0" /></svg><span>Cart</span>{cartCount > 0 && <b>{cartCount}</b>}</button>}{!user && <button className="header-auth" type="button" onClick={() => setAuthOpen(true)}>Log in <span>↗</span></button>}</div>
+                <a className="brand" href="/" aria-label="Farmgate home"><svg aria-hidden="true" viewBox="0 0 32 32" fill="none"><path d="M25.8 4.7C14 4.8 6.4 9.2 5.1 17.1c-.8 4.6 2 8.6 6.4 9.1C21 27.3 27.8 17.7 25.8 4.7Z" fill="currentColor"/><path d="M8 24c4.2-5.3 8.8-9.2 14.2-12.1" stroke="#f5f3ec" strokeWidth="1.5" strokeLinecap="round"/></svg><span className="brand-wordmark">FARM<span>GATE</span></span></a>
+                <div className="header-actions">
+                    <div className="header-meta" aria-label="Location: Bongabong, Oriental Mindoro">
+                        <svg className="header-location-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M20 10c0 5-8 12-8 12S4 15 4 10a8 8 0 1 1 16 0Z" /><circle cx="12" cy="10" r="2.5" /></svg>
+                        <span className="header-location-copy">Bongabong, Oriental Mindoro</span>
+                        <svg className="header-location-chevron" aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m4 6 4 4 4-4" /></svg>
+                        {user && <><span className="header-divider" /><span className="header-role">{user.role}</span></>}
+                    </div>
+                    <div className="header-actions-controls">
+                        {user?.role === 'BUYER' && <button className="buyer-cart-toggle" type="button" aria-label={`Open shopping cart${cartCount ? ` with ${cartCount} units of livestock` : ''}`} onClick={() => setCartOpen(true)}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="21" r="1" /><circle cx="19" cy="21" r="1" /><path d="M1 2h3l2.7 13.4a2 2 0 0 0 2 1.6h9.7a2 2 0 0 0 2-1.6L22 7H5" /></svg>{cartCount > 0 && <b>{cartCount}</b>}</button>}
+                        {user?.role === 'BUYER' && <button className={`mobile-notification-toggle${buyerTab === 'notifications' ? ' active' : ''}`} type="button" aria-current={buyerTab === 'notifications' ? 'page' : undefined} aria-label={buyerUnreadNotificationCount > 0 ? `Open notifications, ${navigationBadgeLabel(buyerUnreadNotificationCount, 'unread notification', 'unread notifications')}` : 'Open notifications'} onClick={() => navigateBuyerTab('notifications')}><BuyerNavigationIcon name="notifications" /><NavigationBadge count={buyerUnreadNotificationCount} /></button>}
+                        {!user && <button className="header-auth" type="button" onClick={() => setAuthOpen(true)}>Log in <span>↗</span></button>}
+                    </div>
+                </div>
                 {user?.role === 'BUYER' ? <nav className="buyer-main-nav" aria-label="Buyer navigation">{buyerNavigation.map((item) => {
                     const badgeCount = item.id === 'notifications'
                         ? buyerUnreadNotificationCount
@@ -1051,44 +1112,51 @@ function FarmgateApp() {
                 })}</nav> : <nav className="quick-promo-nav" aria-label="Marketplace shortcuts">
                     <a href="#top-products" onClick={(event) => openMarketplaceView(event, 'top')}><span className="quick-promo-icon"><MarketplaceNavIcon name="top" /></span><span>Top Livestock</span></a>
                     <a href="#promotions" onClick={(event) => openMarketplaceView(event, 'promotions')}><span className="quick-promo-icon"><MarketplaceNavIcon name="promotion" /></span><span>Promotions</span></a>
-                    <a href="#new-products" onClick={(event) => openMarketplaceView(event, 'newest')}><span className="quick-promo-icon"><MarketplaceNavIcon name="new" /></span><span>New Livestock Listings</span></a>
+                    <a href="#chats" onClick={(event) => { event.preventDefault(); navigateBuyerTab('chats'); }}><span className="quick-promo-icon"><BuyerNavigationIcon name="chats" /></span><span>Chats</span></a>
                     <a href="#new-products" onClick={(event) => openMarketplaceView(event, 'newest')}><span className="quick-promo-icon"><MarketplaceNavIcon name="fresh" /></span><span>Fresh Arrivals</span></a>
                 </nav>}
             </header>
             {user?.role === 'BUYER' && <BuyerCart open={cartOpen} onClose={() => setCartOpen(false)} onCheckout={() => { setCheckoutBuyNow(null); setCartOpen(false); setCheckoutOpen(true); }} onCartCountChange={setCartCount} onError={reportError} />}
             {checkoutOpen && user?.role === 'BUYER' && <CheckoutPage user={user} buyNow={checkoutBuyNow} onCancel={() => setCheckoutOpen(false)} onComplete={(_orderId, fromCart) => { if (fromCart) setCartCount(0); setCheckoutOpen(false); setCheckoutBuyNow(null); }} onError={reportError} />}
             <>
-            {orderDetailsId !== null && user?.role === 'BUYER' ? <React.Suspense fallback={<section className="buyer-profile-main" aria-busy="true"><p className="buyer-orders-loading">Loading order details...</p></section>}><OrderDetailsPage orderId={orderDetailsId} user={user} onBack={navigateOrderList} onChatWithSeller={(sellerId) => void startOrderChat(sellerId, orderDetailsId)} onOpenSeller={navigateSellerShop} onError={reportError} /></React.Suspense> : productListingId !== null ? <ListingDetails listingId={productListingId} canPurchase={user?.role === 'BUYER'} canReport={user?.role === 'BUYER'} onBack={() => navigateMarketplace('all')} onOpenListing={navigateListingDetails} onOpenSeller={navigateSellerShop} onAddToCart={addListingToCart} onBuyNow={buyListingNow} onError={reportError} /> : sellerShopId !== null ? <SellerShopPage sellerId={sellerShopId} onOpenListing={navigateListingDetails} onMessageSeller={(sellerId) => void messageSellerFromShop(sellerId)} onBack={() => navigateMarketplace('all')} onError={reportError} /> : user?.role === 'BUYER' && buyerTab === 'chats' ? <AIChatPage role="BUYER" initialConversationId={chatDetails.conversationId ?? undefined} orderId={chatDetails.orderId ?? undefined} onUnreadMessagesRead={refreshBuyerNavigationCounts} onOpenOrder={navigateOrderDetails} /> : user?.role === 'BUYER' && buyerTab === 'notifications' ? <NotificationsPage onOpenOrder={navigateOrderDetails} onOpenConversation={navigateBuyerChat} onOpenEvent={navigateCalendarEvent} onOpenPromotion={navigatePromotionDetail} onNotificationsRead={clearBuyerNotificationBadge} onOpenSettings={() => navigateBuyerTab('profile', 'notification-settings')} /> : buyerTab === 'profile' && user?.role === 'BUYER' ? <React.Suspense fallback={<section className="buyer-profile-main" aria-busy="true"><p className="buyer-orders-loading">Loading your account...</p></section>}><BuyerProfile user={user} onUserUpdated={setUser} onLogout={logout} onNavigateHome={() => navigateBuyerTab('home')} onOpenOrder={navigateOrderDetails} initialSection={buyerProfileInitialSection} /></React.Suspense> : isPromotionsPage ? <PromotionsPage initialTab={promotionsTab} onTabChange={navigatePromotions} onOpenListing={navigateListingDetails} onOpenSeller={navigateSellerShop} showCalendar={user?.role === 'BUYER'} /> : <>
+            {orderDetailsId !== null && user?.role === 'BUYER' ? <React.Suspense fallback={<section className="buyer-profile-main" aria-busy="true"><p className="buyer-orders-loading">Loading order details...</p></section>}><OrderDetailsPage orderId={orderDetailsId} user={user} onBack={navigateOrderList} onChatWithSeller={(sellerId) => void startOrderChat(sellerId, orderDetailsId)} onOpenSeller={navigateSellerShop} onError={reportError} /></React.Suspense> : productListingId !== null ? <ListingDetails listingId={productListingId} canPurchase={user?.role === 'BUYER'} canReport={user?.role === 'BUYER'} onBack={() => navigateMarketplace('all')} onOpenListing={navigateListingDetails} onOpenSeller={navigateSellerShop} onAddToCart={addListingToCart} onBuyNow={buyListingNow} onError={reportError} /> : sellerShopId !== null ? <SellerShopPage sellerId={sellerShopId} onOpenListing={navigateListingDetails} onMessageSeller={(sellerId) => void messageSellerFromShop(sellerId)} onBack={() => navigateMarketplace('all')} onError={reportError} /> : user?.role === 'BUYER' && buyerTab === 'chats' ? <AIChatPage role="BUYER" initialConversationId={chatDetails.conversationId ?? undefined} orderId={chatDetails.orderId ?? undefined} onUnreadMessagesRead={refreshBuyerNavigationCounts} onOpenOrder={navigateOrderDetails} /> : !user && buyerTab === 'chats' ? <GuestAIChatPage onBack={() => navigateMarketplace('all')} /> : user?.role === 'BUYER' && buyerTab === 'notifications' ? <NotificationsPage onOpenOrder={navigateOrderDetails} onOpenConversation={navigateBuyerChat} onOpenEvent={navigateCalendarEvent} onOpenPromotion={navigatePromotionDetail} onNotificationsRead={clearBuyerNotificationBadge} onOpenSettings={() => navigateBuyerTab('profile', 'notification-settings')} /> : buyerTab === 'profile' && user?.role === 'BUYER' ? <React.Suspense fallback={<section className="buyer-profile-main" aria-busy="true"><p className="buyer-orders-loading">Loading your account...</p></section>}><BuyerProfile user={user} onUserUpdated={setUser} onLogout={logout} onNavigateHome={() => navigateBuyerTab('home')} onOpenOrder={navigateOrderDetails} initialSection={buyerProfileInitialSection} /></React.Suspense> : isPromotionsPage ? <PromotionsPage initialTab={promotionsTab} onTabChange={navigatePromotions} onOpenListing={navigateListingDetails} onOpenSeller={navigateSellerShop} showCalendar={user?.role === 'BUYER'} /> : <>
             <div className="marketplace-top">
-                <section className="promo-market-grid" aria-label="FarmGate promotions">
-                    <article className="promo-main">
-                        <div className="promo-main-copy"><p className="eyebrow">Local livestock marketplace</p><h1>Good animals.<br /><em>Fair trade.</em></h1><p className="intro-copy">Find trusted livestock from local farmers, with transparent pricing and delivery all the way to your door.</p><button className="hero-cta" type="button" onClick={() => document.querySelector('.marketplace')?.scrollIntoView({ behavior: 'smooth' })}>Explore the market <span>→</span></button></div>
-                        <div className="promo-main-image"><img src={mainPromoPhoto.url} alt={mainPromoPhoto.alt} fetchPriority="high" /></div>
-                    </article>
-                    <div className="promo-side-banners" role="group" aria-label="Featured livestock and promotions">
-                        <MarketplaceShowcaseCard
-                            kind="new"
-                            listings={listings}
-                            fallbackImage={newListingsPhoto}
-                            emptyMessage={marketplaceLoading ? 'Loading the newest livestock' : 'Explore the latest livestock'}
-                            onOpenListing={navigateListingDetails}
-                            onViewAll={(event) => openMarketplaceView(event, 'newest')}
-                        />
-                        <MarketplaceShowcaseCard
-                            kind="promotion"
-                            listings={showcasePromotions}
-                            fallbackImage={mainPromoPhoto}
-                            emptyMessage={showcasePromotionsLoading ? 'Loading current offers' : showcasePromotionsError ? 'Offers temporarily unavailable' : 'No active offers right now'}
-                            onOpenListing={navigateListingDetails}
-                            onViewAll={(event) => {
-                                if (showcasePromotionsError) {
-                                    event.preventDefault();
-                                    reportError(showcasePromotionsError);
-                                    return;
-                                }
-                                openMarketplaceView(event, 'promotions');
-                            }}
-                        />
+                <section className="promo-market-grid" aria-label="FarmGate promotions" data-mobile-feature={mobileFeatureTab}>
+                    <div className="promo-feature-track" ref={promoFeatureTrackRef} onPointerDown={pausePromoAutoScroll} onPointerEnter={pausePromoAutoScroll} onFocusCapture={pausePromoAutoScroll} onScroll={syncMobileFeature}>
+                        <article className="promo-main">
+                            <div className="promo-main-copy"><p className="eyebrow">Local livestock marketplace</p><h1>Good animals.<br /><em>Fair trade.</em></h1><p className="intro-copy">Find trusted livestock from local farmers, with transparent pricing and delivery all the way to your door.</p></div>
+                            <div className="promo-main-image"><img src={mainPromoPhoto.url} alt={mainPromoPhoto.alt} fetchPriority="high" /></div>
+                        </article>
+                        <div className="promo-side-banners" role="group" aria-label="Featured livestock and promotions">
+                            <MarketplaceShowcaseCard
+                                kind="new"
+                                listings={listings}
+                                fallbackImage={newListingsPhoto}
+                                emptyMessage={marketplaceLoading ? 'Loading the newest livestock' : 'Explore the latest livestock'}
+                                onOpenListing={navigateListingDetails}
+                                onViewAll={(event) => openMarketplaceView(event, 'newest')}
+                            />
+                            <MarketplaceShowcaseCard
+                                kind="promotion"
+                                listings={showcasePromotions}
+                                fallbackImage={mainPromoPhoto}
+                                emptyMessage={showcasePromotionsLoading ? 'Loading current offers' : showcasePromotionsError ? 'Offers temporarily unavailable' : 'No active offers right now'}
+                                onOpenListing={navigateListingDetails}
+                                onViewAll={(event) => {
+                                    if (showcasePromotionsError) {
+                                        event.preventDefault();
+                                        reportError(showcasePromotionsError);
+                                        return;
+                                    }
+                                    openMarketplaceView(event, 'promotions');
+                                }}
+                            />
+                        </div>
+                    </div>
+                    <div className="mobile-feature-tabs" role="group" aria-label="Featured marketplace sections">
+                        <button type="button" aria-label="Show marketplace introduction" aria-pressed={mobileFeatureTab === 0} onClick={() => selectMobileFeature(0)}><span /></button>
+                        <button type="button" aria-label="Show new livestock" aria-pressed={mobileFeatureTab === 1} onClick={() => selectMobileFeature(1)}><span /></button>
+                        <button type="button" aria-label="Show promotions" aria-pressed={mobileFeatureTab === 2} onClick={() => selectMobileFeature(2)}><span /></button>
                     </div>
                 </section>
                 <nav className="marketplace-shortcuts" aria-label="Marketplace quick access">
@@ -1100,19 +1168,32 @@ function FarmgateApp() {
             </div>
             <section className="marketplace" id="marketplace" aria-label="Livestock marketplace">
                 <div className="marketplace-heading"><div><p className="eyebrow">{marketplaceView === 'top' ? 'Most buyer interest' : marketplaceView === 'newest' ? 'Recently published' : marketplaceView === 'promotions' ? 'Seller offers' : 'The market'}</p><h2>{marketplaceView === 'top' ? 'Top Livestock' : marketplaceView === 'newest' ? 'New Livestock Listings' : marketplaceView === 'promotions' ? 'Promotions & Deals' : 'Available livestock'}</h2></div><span>{marketplaceLoading ? 'Updating...' : `${listings.length} ${marketplaceView === 'promotions' ? 'offers' : 'results'}`}</span></div>
-                <div className="marketplace-tools"><label className="search-field"><span className="sr-only">Search livestock</span><input value={search} onChange={(event) => { setSearch(event.target.value); setListingPage(1); }} placeholder="Search by animal, breed, or description" /></label>{(search || categoryId) && <button className="clear-button" type="button" onClick={() => { setSearch(''); setCategoryId(''); setListingPage(1); }}>Clear</button>}</div>
-                <nav className="category-nav" aria-label="Livestock categories" onWheel={(event) => { if (event.deltaY !== 0) event.currentTarget.scrollLeft += event.deltaY; }}><button className={!categoryId ? 'active' : ''} type="button" onClick={() => { setCategoryId(''); setListingPage(1); }}>All livestock</button>{categories.map((category) => <button className={categoryId === String(category.id) ? 'active' : ''} key={category.id} type="button" onClick={() => { setCategoryId(String(category.id)); setListingPage(1); }}>{category.name}</button>)}</nav>
+                <div className="marketplace-filter-toolbar">
+                    <div className="marketplace-tools"><label className="search-field"><span className="sr-only">Search livestock</span><input value={search} onChange={(event) => { setSearch(event.target.value); setListingPage(1); }} placeholder="Search by animal, breed, or description" /></label>{(search || categoryId) && <button className="clear-button" type="button" onClick={() => { setSearch(''); setCategoryId(''); setListingPage(1); }}>Clear</button>}</div>
+                    <nav className="category-nav" aria-label="Livestock categories" onWheel={(event) => { if (event.deltaY !== 0) event.currentTarget.scrollLeft += event.deltaY; }}><button className={!categoryId ? 'active' : ''} type="button" onClick={() => { setCategoryId(''); setListingPage(1); }}>All livestock</button>{categories.map((category) => <button className={categoryId === String(category.id) ? 'active' : ''} key={category.id} type="button" onClick={() => { setCategoryId(String(category.id)); setListingPage(1); }}>{category.name}</button>)}</nav>
+                </div>
                 {marketplaceError && <div className="marketplace-error" role="alert"><p>{marketplaceError}</p><button type="button" disabled={marketplaceLoading} onClick={() => setMarketplaceRetry((retry) => retry + 1)}>{marketplaceLoading ? 'Retrying...' : 'Try again'}</button></div>}
-                {marketplaceLoading ? <div className="listing-grid loading-grid">{[1, 2, 3].map((item) => <div className="listing-skeleton" key={item} />)}</div> : <div className="listing-grid">{listings.map((listing) => <article className="listing-card" key={listing.id}>
+                {marketplaceLoading ? <div className="listing-grid loading-grid">{[1, 2, 3].map((item) => <div className="listing-skeleton" key={item} />)}</div> : <div className="listing-grid" tabIndex={0} aria-label="Available livestock listings. Scroll down to browse.">{[0, 1].map((columnIndex) => <div className="listing-grid-column" key={columnIndex}>{listings.map((listing, listingIndex) => ({ listing, listingIndex })).filter(({ listingIndex }) => listingIndex % 2 === columnIndex).map(({ listing, listingIndex }) => <article className="listing-card" key={listing.id} style={{ order: listingIndex }}>
                     <a className="listing-image-link" href={`#listing/${listing.id}`} onClick={(event) => { event.preventDefault(); navigateListingDetails(listing.id); }}><div className="listing-image-wrap">{listing.images[0] ? <img src={listing.images[0].url} alt={listing.images[0].alt_text ?? listing.name} /> : <span className="listing-image-placeholder">{listing.name.slice(0, 1)}</span>}<span className="listing-type">{listing.pricing_type === 'PER_KILO' ? 'Per kilo' : 'Per head'}</span></div></a>
                     <div className="listing-card-body"><a className="listing-details-link" href={`#listing/${listing.id}`} onClick={(event) => { event.preventDefault(); navigateListingDetails(listing.id); }}><p className="eyebrow">{listing.category.name}</p><h3>{listing.name}</h3><p>{listing.breed ?? 'Healthy livestock'} <span className="muted-separator">/</span> {listing.quantity} {listing.pricing_type === 'PER_KILO' ? 'kg available' : 'head available'}</p>{listing.promotion && <span className="listing-promotion-badge">{listing.promotion.name}</span>}<div className={`listing-price${listing.promotion ? ' has-promotion' : ''}`}>{listing.promotion && <del>{pesoPrice.format(Number(listing.original_price))}</del>}<strong>{pesoPrice.format(Number(listing.current_price ?? (listing.pricing_type === 'PER_KILO' ? listing.price_per_kilo : listing.price_per_head)))} <small>/ {listing.pricing_type === 'PER_KILO' ? 'kg' : 'head'}</small></strong>{listing.promotion && <small className="listing-savings">Save {pesoPrice.format(Number(listing.original_price) - Number(listing.current_price))} per unit</small>}</div></a><a className="listing-seller-shop-link" href={`#shop/${listing.seller.id}`} onClick={(event) => { event.preventDefault(); navigateSellerShop(listing.seller.id); }}>{listing.seller.shop_image_url ? <img src={listing.seller.shop_image_url} alt="" loading="lazy" /> : <span className="listing-seller-shop-avatar" aria-hidden="true">{(listing.seller.shop_name || listing.seller.name).slice(0, 1).toUpperCase()}</span>}<span className="listing-seller-shop-copy"><small>Shop by</small><strong>{listing.seller.shop_name || listing.seller.name}</strong>{listing.seller.is_verified && <small className="listing-seller-verified">Verified seller</small>}</span></a>{user?.role === 'BUYER' && <ListingPurchaseActions listingId={listing.id} availableQuantity={listing.quantity} onAddToCart={addListingToCart} onBuyNow={buyListingNow} onError={reportError} />}</div>
-                </article>)}</div>}
+                </article>)}</div>)}</div>}
                 {!marketplaceLoading && !marketplaceError && !listings.length && <div className="empty-state"><span className="empty-icon">⌕</span><strong>{marketplaceView === 'promotions' ? 'No active promotions yet' : 'No livestock found'}</strong><p>{marketplaceView === 'promotions' ? 'There are no discounted listings available right now. Browse active livestock listings instead.' : 'Try a different search or browse all categories.'}</p><button type="button" onClick={() => navigateMarketplace('all')}>{marketplaceView === 'promotions' ? 'Browse all livestock' : 'Reset search'}</button></div>}
                 <Pagination page={listingPage} lastPage={listingLastPage} onChange={setListingPage} />
             </section>
             {user && user.role !== 'BUYER' && <section className="account-panel" aria-live="polite"><p className="eyebrow">Your account</p><h2>Welcome back, {user.name.split(' ')[0]}.</h2><p className="account-email">{user.email}</p><p className="role-badge">{user.role}</p><button type="button" onClick={logout}>Log out <span>↗</span></button></section>}
             {phoneVerificationPrompt && user && <RegistrationPhoneVerificationDialog user={user} code={phoneCode} error={phoneFlowError} message={phoneFlowMessage} loading={phoneFlowLoading} onCodeChange={setPhoneCode} onVerify={verifyRegistrationPhone} onResend={() => void resendRegistrationPhoneCode()} onClose={() => setPhoneVerificationPrompt(false)} />}
             </>}
+            {showMobileMarketplaceNavigation && <MobileBottomNavigation
+                className="mobile-marketplace-nav"
+                navigationLabel="Mobile marketplace navigation"
+            >
+                <button type="button" className={user?.role === 'BUYER' ? buyerTab === 'home' && !isPromotionsPage ? 'active' : '' : !isPromotionsPage && buyerTab !== 'chats' && marketplaceView === 'all' ? 'active' : ''} aria-current={user?.role === 'BUYER' ? buyerTab === 'home' && !isPromotionsPage ? 'page' : undefined : !isPromotionsPage && buyerTab !== 'chats' && marketplaceView === 'all' ? 'page' : undefined} onClick={() => navigateMarketplace('all')}><BuyerNavigationIcon name="home" /><span>Home</span></button>
+                <button type="button" className={isPromotionsPage ? 'active' : ''} aria-current={isPromotionsPage ? 'page' : undefined} onClick={() => user?.role === 'BUYER' ? navigateBuyerTab('promotions') : navigateMarketplace('promotions')}><BuyerNavigationIcon name="promotions" /><span>Promotions</span></button>
+                {user?.role === 'BUYER'
+                    ? <button type="button" className={buyerTab === 'chats' ? 'active' : ''} aria-current={buyerTab === 'chats' ? 'page' : undefined} aria-label={buyerUnreadChatCount > 0 ? `Chats, ${navigationBadgeLabel(buyerUnreadChatCount, 'unread message', 'unread messages')}` : 'Chats'} onClick={() => navigateBuyerTab('chats')}><BuyerNavigationIcon name="chats" /><span>Chats</span><NavigationBadge count={buyerUnreadChatCount} /></button>
+                    : <button type="button" className={!user && buyerTab === 'chats' ? 'active' : ''} aria-current={!user && buyerTab === 'chats' ? 'page' : undefined} onClick={() => navigateBuyerTab('chats')}><BuyerNavigationIcon name="chats" /><span>Chats</span></button>}
+                <button type="button" className={user?.role === 'BUYER' && buyerTab === 'profile' ? 'active' : ''} aria-current={user?.role === 'BUYER' && buyerTab === 'profile' ? 'page' : undefined} onClick={() => user?.role === 'BUYER' ? navigateBuyerTab('profile') : setAuthOpen(true)}><BuyerNavigationIcon name="profile" /><span>Account</span></button>
+            </MobileBottomNavigation>}
             {!user && authOpen && (
                 <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setAuthOpen(false); }}>
                     <section className="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title">

@@ -2,9 +2,9 @@
 
 namespace App\Http\Requests;
 
+use App\Enums\Role;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Validator;
-use App\Enums\Role;
 
 class ChatMessageRequest extends FormRequest
 {
@@ -20,6 +20,7 @@ class ChatMessageRequest extends FormRequest
     {
         return [
             'conversation_id' => ['nullable', 'integer', 'min:1'],
+            'client_message_id' => ['nullable', 'uuid'],
             'message' => ['required', 'string', 'max:2000'],
             'report' => ['sometimes', 'nullable', 'array:type,from,to,status,search,order_status,payment_status,payment_method,role,account_status,complaint_type,resolution_status,amount_min,amount_max,category_id,listing_id,seller_id'],
             'clear_report_context' => ['sometimes', 'boolean'],

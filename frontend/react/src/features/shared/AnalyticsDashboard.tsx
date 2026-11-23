@@ -2,6 +2,7 @@ import React from 'react';
 import api from '../../lib/api';
 import type { UserRole } from '../../shared/types';
 import { AIChatPage, type ChatReportContext } from './AIChatPage';
+import { Pagination } from '../../shared/components/Pagination';
 
 type Analytics = {
     range: { from: string; to: string };
@@ -104,7 +105,7 @@ function chartValue(item: ChartData[number], currencyValues: boolean): string {
     return item.formatted ?? (currencyValues ? currency.format(item.value) : integer.format(item.value));
 }
 
-function BarChart({ title, values, currencyValues = false, unitLabel, limit, emptyMessage, onExpand, headingControl }: {
+function BarChart({ title, values, currencyValues = false, unitLabel, limit, emptyMessage, onExpand, headingControl, showExpand = true }: {
     title: string;
     values: ChartData;
     currencyValues?: boolean;
@@ -113,11 +114,15 @@ function BarChart({ title, values, currencyValues = false, unitLabel, limit, emp
     emptyMessage?: string;
     onExpand: () => void;
     headingControl?: React.ReactNode;
+    showExpand?: boolean;
 }) {
     const maximum = Math.max(1, ...values.map((item) => item.value));
     const visibleValues = limit ? values.slice(0, limit) : values;
     return <section className="analytics-card">
-        <div className="analytics-card-heading"><h3>{title}</h3><div className="analytics-chart-actions">{headingControl}<button type="button" onClick={onExpand} aria-label={`Open ${title} chart full view`}>Expand</button></div></div>
+        <div className={`analytics-card-heading${showExpand ? headingControl ? ' analytics-card-heading-expand-control' : ' analytics-card-heading-expand' : ''}`}>
+            <h3>{title}</h3>
+            {(headingControl || showExpand) && <div className="analytics-chart-actions">{headingControl}{showExpand && <button type="button" onClick={onExpand} aria-label={`Open ${title} chart full view`}>Expand</button>}</div>}
+        </div>
         {values.length ? <>
             {unitLabel && <p className="analytics-chart-unit">{unitLabel}</p>}
             <div className="analytics-bars" role="list" aria-label={`${title} horizontal bar chart`}>
@@ -132,13 +137,14 @@ function BarChart({ title, values, currencyValues = false, unitLabel, limit, emp
     </section>;
 }
 
-function DonutChart({ title, values, currencyValues = false, unitLabel, emptyMessage, onExpand }: {
+function DonutChart({ title, values, currencyValues = false, unitLabel, emptyMessage, onExpand, showExpand = true }: {
     title: string;
     values: ChartData;
     currencyValues?: boolean;
     unitLabel?: string;
     emptyMessage?: string;
     onExpand: () => void;
+    showExpand?: boolean;
 }) {
     const total = values.reduce((sum, item) => sum + item.value, 0);
     const radius = 43;
@@ -146,7 +152,7 @@ function DonutChart({ title, values, currencyValues = false, unitLabel, emptyMes
     let offset = 0;
 
     return <section className="analytics-card analytics-donut-card">
-        <div className="analytics-card-heading"><h3>{title}</h3><button type="button" onClick={onExpand} aria-label={`Open ${title} chart full view`}>Expand</button></div>
+        <div className={`analytics-card-heading${showExpand ? ' analytics-card-heading-expand' : ''}`}><h3>{title}</h3>{showExpand && <button type="button" onClick={onExpand} aria-label={`Open ${title} chart full view`}>Expand</button>}</div>
         {unitLabel && <p className="analytics-chart-unit">{unitLabel}</p>}
         {total > 0 ? <>
             <div className="analytics-donut-layout">
@@ -187,7 +193,7 @@ function DonutChart({ title, values, currencyValues = false, unitLabel, emptyMes
 
 type TrendMetric = 'revenue' | 'orders' | 'units';
 
-function TrendChart({ values, metric, onMetricChange, onExpand }: { values: Analytics['series']; metric: TrendMetric; onMetricChange: (metric: TrendMetric) => void; onExpand: () => void }) {
+function TrendChart({ values, metric, onMetricChange, onExpand, adminPresentation = false, showExpand = true }: { values: Analytics['series']; metric: TrendMetric; onMetricChange: (metric: TrendMetric) => void; onExpand: () => void; adminPresentation?: boolean; showExpand?: boolean }) {
     const width = 800;
     const height = 210;
     const label = metric === 'revenue' ? 'Gross sales' : metric === 'orders' ? 'Orders' : 'Units sold';
@@ -195,9 +201,10 @@ function TrendChart({ values, metric, onMetricChange, onExpand }: { values: Anal
     const max = Math.max(1, ...values.map(value));
     const pointX = (index: number) => values.length < 2 ? width / 2 : 72 + index * (width - 96) / (values.length - 1);
     const points = values.map((item, index) => `${pointX(index)},${height - 30 - value(item) / max * (height - 58)}`).join(' ');
+    const areaPoints = values.length > 1 ? `${pointX(0)},${height - 30} ${points} ${pointX(values.length - 1)},${height - 30}` : '';
     const labelStep = Math.max(1, Math.ceil(values.length / 6));
-    return <section className="analytics-card analytics-trend">
-        <div className="analytics-card-heading"><h3>{label} over time</h3><button type="button" onClick={onExpand}>Expand</button></div>
+    return <section className={`analytics-card analytics-trend${adminPresentation ? ' analytics-trend-admin' : ''}`}>
+        <div className={`analytics-card-heading${showExpand ? ' analytics-card-heading-expand' : ''}`}><h3>{label} over time</h3>{showExpand && <button type="button" onClick={onExpand}>Expand</button>}</div>
         <div className="analytics-tabs" role="group" aria-label="Time series metric">{(['revenue', 'orders', 'units'] as const).map((item) => <button type="button" key={item} aria-pressed={metric === item} onClick={() => onMetricChange(item)}>{item === 'revenue' ? 'Sales' : item === 'orders' ? 'Orders' : 'Units'}</button>)}</div>
         <p className="analytics-chart-unit">{metric === 'revenue' ? 'Philippine pesos (₱)' : metric === 'orders' ? 'Orders' : 'Units sold'} · daily totals</p>
         {values.some((item) => value(item) > 0) ? <>
@@ -208,6 +215,7 @@ function TrendChart({ values, metric, onMetricChange, onExpand }: { values: Anal
                     const shown = metric === 'revenue' ? currency.format(max * fraction) : integer.format(max * fraction);
                     return <g key={fraction}><line className="analytics-grid-line" x1="64" y1={y} x2={width - 16} y2={y} /><text className="analytics-y-label" x="58" y={y + 4} textAnchor="end">{shown}</text></g>;
                 })}
+                {adminPresentation && areaPoints && <polygon className="analytics-trend-area" points={areaPoints} />}
                 <polyline points={points} />
                 {values.map((item, index) => {
                     const x = pointX(index);
@@ -224,7 +232,7 @@ function TrendChart({ values, metric, onMetricChange, onExpand }: { values: Anal
     </section>;
 }
 
-function GrowthChart({ values, onExpand }: { values: NonNullable<Analytics['growth_series']>; onExpand: () => void }) {
+function GrowthChart({ values, onExpand, showExpand = true }: { values: NonNullable<Analytics['growth_series']>; onExpand: () => void; showExpand?: boolean }) {
     const metrics = [
         { key: 'sellers', label: 'Sellers' },
         { key: 'buyers', label: 'Buyers' },
@@ -233,7 +241,7 @@ function GrowthChart({ values, onExpand }: { values: NonNullable<Analytics['grow
     ] as const;
     const max = Math.max(1, ...values.flatMap((row) => metrics.map((metric) => row[metric.key])));
     return <section className="analytics-card analytics-growth">
-        <div className="analytics-card-heading"><h3>Marketplace activity over time</h3><button type="button" onClick={onExpand}>Expand chart</button></div>
+        <div className={`analytics-card-heading${showExpand ? ' analytics-card-heading-expand' : ''}`}><h3>Marketplace activity over time</h3>{showExpand && <button type="button" onClick={onExpand}>Expand chart</button>}</div>
         <div className="analytics-growth-legend">{metrics.map((metric) => <span key={metric.key}>{metric.label}</span>)}</div>
         {values.some((row) => metrics.some((metric) => row[metric.key] > 0)) ? <div className="analytics-growth-bars">
             {values.filter((row) => metrics.some((metric) => row[metric.key] > 0)).map((row) => <div className="analytics-growth-day" key={row.date} title={row.date}>
@@ -244,8 +252,21 @@ function GrowthChart({ values, onExpand }: { values: NonNullable<Analytics['grow
 }
 
 function DataTable({ title, headers, rows, empty, headingControl }: { title: string; headers: string[]; rows: React.ReactNode[][]; empty: string; headingControl?: React.ReactNode }) {
+    const pageSize = 5;
+    const [page, setPage] = React.useState(1);
+    const lastPage = Math.max(1, Math.ceil(rows.length / pageSize));
+    const currentPage = Math.min(page, lastPage);
+    const firstRowIndex = (currentPage - 1) * pageSize;
+    const visibleRows = rows.slice(firstRowIndex, firstRowIndex + pageSize);
+
     return <section className="analytics-card analytics-table-card"><div className="analytics-card-heading"><h3>{title}</h3>{headingControl}</div>
-        {rows.length ? <div className="analytics-table-scroll"><table><thead><tr>{headers.map((header) => <th key={header}>{header}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={index}>{row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}</tr>)}</tbody></table></div> : <p className="analytics-empty">{empty}</p>}
+        {rows.length ? <>
+            <div className="analytics-table-scroll"><table><thead><tr>{headers.map((header) => <th key={header}>{header}</th>)}</tr></thead><tbody>{visibleRows.map((row, index) => <tr key={firstRowIndex + index}>{row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}</tr>)}</tbody></table></div>
+            {rows.length > pageSize && <div className="analytics-table-pagination">
+                <span>Showing {firstRowIndex + 1}–{Math.min(firstRowIndex + pageSize, rows.length)} of {rows.length} records</span>
+                <Pagination page={currentPage} lastPage={lastPage} onChange={setPage} label={`${title} pages`} />
+            </div>}
+        </> : <p className="analytics-empty">{empty}</p>}
     </section>;
 }
 
@@ -382,6 +403,13 @@ export function AnalyticsDashboard({ role, preparedBy = '', onOpenOrder }: Analy
         { title: 'Active supply by category', kind: 'bar', values: supplyCategoryChart, unitLabel: 'Available livestock quantity in active listings', emptyMessage: 'No active supply matches this selection.' },
         ...(role === 'ADMIN' ? [{ title: 'Payments by status', kind: 'bar' as const, values: paymentChart, unitLabel: 'Payment count · filtered date range', emptyMessage: 'No payment records in this date range.' }] : []),
     ];
+    const adminInventoryChart: AnalyticsChart = {
+        title: 'Inventory by category',
+        kind: 'donut',
+        values: (analytics?.category_supply ?? []).map((item) => ({ label: item.category, value: item.units })),
+        unitLabel: 'Available livestock quantity in active listings',
+        emptyMessage: 'No active supply matches this selection.',
+    };
     const trendTitle = trendMetric === 'revenue' ? 'Gross sales over time' : trendMetric === 'orders' ? 'Orders over time' : 'Livestock quantity sold over time';
 
     async function printAnalyticsReport() {
@@ -411,32 +439,33 @@ export function AnalyticsDashboard({ role, preparedBy = '', onOpenOrder }: Analy
         }
     }
 
-    return <section className="analytics-dashboard" aria-labelledby="analytics-title">
-        <header className="analytics-header">
-            <div><p className="eyebrow">{role === 'ADMIN' ? 'Marketplace analytics' : 'Business analytics'}</p><h2 id="analytics-title">{role === 'ADMIN' ? 'Marketplace performance' : 'Sales and inventory'}</h2><p className="analytics-description">{role === 'ADMIN' ? 'Track marketplace activity, sales, and fulfillment.' : 'Track sales, orders, and inventory for your business.'}</p></div>
-            <div className="analytics-actions"><button type="button" onClick={() => setAnalysisOpen(true)} disabled={!analytics || loading}>Analyze with AI</button><button type="button" onClick={() => setPrintPreview(true)} disabled={!analytics || loading}>Print report</button></div>
-        </header>
-        <div className="analytics-controls" aria-label="Analytics filters">
-            <label>Date range<select aria-label="Date range preset" value={preset} onChange={(event) => setPresetRange(event.target.value)}><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option><option value="365">Last 12 months</option><option value="custom">Custom</option></select></label>
-            {preset === 'custom' && <>
-                <label>Start date<input type="date" value={range.from} onChange={(event) => setRange((current) => ({ ...current, from: event.target.value }))} /></label>
-                <label>End date<input type="date" value={range.to} onChange={(event) => setRange((current) => ({ ...current, to: event.target.value }))} /></label>
-            </>}
-            <label>Category<select value={categoryId} onChange={(event) => { setCategoryId(event.target.value); setListingId(''); }}><option value="">All categories</option>{analytics?.filters.categories.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-            <label>Livestock listing<select value={listingId} onChange={(event) => setListingId(event.target.value)}><option value="">All livestock listings</option>{analytics?.filters.products.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-            {role === 'ADMIN' && <label>Seller<select value={sellerId} onChange={(event) => setSellerId(event.target.value)}><option value="">All sellers</option>{analytics?.filters.sellers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
-            <label>Order status<select value={status} onChange={(event) => setStatus(event.target.value)}><option value="">All statuses</option>{['PENDING_CONFIRMATION', 'CONFIRMED', 'PREPARING', 'READY_FOR_PICKUP', 'FULFILLING', 'COMPLETED', 'CANCELLED', 'REJECTED'].map((value) => <option key={value} value={value}>{value.replaceAll('_', ' ')}</option>)}</select></label>
-        </div>
-        {loading && <p className="analytics-state" aria-live="polite">Loading analytics...</p>}
-        {error && <p className="analytics-state error" role="alert">{error}</p>}
-        {!error && analytics && <>
-            <div className="analytics-metrics analytics-primary-metrics">
+    return <section className={`analytics-dashboard${role === 'ADMIN' || role === 'SELLER' ? ' analytics-dashboard-admin' : ''}`} aria-labelledby="analytics-title">
+        <div className="analytics-dashboard-overview">
+            <header className="analytics-header">
+                <div><p className="eyebrow">{role === 'ADMIN' ? 'Marketplace analytics' : 'Business analytics'}</p><h2 id="analytics-title">{role === 'ADMIN' ? 'Marketplace performance' : 'Sales and inventory'}</h2><p className="analytics-description">{role === 'ADMIN' ? 'Track marketplace activity, sales, and fulfillment.' : 'Track sales, orders, and inventory for your business.'}</p></div>
+                <div className="analytics-actions"><button type="button" onClick={() => setAnalysisOpen(true)} disabled={!analytics || loading}>Analyze with AI</button><button type="button" onClick={() => setPrintPreview(true)} disabled={!analytics || loading}>Print report</button></div>
+            </header>
+            <div className="analytics-controls" aria-label="Analytics filters">
+                <label>Date range<select aria-label="Date range preset" value={preset} onChange={(event) => setPresetRange(event.target.value)}><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option><option value="365">Last 12 months</option><option value="custom">Custom</option></select></label>
+                {preset === 'custom' && <>
+                    <label>Start date<input type="date" value={range.from} onChange={(event) => setRange((current) => ({ ...current, from: event.target.value }))} /></label>
+                    <label>End date<input type="date" value={range.to} onChange={(event) => setRange((current) => ({ ...current, to: event.target.value }))} /></label>
+                </>}
+                <label>Category<select value={categoryId} onChange={(event) => { setCategoryId(event.target.value); setListingId(''); }}><option value="">All categories</option>{analytics?.filters.categories.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+                <label>Livestock listing<select value={listingId} onChange={(event) => setListingId(event.target.value)}><option value="">All livestock listings</option>{analytics?.filters.products.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+                {role === 'ADMIN' && <label>Seller<select value={sellerId} onChange={(event) => setSellerId(event.target.value)}><option value="">All sellers</option>{analytics?.filters.sellers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
+                <label>Order status<select value={status} onChange={(event) => setStatus(event.target.value)}><option value="">All statuses</option>{['PENDING_CONFIRMATION', 'CONFIRMED', 'PREPARING', 'READY_FOR_PICKUP', 'FULFILLING', 'COMPLETED', 'CANCELLED', 'REJECTED'].map((value) => <option key={value} value={value}>{value.replaceAll('_', ' ')}</option>)}</select></label>
+            </div>
+            {loading && <p className="analytics-state" aria-live="polite">Loading analytics...</p>}
+            {error && <p className="analytics-state error" role="alert">{error}</p>}
+            {!error && analytics && <div className="analytics-dashboard-overview-results">
+                <div className="analytics-metrics analytics-primary-metrics">
                 <article><span>Gross sales</span><strong>{currency.format(summary?.gross_sales ?? 0)}</strong><small>Completed order subtotal</small></article>
                 <article><span>Orders</span><strong>{integer.format(summary?.orders ?? 0)}</strong><small>{integer.format(summary?.completed_orders ?? 0)} completed</small></article>
                 <article><span>Units sold</span><strong>{integer.format(summary?.units_sold ?? 0)}</strong><small>Completed orders</small></article>
                 <article><span>Average order value</span><strong>{currency.format(summary?.average_order_value ?? 0)}</strong><small>Completed orders</small></article>
-            </div>
-            <details className="analytics-more-metrics"><summary>More metrics</summary><div className="analytics-metrics">
+                </div>
+                <details className="analytics-more-metrics"><summary>More metrics</summary><div className="analytics-metrics">
                 <article><span>Fees</span><strong>{summary?.fees == null ? 'Unavailable' : currency.format(summary.fees)}</strong><small>Recorded seller fees</small></article>
                 <article><span>Estimated net payout</span><strong>{summary?.net_payout == null ? 'Unavailable' : currency.format(summary.net_payout)}</strong><small>Sales less recorded seller fees</small></article>
                 <article><span>Recorded discounts</span><strong>{summary?.discounts == null ? 'Unavailable' : currency.format(summary.discounts)}</strong><small>Promotion codes are not recorded</small></article>
@@ -450,12 +479,19 @@ export function AnalyticsDashboard({ role, preparedBy = '', onOpenOrder }: Analy
                     <article><span>Payment success / failure</span><strong>{summary?.payment_success_rate == null ? 'Unavailable' : `${summary.payment_success_rate}% / ${summary.payment_failure_rate}%`}</strong><small>Among paid or failed payment attempts</small></article>
                     <article><span>Refunds issued</span><strong>{integer.format(summary?.refunds_issued_count ?? 0)} · {currency.format(summary?.refunds_issued_amount ?? 0)}</strong><small>{integer.format(summary?.refunds_action_required ?? 0)} awaiting return, manual action, or admin reconciliation</small></article>
                 </>}
-            </div></details>
+                </div></details>
+            </div>}
+        </div>
+        {!error && analytics && <>
             <section className="analytics-visualizations" aria-labelledby="analytics-visualizations-title">
             <div className="analytics-section-heading"><p className="eyebrow">Performance and inventory mix</p><h3 id="analytics-visualizations-title">Visual overview</h3><p>Sales charts use the selected period. Listing and supply charts show current inventory.</p></div>
-            <div className="analytics-chart-grid">
-                <TrendChart values={analytics.series} metric={trendMetric} onMetricChange={setTrendMetric} onExpand={() => setExpanded({ title: trendTitle, type: 'trend' })} />
-                {charts.map((chart) => {
+            {role === 'ADMIN' && <div className="analytics-admin-featured">
+                <TrendChart values={analytics.series} metric={trendMetric} onMetricChange={setTrendMetric} onExpand={() => setExpanded({ title: trendTitle, type: 'trend' })} adminPresentation />
+                <DonutChart title={adminInventoryChart.title} values={adminInventoryChart.values} unitLabel={adminInventoryChart.unitLabel} emptyMessage={adminInventoryChart.emptyMessage} onExpand={() => setExpanded({ title: adminInventoryChart.title, type: 'chart', chartKind: adminInventoryChart.kind })} />
+            </div>}
+            <div className={`analytics-chart-grid${role === 'ADMIN' ? ' analytics-admin-chart-grid' : ''}`}>
+                {role !== 'ADMIN' && <TrendChart values={analytics.series} metric={trendMetric} onMetricChange={setTrendMetric} onExpand={() => setExpanded({ title: trendTitle, type: 'trend' })} />}
+                {charts.filter((chart) => role !== 'ADMIN' || chart.title !== 'Active supply by category').map((chart) => {
                     const productSort = chart.title === 'Top livestock listings by sales' ? <ProductSortControl sort={sort} onChange={setSort} /> : undefined;
                     const onExpand = () => setExpanded({ title: chart.title, type: 'chart', chartKind: chart.kind });
                     return chart.kind === 'donut'
@@ -480,14 +516,14 @@ export function AnalyticsDashboard({ role, preparedBy = '', onOpenOrder }: Analy
         {expanded && <div className="analytics-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setExpanded(null); }}>
             <section className="analytics-modal" role="dialog" aria-modal="true" aria-labelledby="analytics-chart-full-title">
                 <header><div><h2 id="analytics-chart-full-title">{expanded.type === 'trend' ? trendTitle : expanded.title}</h2><p>{range.from} to {range.to} · {selectedFilterNames.join(' · ') || 'No filters'}{expanded.title === 'Top livestock listings by sales' ? ` · Sort livestock listings: ${productSortLabels[sort]}` : ''}</p></div><button type="button" onClick={() => setExpanded(null)}>Close</button></header>
-                {expanded.type === 'trend' && <TrendChart values={analytics?.series ?? []} metric={trendMetric} onMetricChange={setTrendMetric} onExpand={() => setExpanded(null)} />}
-                {expanded.type === 'growth' && analytics?.growth_series && <GrowthChart values={analytics.growth_series} onExpand={() => setExpanded(null)} />}
+                {expanded.type === 'trend' && <TrendChart values={analytics?.series ?? []} metric={trendMetric} onMetricChange={setTrendMetric} onExpand={() => setExpanded(null)} adminPresentation={role === 'ADMIN'} showExpand={false} />}
+                {expanded.type === 'growth' && analytics?.growth_series && <GrowthChart values={analytics.growth_series} onExpand={() => setExpanded(null)} showExpand={false} />}
                 {expanded.type === 'chart' && (() => {
-                    const chart = charts.find((item) => item.title === expanded.title);
+                    const chart = expanded.title === adminInventoryChart.title ? adminInventoryChart : charts.find((item) => item.title === expanded.title);
                     if (!chart) return null;
                     return chart.kind === 'donut'
-                        ? <DonutChart title={chart.title} values={chart.values} currencyValues={chart.currencyValues} unitLabel={chart.unitLabel} emptyMessage={chart.emptyMessage} onExpand={() => setExpanded(null)} />
-                        : <BarChart title={chart.title} values={chart.values} currencyValues={chart.currencyValues} unitLabel={chart.unitLabel} emptyMessage={chart.emptyMessage} limit={undefined} headingControl={chart.title === 'Top livestock listings by sales' ? <ProductSortControl sort={sort} onChange={setSort} /> : undefined} onExpand={() => setExpanded(null)} />;
+                        ? <DonutChart title={chart.title} values={chart.values} currencyValues={chart.currencyValues} unitLabel={chart.unitLabel} emptyMessage={chart.emptyMessage} onExpand={() => setExpanded(null)} showExpand={false} />
+                        : <BarChart title={chart.title} values={chart.values} currencyValues={chart.currencyValues} unitLabel={chart.unitLabel} emptyMessage={chart.emptyMessage} limit={undefined} headingControl={chart.title === 'Top livestock listings by sales' ? <ProductSortControl sort={sort} onChange={setSort} /> : undefined} onExpand={() => setExpanded(null)} showExpand={false} />;
                 })()}
             </section>
         </div>}

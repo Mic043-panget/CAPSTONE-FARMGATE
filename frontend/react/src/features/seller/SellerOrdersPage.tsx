@@ -103,6 +103,7 @@ const orderStatuses = [
 
 const ordersPerPage = 10;
 type OrderSort = 'newest' | 'oldest' | 'highest-total' | 'lowest-total' | 'status' | 'buyer';
+type OrderDateRange = 'all' | '7' | '30' | 'custom';
 const activeDeliveryStatuses = ['RIDER_ACCEPTED', 'PICKUP_PENDING', 'PICKED_UP', 'IN_TRANSIT', 'DELIVERED'];
 const currency = new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP', minimumFractionDigits: 2 });
 const textCollator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
@@ -134,6 +135,23 @@ function orderAddress(order: SellerOrder): string {
     ].filter(Boolean).join(', ') || 'No delivery address was saved.';
 }
 
+function OrderSummaryIcon({ kind }: { kind: 'orders' | 'pending' | 'delivery' | 'confirmed' }) {
+    return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        {kind === 'orders' ? <><path d="M3 4h2l2.2 11.2a2 2 0 0 0 2 1.6h8.5a2 2 0 0 0 1.9-1.4L21 9H6" /><circle cx="10" cy="20" r="1" /><circle cx="18" cy="20" r="1" /></>
+            : kind === 'pending' ? <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>
+                : kind === 'delivery' ? <><path d="M3 6h11v11H3zM14 10h4l3 3v4h-7z" /><circle cx="7.5" cy="18.5" r="1.5" /><circle cx="18" cy="18.5" r="1.5" /></>
+                    : <><circle cx="12" cy="12" r="9" /><path d="m8 12 2.5 2.5L16 9" /></>}
+    </svg>;
+}
+
+function OrderDetailIcon({ kind }: { kind: 'buyer' | 'livestock' | 'date' }) {
+    return <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        {kind === 'buyer' ? <><circle cx="10" cy="6" r="2.5" /><path d="M4.5 16c.4-3 2.2-4.5 5.5-4.5s5.1 1.5 5.5 4.5" /></>
+            : kind === 'date' ? <><rect x="3" y="4.5" width="14" height="12" rx="2" /><path d="M6.5 3v3M13.5 3v3M3 8h14" /></>
+                : <><path d="M2.5 11.5h2l1.5-3h4l2 2h3l2 2.5v2h-1.5M4.5 15h5" /><circle cx="4" cy="15.5" r="1.3" /><circle cx="14.5" cy="15.5" r="1.3" /><path d="M9 8.5V6.8h3.5l2 2" /></>}
+    </svg>;
+}
+
 export function SellerOrdersPage({ onNavigationCountsChanged, initialOrderId, onInitialOrderHandled }: {
     onNavigationCountsChanged?: () => Promise<void>;
     initialOrderId?: number | null;
@@ -144,6 +162,9 @@ export function SellerOrdersPage({ onNavigationCountsChanged, initialOrderId, on
     const [statusFilter, setStatusFilter] = React.useState('');
     const [search, setSearch] = React.useState('');
     const [sort, setSort] = React.useState<OrderSort>('newest');
+    const [dateRange, setDateRange] = React.useState<OrderDateRange>('all');
+    const [dateFrom, setDateFrom] = React.useState('');
+    const [dateTo, setDateTo] = React.useState('');
     const [page, setPage] = React.useState(1);
     const [rejectReason, setRejectReason] = React.useState('');
     const [loading, setLoading] = React.useState(true);
@@ -327,6 +348,16 @@ export function SellerOrdersPage({ onNavigationCountsChanged, initialOrderId, on
 
     const filteredOrders = orders.filter((order) => {
         if (statusFilter && order.status !== statusFilter) return false;
+        const orderDate = new Date(order.created_at);
+        if (dateRange === '7' || dateRange === '30') {
+            const start = new Date();
+            start.setDate(start.getDate() - (Number(dateRange) - 1));
+            start.setHours(0, 0, 0, 0);
+            if (orderDate < start) return false;
+        } else if (dateRange === 'custom') {
+            if (dateFrom && orderDate < new Date(`${dateFrom}T00:00:00`)) return false;
+            if (dateTo && orderDate >= new Date(`${dateTo}T23:59:59.999`)) return false;
+        }
         const query = search.trim().toLocaleLowerCase();
         if (!query) return true;
         return [
@@ -368,6 +399,10 @@ export function SellerOrdersPage({ onNavigationCountsChanged, initialOrderId, on
     });
     const lastPage = Math.max(1, Math.ceil(sortedOrders.length / ordersPerPage));
     const visibleOrders = sortedOrders.slice((page - 1) * ordersPerPage, page * ordersPerPage);
+    const pendingCount = orders.filter((order) => order.status === 'PENDING_CONFIRMATION').length;
+    const deliveredCount = orders.filter((order) => order.delivery?.status === 'DELIVERED').length;
+    const confirmedCount = orders.filter((order) => order.status === 'CONFIRMED').length;
+    const summaryUnavailable = (loading || Boolean(error)) && orders.length === 0;
     React.useEffect(() => {
         if (page > lastPage) setPage(lastPage);
     }, [lastPage, page]);
@@ -390,11 +425,16 @@ export function SellerOrdersPage({ onNavigationCountsChanged, initialOrderId, on
 
     return <section className="seller-orders" aria-labelledby="seller-orders-title">
         <header className="seller-orders-heading">
-            <div><p className="eyebrow">Order management</p><h2 id="seller-orders-title">Orders</h2><p>Review incoming orders, make a decision, and track delivery. The Orders badge counts orders still awaiting confirmation; reading a notification does not confirm an order.</p></div>
-            <span>{orders.length} {orders.length === 1 ? 'order' : 'orders'}</span>
+            <div><p className="eyebrow">Order management</p><h2 id="seller-orders-title">Orders</h2><p>Review incoming orders, make a decision, and track delivery. Reading a notification does not confirm an order.</p></div>
         </header>
+        <div className="seller-order-summary" aria-label="Order summary">
+            <article className="seller-order-summary-card"><span className="seller-order-summary-icon"><OrderSummaryIcon kind="orders" /></span><span className="seller-order-summary-copy"><small>Total orders</small><strong>{summaryUnavailable ? '—' : orders.length}</strong></span></article>
+            <article className="seller-order-summary-card is-pending"><span className="seller-order-summary-icon"><OrderSummaryIcon kind="pending" /></span><span className="seller-order-summary-copy"><small>Pending confirmation</small><strong>{summaryUnavailable ? '—' : pendingCount}</strong></span></article>
+            <article className="seller-order-summary-card"><span className="seller-order-summary-icon"><OrderSummaryIcon kind="delivery" /></span><span className="seller-order-summary-copy"><small>Delivered</small><strong>{summaryUnavailable ? '—' : deliveredCount}</strong></span></article>
+            <article className="seller-order-summary-card"><span className="seller-order-summary-icon"><OrderSummaryIcon kind="confirmed" /></span><span className="seller-order-summary-copy"><small>Confirmed</small><strong>{summaryUnavailable ? '—' : confirmedCount}</strong></span></article>
+        </div>
         <div className="seller-orders-filters" role="search">
-            <label>Search orders<input type="search" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Order number, buyer, or livestock" /></label>
+            <label className="seller-orders-search">Search orders<input type="search" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Order reference, buyer, or livestock" /></label>
             <label>Filter by status<select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }}><option value="">All statuses</option>{orderStatuses.map((status) => <option key={status} value={status}>{formatStatus(status)}</option>)}</select></label>
             <label>Sort orders<select value={sort} onChange={(event) => { setSort(event.target.value as OrderSort); setPage(1); }}>
                 <option value="newest">Date · Newest first</option>
@@ -404,6 +444,8 @@ export function SellerOrdersPage({ onNavigationCountsChanged, initialOrderId, on
                 <option value="status">Status · A–Z</option>
                 <option value="buyer">Buyer · A–Z</option>
             </select></label>
+            <label>Date range<select value={dateRange} onChange={(event) => { setDateRange(event.target.value as OrderDateRange); setPage(1); }}><option value="all">All dates</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="custom">Custom range</option></select></label>
+            {dateRange === 'custom' && <div className="seller-orders-custom-dates"><label>From<input type="date" value={dateFrom} max={dateTo || undefined} onChange={(event) => { setDateFrom(event.target.value); setPage(1); }} /></label><label>To<input type="date" value={dateTo} min={dateFrom || undefined} onChange={(event) => { setDateTo(event.target.value); setPage(1); }} /></label></div>}
         </div>
         {error && <p className="seller-orders-error" role="alert">{error} {orders.length === 0 && !loading && <button type="button" onClick={() => void refreshOrders()}>Try again</button>}</p>}
         {loading ? <LoadingSkeleton variant="table" count={5} columns={7} label="Loading seller orders" />
@@ -414,14 +456,24 @@ export function SellerOrdersPage({ onNavigationCountsChanged, initialOrderId, on
                         <thead><tr><th scope="col">Order</th><th scope="col">Date</th><th scope="col">Buyer</th><th scope="col">Livestock</th><th scope="col">Total</th><th scope="col">Status</th><th scope="col"><span className="sr-only">Details</span></th></tr></thead>
                         <tbody>{visibleOrders.map((order) => <tr key={order.id}>
                             <td><strong>{order.order_reference}</strong></td>
-                            <td><time dateTime={order.created_at}>{new Date(order.created_at).toLocaleDateString()}</time></td>
-                            <td>{order.shipping_address?.recipient_name ?? order.buyer?.name ?? 'Buyer'}</td>
-                            <td>{order.items.map((item) => `${item.quantity} ${item.pricing_type === 'PER_KILO' ? 'kg' : 'head'} ${item.listing?.name ?? 'Removed listing'}`).join(', ')}</td>
+                            <td><span className="seller-order-cell-icon"><OrderDetailIcon kind="date" /><time dateTime={order.created_at}>{new Date(order.created_at).toLocaleDateString()}</time></span></td>
+                            <td><span className="seller-order-cell-icon"><OrderDetailIcon kind="buyer" /><span>{order.shipping_address?.recipient_name ?? order.buyer?.name ?? 'Buyer'}</span></span></td>
+                            <td><span className="seller-order-cell-icon"><OrderDetailIcon kind="livestock" /><span>{order.items.map((item) => `${item.quantity} ${item.pricing_type === 'PER_KILO' ? 'kg' : 'head'} ${item.listing?.name ?? 'Removed listing'}`).join(', ')}</span></span></td>
                             <td>{amount(order.total_amount)}</td>
                             <td><span className={`seller-order-status status-${displayOrderStatus(order).toLowerCase().replaceAll(' ', '_')}`}>{displayOrderStatus(order)}</span></td>
-                            <td><button className="seller-order-view" type="button" onClick={() => void openOrder(order.id)}>Review</button></td>
+                            <td><button className="seller-order-view" type="button" onClick={() => void openOrder(order.id)}>{order.status === 'PENDING_CONFIRMATION' ? 'Review' : 'View details'}</button></td>
                         </tr>)}</tbody>
                     </table></div>
+                    <div className="seller-order-cards">{visibleOrders.map((order) => <article className="seller-order-card" key={`card-${order.id}`}>
+                        <div className="seller-order-card-heading"><strong>{order.order_reference}</strong><span className={`seller-order-status status-${displayOrderStatus(order).toLowerCase().replaceAll(' ', '_')}`}>{displayOrderStatus(order)}</span></div>
+                        <dl>
+                            <div><dt><OrderDetailIcon kind="date" />Date</dt><dd><time dateTime={order.created_at}>{new Date(order.created_at).toLocaleDateString()}</time></dd></div>
+                            <div><dt><OrderDetailIcon kind="buyer" />Buyer</dt><dd>{order.shipping_address?.recipient_name ?? order.buyer?.name ?? 'Buyer'}</dd></div>
+                            <div><dt><OrderDetailIcon kind="livestock" />Livestock</dt><dd>{order.items.map((item) => `${item.quantity} ${item.pricing_type === 'PER_KILO' ? 'kg' : 'head'} ${item.listing?.name ?? 'Removed listing'}`).join(', ')}</dd></div>
+                            <div><dt>Total</dt><dd>{amount(order.total_amount)}</dd></div>
+                        </dl>
+                        <button className="seller-order-view" type="button" onClick={() => void openOrder(order.id)}>{order.status === 'PENDING_CONFIRMATION' ? 'Review order' : 'View details'}</button>
+                    </article>)}</div>
                     <div className="seller-orders-pagination">
                         <span>Showing {(page - 1) * ordersPerPage + 1}–{Math.min(page * ordersPerPage, sortedOrders.length)} of {sortedOrders.length} orders</span>
                         {lastPage > 1 && <Pagination page={page} lastPage={lastPage} onChange={setPage} />}

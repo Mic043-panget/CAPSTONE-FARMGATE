@@ -22,13 +22,31 @@ class ChatConversationService
 
     /**
      * @param  array<string, mixed>|null  $report
-     * @return array{conversation: ChatConversation, user_message: ChatMessage, assistant_message: ChatMessage}
+     * @return array{conversation: ChatConversation, user_message: ChatMessage, assistant_message: ChatMessage, created: bool}
      */
-    public function send(User $user, ?int $conversationId, string $message, ?array $report, bool $clearReportContext = false): array
-    {
+    public function send(
+        User $user,
+        ?int $conversationId,
+        string $message,
+        ?array $report,
+        bool $clearReportContext = false,
+        ?string $clientMessageId = null,
+    ): array {
+        $message = trim($message);
+        $conversationQuery = ChatConversation::query()
+            ->where('kind', 'ai')
+            ->where('user_id', $user->id)
+            ->where('ai_owner_id', $user->id);
         $conversation = $conversationId === null
-            ? null
-            : ChatConversation::query()->where('kind', 'ai')->where('user_id', $user->id)->findOrFail($conversationId);
+            ? $conversationQuery->first()
+            : $conversationQuery->whereKey($conversationId)->firstOrFail();
+
+        if ($conversation !== null && $clientMessageId !== null) {
+            $existing = $this->existingReply($conversation, $user, $clientMessageId, $message);
+            if ($existing !== null) {
+                return $existing;
+            }
+        }
 
         $history = $conversation
             ? $conversation->messages()->latest('id')->limit(10)->get()->reverse()->map(fn (ChatMessage $item): array => [
@@ -75,28 +93,49 @@ class ChatConversationService
             ),
         ];
 
-        return DB::transaction(function () use ($conversationId, $user, $message, $assistantText, $reportContext, $clearReportContext, $requiresHuman): array {
+        return DB::transaction(function () use ($conversationId, $user, $message, $assistantText, $reportContext, $clearReportContext, $requiresHuman, $clientMessageId): array {
             $targetConversation = $conversationId === null
-                ? ChatConversation::query()->create([
-                    'user_id' => $user->id,
-                    'title' => mb_substr(preg_replace('/\s+/u', ' ', trim($message)) ?? '', 0, 100),
-                    'report_context' => $reportContext,
-                ])
+                ? ChatConversation::query()
+                    ->where('kind', 'ai')
+                    ->where('user_id', $user->id)
+                    ->where('ai_owner_id', $user->id)
+                    ->lockForUpdate()
+                    ->first()
                 : ChatConversation::query()
                     ->where('kind', 'ai')
                     ->where('user_id', $user->id)
+                    ->where('ai_owner_id', $user->id)
+                    ->whereKey($conversationId)
                     ->lockForUpdate()
-                    ->findOrFail($conversationId);
+                    ->firstOrFail();
+
+            if ($targetConversation === null) {
+                $targetConversation = ChatConversation::query()->firstOrCreate(
+                    ['ai_owner_id' => $user->id],
+                    ['user_id' => $user->id, 'kind' => 'ai'],
+                );
+            }
+
+            if ($clientMessageId !== null) {
+                $existing = $this->existingReply($targetConversation, $user, $clientMessageId, $message);
+                if ($existing !== null) {
+                    return $existing;
+                }
+            }
+
             if ($reportContext !== null || $clearReportContext) {
                 $targetConversation->report_context = $reportContext;
                 $targetConversation->save();
             }
 
             $userMessage = $targetConversation->messages()->create([
+                'sender_id' => $user->id,
+                'client_message_id' => $clientMessageId,
                 'role' => 'user',
                 'content' => $message,
             ]);
             $assistantMessage = $targetConversation->messages()->create([
+                'reply_to_message_id' => $userMessage->id,
                 'role' => 'assistant',
                 'content' => $assistantText,
             ]);
@@ -109,8 +148,37 @@ class ChatConversationService
                 'conversation' => $targetConversation,
                 'user_message' => $userMessage,
                 'assistant_message' => $assistantMessage,
+                'created' => true,
             ];
         });
+    }
+
+    /**
+     * @return array{conversation: ChatConversation, user_message: ChatMessage, assistant_message: ChatMessage, created: false}|null
+     */
+    private function existingReply(ChatConversation $conversation, User $user, string $clientMessageId, string $message): ?array
+    {
+        $userMessage = $conversation->messages()
+            ->where('sender_id', $user->id)
+            ->where('client_message_id', $clientMessageId)
+            ->first();
+
+        if ($userMessage === null) {
+            return null;
+        }
+
+        abort_unless($userMessage->content === $message, 409, 'This message ID was already used for different content.');
+
+        $assistantMessage = $conversation->messages()
+            ->where('reply_to_message_id', $userMessage->id)
+            ->firstOrFail();
+
+        return [
+            'conversation' => $conversation,
+            'user_message' => $userMessage,
+            'assistant_message' => $assistantMessage,
+            'created' => false,
+        ];
     }
 
     /**
