@@ -34,7 +34,11 @@ class AccountSettingsController extends Controller
         abort_if($validated === [] && ! $markReviewed, 422, 'Choose at least one setting to update.');
 
         $user = $request->user();
-        $updates = ['account_preferences_reviewed_at' => now()];
+        $preferenceKeys = array_flip(array_keys(self::DEFAULT_PREFERENCES));
+        $updates = [];
+        if ($markReviewed || array_intersect_key($validated, $preferenceKeys) !== []) {
+            $updates['account_preferences_reviewed_at'] = now();
+        }
         if ($validated !== []) {
             $updates['account_preferences'] = array_merge(
                 self::DEFAULT_PREFERENCES,
@@ -60,6 +64,8 @@ class AccountSettingsController extends Controller
     private function settingsPayload(Request $request): array
     {
         $user = $request->user();
+        $storedPreferences = $user->account_preferences ?? [];
+        unset($storedPreferences['theme']);
 
         return [
             'email' => $user->email,
@@ -67,7 +73,7 @@ class AccountSettingsController extends Controller
             'preferences_reviewed_at' => $user->account_preferences_reviewed_at?->toISOString(),
             'preferences' => array_merge(
                 self::DEFAULT_PREFERENCES,
-                $user->account_preferences ?? [],
+                $storedPreferences,
             ),
         ];
     }

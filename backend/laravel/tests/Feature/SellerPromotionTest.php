@@ -278,7 +278,7 @@ class SellerPromotionTest extends TestCase
 
         $this->actingAs($seller)->post('/api/seller/promotions', [
             ...$this->promotionPayload($listing),
-            'image' => UploadedFile::fake()->image('large.jpg')->size(5121),
+            'image' => UploadedFile::fake()->image('large.jpg')->size(10241),
         ], $headers)->assertUnprocessable()->assertJsonValidationErrors('image');
 
         $this->assertDatabaseCount('seller_promotions', 0);

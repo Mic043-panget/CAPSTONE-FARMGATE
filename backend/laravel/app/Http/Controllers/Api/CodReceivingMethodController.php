@@ -6,12 +6,13 @@ use App\Enums\Role;
 use App\Http\Controllers\Controller;
 use App\Models\CodReceivingMethod;
 use App\Models\CodReceivingMethodHistory;
+use App\Rules\ValidFarmgateImage;
+use App\Services\ImageUploadService;
 use App\Services\PaymentProviderReadinessService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use Throwable;
@@ -67,7 +68,7 @@ class CodReceivingMethodController extends Controller
             'account_holder' => ['required', 'string', 'max:120'],
             'bank_name' => ['required', 'string', 'max:100'],
             'account_number' => ['required', 'string', 'min:5', 'max:40', 'regex:/^[A-Za-z0-9 -]+$/'],
-            'qr' => ['nullable', 'image', 'mimes:jpeg,jpg,png,webp', 'max:5120'],
+            'qr' => ['nullable', 'image', 'mimes:jpeg,jpg,png,webp', 'max:10240', new ValidFarmgateImage],
         ]);
         if (in_array($data['method_type'], ['BANK_QR', 'PAYMONGO_QR'], true) && ! $request->hasFile('qr')) {
             abort(422, 'A bank receiving QR image is required.');
@@ -77,16 +78,8 @@ class CodReceivingMethodController extends Controller
         $mime = null;
         if ($request->hasFile('qr')) {
             $file = $request->file('qr');
-            $extension = $file->guessExtension();
-            abort_if(! $extension, 422, 'The receiving QR image type could not be identified.');
-            $path = 'cod-receiving-qr/'.Str::random(40).'.'.$extension;
+            $path = app(ImageUploadService::class)->storeOptimized($file, 'cod-receiving-qr', 'delivery_proofs', 4096, 96);
             $mime = $file->getMimeType() ?? 'application/octet-stream';
-            try {
-                abort_unless($file->storeAs('cod-receiving-qr', basename($path), 'delivery_proofs') === $path, 500, 'The receiving QR image could not be securely stored.');
-            } catch (Throwable $exception) {
-                Storage::disk('delivery_proofs')->delete($path);
-                throw $exception;
-            }
         }
 
         try {
@@ -177,7 +170,7 @@ class CodReceivingMethodController extends Controller
             'account_holder' => ['sometimes', 'nullable', 'string', 'max:120'],
             'bank_name' => ['sometimes', 'required', 'string', 'max:100'],
             'account_number' => ['sometimes', 'nullable', 'string', 'min:5', 'max:40', 'regex:/^[A-Za-z0-9 -]+$/'],
-            'qr' => ['nullable', 'image', 'mimes:jpeg,jpg,png,webp', 'max:5120'],
+            'qr' => ['nullable', 'image', 'mimes:jpeg,jpg,png,webp', 'max:10240', new ValidFarmgateImage],
             'reason' => ['required', 'string', 'min:8', 'max:1000'],
         ]);
         if (array_key_exists('account_holder', $data) && blank($data['account_holder'])) {
@@ -191,16 +184,8 @@ class CodReceivingMethodController extends Controller
         $mime = null;
         if ($request->hasFile('qr')) {
             $file = $request->file('qr');
-            $extension = $file->guessExtension();
-            abort_unless($extension, 422, 'The receiving QR image type could not be identified.');
-            $path = 'cod-receiving-qr/'.Str::random(40).'.'.$extension;
+            $path = app(ImageUploadService::class)->storeOptimized($file, 'cod-receiving-qr', 'delivery_proofs', 4096, 96);
             $mime = $file->getMimeType() ?? 'application/octet-stream';
-            try {
-                abort_unless($file->storeAs('cod-receiving-qr', basename($path), 'delivery_proofs') === $path, 500, 'The receiving QR image could not be securely stored.');
-            } catch (Throwable $exception) {
-                Storage::disk('delivery_proofs')->delete($path);
-                throw $exception;
-            }
         }
 
         try {

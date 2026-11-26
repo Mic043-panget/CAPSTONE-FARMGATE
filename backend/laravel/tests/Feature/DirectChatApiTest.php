@@ -116,7 +116,7 @@ class DirectChatApiTest extends TestCase
             ->assertOk()
             ->assertJsonCount(1, 'data')
             ->assertJsonPath('data.0.peer.name', $seller->name)
-            ->assertJsonPath('data.0.last_message_preview', $message);
+            ->assertJsonPath('data.0.last_message_preview', \Illuminate\Support\Str::limit($message, 120));
 
         $this->actingAs($buyer)->getJson("/api/chat/conversations/{$conversationId}")
             ->assertOk()

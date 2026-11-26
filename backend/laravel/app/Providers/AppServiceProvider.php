@@ -75,5 +75,14 @@ class AppServiceProvider extends ServiceProvider
                 Limit::perMinute(60)->by('chat-search-ip:'.$request->ip()),
             ];
         });
+
+        RateLimiter::for('ai-listing-search', function (Request $request): array {
+            $userId = $request->user()?->id;
+
+            return [
+                Limit::perMinute(10)->by('ai-listing-search-user:'.($userId ?: $request->ip())),
+                Limit::perMinute(20)->by('ai-listing-search-ip:'.$request->ip()),
+            ];
+        });
     }
 }

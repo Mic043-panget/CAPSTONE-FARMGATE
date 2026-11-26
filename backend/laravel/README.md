@@ -48,6 +48,21 @@ FRONTEND_URL=http://127.0.0.1:5173
 
 If the backend or frontend uses `localhost` instead of `127.0.0.1`, update the redirect URI and `FRONTEND_URL` to match, including the host. Run `php artisan config:clear` after changing `.env`.
 
+## Separate browser and installed PWA sessions
+
+Use `https://farmgates.site` in the regular browser and install the PWA from
+`https://www.farmgates.site`. Keep `SESSION_DOMAIN` unset or `null` and use a
+new `SESSION_COOKIE` name so each hostname has its own authentication cookie.
+After deploying this change, remove the old installed PWA and install it again
+from the `www` hostname.
+
+The Google OAuth client must allow both production callback URIs:
+
+```text
+https://farmgates.site/api/auth/google/callback
+https://www.farmgates.site/api/auth/google/callback
+```
+
 ## PayMongo payments
 
 In PayMongo, use your test-mode secret key while developing and set it in the Laravel backend's `.env`. Never expose the secret key in the React app or commit it.
@@ -61,6 +76,38 @@ FRONTEND_URL=http://127.0.0.1:5173
 Create a webhook in the PayMongo dashboard targeting `https://your-public-backend-host/api/payments/paymongo/webhook`. For local testing, expose the Laravel backend through an HTTPS tunnel and use that tunnel URL. Subscribe to `checkout_session.payment.paid`, `checkout_session.payment.failed`, and `checkout_session.expired`. Copy the webhook's signing secret to `PAYMONGO_WEBHOOK_SECRET`; this is separate from the API secret key. Keep both keys private.
 
 After changing `.env`, run `php artisan config:clear` from `backend/laravel`. Make a test checkout from the React app using GCash or card, complete it with PayMongo's test credentials, and verify the order becomes paid after the webhook arrives. Do not use live keys until test checkout and webhook delivery are confirmed. Online payment is unavailable until `PAYMONGO_SECRET_KEY` is configured.
+
+## Firebase Cloud Messaging web push
+
+Create a Firebase project, register a Web app, enable the Firebase Cloud
+Messaging API, and generate a Web Push certificate key pair in the Firebase
+Console's Cloud Messaging settings. Configure the Laravel server with the Web
+app's public configuration, the VAPID public key, and a service-account JSON
+file that has permission to send FCM messages:
+
+```dotenv
+FIREBASE_PROJECT_ID=your-project-id
+FIREBASE_CREDENTIALS=/etc/farmgate/firebase-service-account.json
+FIREBASE_API_KEY=your-web-api-key
+FIREBASE_AUTH_DOMAIN=your-project-id.firebaseapp.com
+FIREBASE_STORAGE_BUCKET=your-project-id.firebasestorage.app
+FIREBASE_MESSAGING_SENDER_ID=your-sender-id
+FIREBASE_APP_ID=your-web-app-id
+FIREBASE_VAPID_KEY=your-web-push-public-key
+```
+
+Place the service-account JSON at the configured path on the backend host.
+Keep that file private and outside both the repository and public web root;
+never commit it or put service-account data in the frontend. The Firebase web
+app values and VAPID public key are returned by the public push-config
+endpoint; they are not server credentials.
+
+Run `php artisan migrate --force` and `php artisan config:clear`, then restart
+Laravel queue workers so they load the Firebase settings. Push delivery uses
+the existing `notifications` queue. Serve the app over HTTPS (localhost is
+also supported during development) and users can enable device notifications
+from the Notifications page. Existing VAPID Web Push subscriptions continue to
+be delivered; new browser registrations use FCM tokens.
 
 ## Hostinger SMTP email delivery
 
@@ -196,3 +243,71 @@ If you discover a security vulnerability within Laravel, please send an e-mail t
 ## License
 
 The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+
+## Image upload limits
+
+Image inputs may be up to 10 MiB per image and are re-encoded with Intervention
+Image as metadata-free WebP files no larger than 2 MiB. Listing photos are
+compressed in the browser to at most 384 KiB each before upload, allowing five
+photos to fit within a 2 MiB request limit. Other upload endpoints send their
+selected files directly, so keep PHP/web-server `upload_max_filesize` at 10M or
+higher and configure `post_max_size` and any reverse-proxy request-body limit
+for the largest request supported by those endpoints. Verify the effective
+limits for the web PHP SAPI; CLI values do not guarantee the PHP-FPM or hosting
+configuration. The CLI currently reports `2M` and `8M`, which may still be too
+low for other upload endpoints. Do not change production hosting settings
+without authorization.
+
+## Password reset
+
+Password reset requests use Laravel's `users` broker and the configured mail
+transport. Reset links use `FRONTEND_URL`, expire after 60 minutes, and are
+throttled by the broker; keep that URL pointed at the Farmgate React application.
+The response intentionally does not confirm whether an email address belongs to
+an account. Successful resets revoke Sanctum tokens, database sessions, and
+remember-me cookies.
+
+## Isolated Laravel test database
+
+The PHPUnit configuration fixes the test schema to `farmgate_test` and uses the
+dedicated `farmgate_test_runner` account. Provide `APP_KEY`, `DB_HOST`, `DB_PORT`,
+and `DB_PASSWORD` in the ignored `.env.testing` file for a non-production MySQL
+instance. Provision the account with only the schema and migration/data
+privileges needed for `farmgate_test`; do not use production hosts or
+credentials. The runner refuses to start if `.env.testing` is missing and does
+not fall back to `.env`. Run `composer test`; it invokes PHPUnit directly and
+does not clear Laravel's production config cache.
+
+## Seller pickup locations for listings
+
+Sellers must explicitly save a valid map pin in Seller Settings → Pickup
+location before submitting or activating listings. Seller submission, manual
+admin approval, and automated approval all enforce this server-side. Existing
+active listings are not changed or hidden by this rule.
+
+To audit existing active listings that need seller follow-up, run this
+read-only query against the application database:
+
+```sql
+SELECT l.id, l.seller_id, u.name AS seller_name, u.email AS seller_email,
+       p.latitude, p.longitude, p.pickup_location_confirmed
+FROM livestock_listings AS l
+JOIN users AS u ON u.id = l.seller_id
+LEFT JOIN seller_profiles AS p ON p.user_id = l.seller_id
+WHERE l.status = 'ACTIVE'
+  AND (
+      p.user_id IS NULL
+      OR p.deleted_at IS NOT NULL
+      OR p.pickup_location_confirmed = 0
+      OR p.latitude IS NULL
+      OR p.longitude IS NULL
+      OR p.latitude NOT BETWEEN -90 AND 90
+      OR p.longitude NOT BETWEEN -180 AND 180
+      OR (p.latitude = 0 AND p.longitude = 0)
+  )
+ORDER BY l.seller_id, l.id;
+```
+
+Do not bulk-deactivate results. Contact the affected sellers and ask them to
+save their real pickup pin. Handle any later listing status change through the
+existing seller or administrator workflow.

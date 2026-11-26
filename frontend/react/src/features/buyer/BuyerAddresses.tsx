@@ -146,8 +146,11 @@ export function BuyerAddresses({ onError }: { onError: (message: string) => void
                 street_address: current.street_address || result.display_name.slice(0, 255),
             }));
             showSuccess('Location found on the map.');
-        } catch (requestError: any) {
-            const message = requestError.message ?? 'Address search is temporarily unavailable.';
+        } catch (requestError: unknown) {
+            const message = requestError instanceof Error
+                && requestError.message === 'No matching place found. Try a nearby street or landmark.'
+                ? requestError.message
+                : 'Address search is temporarily unavailable. Check your connection and try again.';
             setError(message);
             showError(message);
         } finally {

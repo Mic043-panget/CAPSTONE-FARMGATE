@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
-         bootstrap="vendor/autoload.php"
+         bootstrap="tests/bootstrap.php"
          colors="true"
 >
     <testsuites>
@@ -25,11 +25,8 @@
         <env name="BROADCAST_CONNECTION" value="null"/>
         <env name="CACHE_STORE" value="array"/>
         <env name="DB_CONNECTION" value="mysql" force="true"/>
-        <env name="DB_HOST" value="127.0.0.1" force="true"/>
-        <env name="DB_PORT" value="3306" force="true"/>
         <env name="DB_DATABASE" value="farmgate_test" force="true"/>
-        <env name="DB_USERNAME" value="root" force="true"/>
-        <env name="DB_PASSWORD" value="" force="true"/>
+        <env name="DB_USERNAME" value="farmgate_test_runner" force="true"/>
         <env name="DB_URL" value="" force="true"/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>

@@ -5,6 +5,7 @@ namespace App\Models;
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use App\Contracts\FarmgateNotification;
 use App\Enums\Role;
+use App\Notifications\PasswordResetNotification;
 use App\Services\NotificationDispatchService;
 use Database\Factories\UserFactory;
 use Illuminate\Auth\Passwords\CanResetPassword as CanResetPasswordTrait;
@@ -38,6 +39,18 @@ class User extends Authenticatable implements CanResetPassword, MustVerifyEmail
         }
 
         $this->notifyUsingLaravelChannels($instance);
+    }
+
+    public function sendPasswordResetNotification($token): void
+    {
+        $query = http_build_query([
+            'token' => $token,
+            'email' => $this->getEmailForPasswordReset(),
+        ], '', '&', PHP_QUERY_RFC3986);
+
+        $this->notify(new PasswordResetNotification(
+            rtrim((string) config('services.frontend_url'), '/').'/#reset-password?'.$query,
+        ));
     }
 
     public function sellerProfile(): HasOne

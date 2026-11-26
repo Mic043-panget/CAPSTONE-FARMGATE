@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Models\NotificationDelivery;
 use App\Models\PushSubscription;
 use App\Models\User;
+use App\Services\FirebaseCloudMessagingSender;
 use App\Services\NotificationLinkService;
 use App\Services\WebPushNotificationSender;
 use Illuminate\Bus\Queueable;
@@ -28,8 +29,12 @@ class DeliverFarmgatePushNotification implements ShouldQueue
 
     public function __construct(public int $deliveryId) {}
 
-    public function handle(WebPushNotificationSender $sender): void
-    {
+    public function handle(
+        WebPushNotificationSender $sender,
+        ?FirebaseCloudMessagingSender $firebaseSender = null,
+    ): void {
+        $firebaseSender ??= app(FirebaseCloudMessagingSender::class);
+
         $claim = DB::transaction(function (): ?array {
             $delivery = NotificationDelivery::query()->lockForUpdate()->findOrFail($this->deliveryId);
             if (in_array($delivery->status, ['delivered', 'skipped', 'failed', 'not_subscribed', 'not_configured'], true)) {
@@ -84,27 +89,33 @@ class DeliverFarmgatePushNotification implements ShouldQueue
         $data = json_decode($notification->data, true, 512, JSON_THROW_ON_ERROR);
 
         try {
-            $reports = $sender->send(
-                $subscriptions,
-                [
-                    'title' => $this->title(is_array($data) ? $data : []),
-                    'body' => $this->message(is_array($data) ? $data : []),
-                    'url' => app(NotificationLinkService::class)->for(
-                        $recipient,
-                        is_array($data) ? $data : [],
-                        $delivery->notification_id,
-                    )['url'],
-                    'notification_id' => $delivery->notification_id,
-                ],
-            );
             $successfulEndpoints = [];
             $expiredEndpoints = [];
-            foreach ($reports as $report) {
-                if ($report->isSuccess()) {
-                    $successfulEndpoints[] = hash('sha256', $report->getEndpoint());
-                } elseif ($report->isSubscriptionExpired()) {
-                    $expiredEndpoints[] = hash('sha256', $report->getEndpoint());
+            $payload = [
+                'title' => $this->title(is_array($data) ? $data : []),
+                'body' => $this->message(is_array($data) ? $data : []),
+                'url' => app(NotificationLinkService::class)->for(
+                    $recipient,
+                    is_array($data) ? $data : [],
+                    $delivery->notification_id,
+                )['url'],
+                'notification_id' => $delivery->notification_id,
+            ];
+            $webPushSubscriptions = $subscriptions->where('provider', 'webpush');
+            if ($webPushSubscriptions->isNotEmpty()) {
+                foreach ($sender->send($webPushSubscriptions, $payload) as $report) {
+                    if ($report->isSuccess()) {
+                        $successfulEndpoints[] = hash('sha256', $report->getEndpoint());
+                    } elseif ($report->isSubscriptionExpired()) {
+                        $expiredEndpoints[] = hash('sha256', $report->getEndpoint());
+                    }
                 }
+            }
+            $firebaseSubscriptions = $subscriptions->where('provider', 'fcm');
+            if ($firebaseSubscriptions->isNotEmpty()) {
+                $firebaseReports = $firebaseSender->send($firebaseSubscriptions, $payload);
+                $successfulEndpoints = array_merge($successfulEndpoints, $firebaseReports['successful']);
+                $expiredEndpoints = array_merge($expiredEndpoints, $firebaseReports['expired']);
             }
 
             if ($expiredEndpoints !== []) {
@@ -124,7 +135,7 @@ class DeliverFarmgatePushNotification implements ShouldQueue
 
                 return;
             }
-            if ($expiredEndpoints !== [] && count($expiredEndpoints) === count($reports)) {
+            if ($expiredEndpoints !== [] && count($expiredEndpoints) === $subscriptions->count()) {
                 $delivery->forceFill(['status' => 'not_subscribed', 'last_error' => null])->save();
 
                 return;

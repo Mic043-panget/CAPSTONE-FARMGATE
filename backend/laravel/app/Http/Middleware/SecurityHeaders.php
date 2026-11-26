@@ -15,7 +15,7 @@ class SecurityHeaders
         $response->headers->set('X-Frame-Options', 'SAMEORIGIN');
         $response->headers->set('Referrer-Policy', 'strict-origin-when-cross-origin');
         $response->headers->set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(self)');
-        $response->headers->set('Content-Security-Policy', "default-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self'");
+        $response->headers->set('Content-Security-Policy', "default-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self'; connect-src 'self' https://firebaseinstallations.googleapis.com https://fcmregistrations.googleapis.com");
 
         return $response;
     }

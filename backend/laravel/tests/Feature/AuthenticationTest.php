@@ -4,13 +4,16 @@ namespace Tests\Feature;
 
 use App\Enums\Role;
 use App\Models\User;
+use App\Notifications\PasswordResetNotification;
 use App\Services\SystemSettingsService;
 use Illuminate\Auth\Notifications\VerifyEmail;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Facades\Storage;
 use Laravel\Socialite\Contracts\Provider;
 use Laravel\Socialite\Facades\Socialite;
@@ -246,8 +249,8 @@ class AuthenticationTest extends TestCase
         $provider->shouldReceive('user')->once()->andReturn($googleUser);
         Socialite::shouldReceive('driver')->once()->with('google')->andReturn($provider);
 
-        $this->get('/api/auth/google/callback')
-            ->assertRedirect('http://127.0.0.1:5173/?oauth=success#marketplace');
+        $this->get('https://www.farmgates.site/api/auth/google/callback')
+            ->assertRedirect('https://www.farmgates.site/?oauth=success#marketplace');
 
         $buyer = User::query()->where('email', 'rony@example.com')->firstOrFail();
         $this->assertSame(Role::BUYER, $buyer->role);
@@ -257,11 +260,50 @@ class AuthenticationTest extends TestCase
         $this->getJson('/api/auth/user')->assertOk()->assertJsonPath('user.email_verified_at', $buyer->email_verified_at->toISOString());
     }
 
+    public function test_google_redirect_uses_the_host_that_started_login(): void
+    {
+        config([
+            'services.google.client_id' => 'test-client-id',
+            'services.google.client_secret' => 'test-client-secret',
+        ]);
+        $provider = \Mockery::mock(Provider::class);
+        $provider->shouldReceive('redirect')->once()->andReturn(redirect('https://accounts.google.test/oauth'));
+        Socialite::shouldReceive('driver')->once()->with('google')->andReturn($provider);
+
+        $this->get('https://www.farmgates.site/api/auth/google/redirect')
+            ->assertRedirect('https://accounts.google.test/oauth');
+
+        $this->assertSame('https://www.farmgates.site/api/auth/google/callback', config('services.google.redirect'));
+    }
+
+    public function test_shared_parent_domain_session_cookies_are_cleared_once_per_host(): void
+    {
+        config([
+            'session.cookie' => 'farmgate-session-v2',
+            'session.domain' => null,
+        ]);
+
+        $response = $this->get('https://www.farmgates.site/sanctum/csrf-cookie');
+        $cookies = collect($response->headers->getCookies());
+
+        $this->assertNull($cookies->firstWhere('Name', 'farmgate-session-v2')?->getDomain());
+        $this->assertSame(2, $cookies
+            ->filter(fn ($cookie): bool => in_array($cookie->getName(), ['farmgate-session', 'XSRF-TOKEN'], true)
+                && $cookie->getDomain() === '.farmgates.site'
+                && $cookie->getExpiresTime() < time())
+            ->count());
+        $this->assertSame(1, $cookies
+            ->filter(fn ($cookie): bool => $cookie->getName() === 'farmgate_session_scope_v2' && $cookie->getDomain() === null)
+            ->count());
+    }
+
     public function test_verified_google_callback_links_an_existing_account_without_changing_its_role(): void
     {
         config([
             'services.google.client_id' => 'test-client-id',
             'services.google.client_secret' => 'test-client-secret',
+            'services.frontend_url' => 'http://127.0.0.1:5173',
+            'app.url' => 'http://127.0.0.1:8000',
         ]);
         $seller = User::factory()->create(['email' => 'seller@example.com', 'role' => Role::SELLER]);
         $googleUser = GoogleUser::fake([
@@ -274,7 +316,7 @@ class AuthenticationTest extends TestCase
         $provider->shouldReceive('user')->once()->andReturn($googleUser);
         Socialite::shouldReceive('driver')->once()->with('google')->andReturn($provider);
 
-        $this->get('/api/auth/google/callback')->assertRedirect('http://127.0.0.1:5173/?oauth=success#marketplace');
+        $this->get('http://example.test/api/auth/google/callback')->assertRedirect('http://127.0.0.1:5173/?oauth=success#marketplace');
 
         $this->assertSame('google-seller-456', $seller->fresh()->google_id);
         $this->assertSame(Role::SELLER, $seller->fresh()->role);
@@ -287,6 +329,8 @@ class AuthenticationTest extends TestCase
         config([
             'services.google.client_id' => 'test-client-id',
             'services.google.client_secret' => 'test-client-secret',
+            'services.frontend_url' => 'http://127.0.0.1:5173',
+            'app.url' => 'http://127.0.0.1:8000',
         ]);
         $googleUser = GoogleUser::fake([
             'id' => 'google-unverified-789',
@@ -297,7 +341,7 @@ class AuthenticationTest extends TestCase
         $provider->shouldReceive('user')->once()->andReturn($googleUser);
         Socialite::shouldReceive('driver')->once()->with('google')->andReturn($provider);
 
-        $this->get('/api/auth/google/callback')
+        $this->get('http://example.test/api/auth/google/callback')
             ->assertRedirect('http://127.0.0.1:5173/?oauth=unverified#marketplace');
 
         $this->assertDatabaseMissing('users', ['email' => 'unverified@example.com']);
@@ -344,5 +388,97 @@ class AuthenticationTest extends TestCase
         $this->postJson('/api/auth/forgot-password', ['email' => 'unknown@example.com'])
             ->assertOk()
             ->assertJson(['message' => 'If the account exists, reset instructions have been sent.']);
+    }
+
+    public function test_forgot_password_is_rate_limited(): void
+    {
+        for ($attempt = 0; $attempt < 10; $attempt++) {
+            $this->postJson('/api/auth/forgot-password', ['email' => 'throttled-reset@example.com'])
+                ->assertOk();
+        }
+
+        $this->postJson('/api/auth/forgot-password', ['email' => 'throttled-reset@example.com'])
+            ->assertTooManyRequests();
+    }
+
+    public function test_password_reset_mail_uses_farmgate_template_and_reset_revokes_existing_sessions(): void
+    {
+        Notification::fake();
+        config(['session.driver' => 'database']);
+        $user = User::factory()->create(['email' => 'reset@example.com']);
+        $this->postJson('/api/auth/forgot-password', ['email' => $user->email])
+            ->assertOk()
+            ->assertJson(['message' => 'If the account exists, reset instructions have been sent.']);
+
+        $token = null;
+        Notification::assertSentTo($user, PasswordResetNotification::class, function (PasswordResetNotification $notification) use (&$token, $user): bool {
+            $fragment = (string) parse_url($notification->url, PHP_URL_FRAGMENT);
+            parse_str(substr($fragment, strlen('reset-password?')), $query);
+            $token = $query['token'] ?? null;
+            $mail = $notification->toMail($user);
+
+            return $mail->view === 'emails.farmgate-notification'
+                && $mail->viewData['actionLabel'] === 'Reset password'
+                && str_starts_with($notification->url, 'http://127.0.0.1:5173/#reset-password?')
+                && is_string($token);
+        });
+        $this->assertIsString($token);
+
+        $oldRememberToken = $user->remember_token;
+        $user->createToken('existing-device');
+        DB::table('sessions')->insert([
+            'id' => 'existing-session',
+            'user_id' => $user->id,
+            'payload' => '',
+            'last_activity' => now()->timestamp,
+        ]);
+        $payload = [
+            'email' => $user->email,
+            'token' => $token,
+            'password' => 'new-secure-password',
+            'password_confirmation' => 'new-secure-password',
+        ];
+
+        $this->postJson('/api/auth/reset-password', $payload)
+            ->assertOk()
+            ->assertJson(['message' => 'Password reset successfully.']);
+
+        $this->assertTrue(password_verify('new-secure-password', $user->fresh()->password));
+        $this->assertNotSame($oldRememberToken, $user->fresh()->remember_token);
+        $this->assertDatabaseMissing('personal_access_tokens', ['tokenable_id' => $user->id]);
+        $this->assertDatabaseMissing('sessions', ['id' => 'existing-session']);
+        $this->postJson('/api/auth/reset-password', $payload)->assertUnprocessable();
+    }
+
+    public function test_invalid_password_reset_token_does_not_change_the_password(): void
+    {
+        $user = User::factory()->create(['email' => 'invalid-reset@example.com']);
+
+        $this->postJson('/api/auth/reset-password', [
+            'email' => $user->email,
+            'token' => 'invalid-token',
+            'password' => 'new-secure-password',
+            'password_confirmation' => 'new-secure-password',
+        ])->assertUnprocessable();
+
+        $this->assertTrue(password_verify('password', $user->fresh()->password));
+    }
+
+    public function test_expired_password_reset_token_is_rejected(): void
+    {
+        $user = User::factory()->create(['email' => 'expired-reset@example.com']);
+        $token = Password::createToken($user);
+        DB::table('password_reset_tokens')->where('email', $user->email)->update([
+            'created_at' => now()->subMinutes((int) config('auth.passwords.users.expire') + 1),
+        ]);
+
+        $this->postJson('/api/auth/reset-password', [
+            'email' => $user->email,
+            'token' => $token,
+            'password' => 'new-secure-password',
+            'password_confirmation' => 'new-secure-password',
+        ])->assertUnprocessable();
+
+        $this->assertTrue(password_verify('password', $user->fresh()->password));
     }
 }

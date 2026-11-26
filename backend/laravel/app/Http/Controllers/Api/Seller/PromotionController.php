@@ -9,6 +9,8 @@ use App\Models\AuditLog;
 use App\Models\LivestockListing;
 use App\Models\SellerPromotion;
 use App\Models\User;
+use App\Rules\ValidFarmgateImage;
+use App\Services\ImageUploadService;
 use App\Services\PromotionNotificationService;
 use App\Services\PromotionPricingService;
 use Illuminate\Http\JsonResponse;
@@ -60,7 +62,7 @@ class PromotionController extends Controller
         $data = $this->validated($request);
         $image = $data['image'] ?? null;
         unset($data['image'], $data['remove_image']);
-        $imagePath = $image?->storePublicly('promotion-images', 'public');
+        $imagePath = $image ? app(ImageUploadService::class)->storeOptimized($image, 'promotion-images', 'public') : null;
         if ($image && (! is_string($imagePath) || $imagePath === '')) {
             throw new \RuntimeException('Promotion image storage failed.');
         }
@@ -118,7 +120,7 @@ class PromotionController extends Controller
         $image = $data['image'] ?? null;
         $removeImage = (bool) ($data['remove_image'] ?? false);
         unset($data['image'], $data['remove_image']);
-        $newImagePath = $image?->storePublicly('promotion-images', 'public');
+        $newImagePath = $image ? app(ImageUploadService::class)->storeOptimized($image, 'promotion-images', 'public') : null;
         if ($image && (! is_string($newImagePath) || $newImagePath === '')) {
             throw new \RuntimeException('Promotion image storage failed.');
         }
@@ -359,7 +361,7 @@ class PromotionController extends Controller
         $data = $request->validate([
             'name' => ['required', 'string', 'max:120'],
             'description' => ['nullable', 'string', 'max:2000'],
-            'image' => ['nullable', 'file', 'image', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
+            'image' => ['nullable', 'file', 'image', 'mimes:jpg,jpeg,png,webp', 'max:10240', new ValidFarmgateImage],
             'remove_image' => ['sometimes', 'boolean'],
             'discount_type' => ['required', Rule::in(['PERCENTAGE', 'FIXED'])],
             'discount_value' => ['required', 'numeric', 'decimal:0,2', 'gt:0', 'max:9999999999.99'],

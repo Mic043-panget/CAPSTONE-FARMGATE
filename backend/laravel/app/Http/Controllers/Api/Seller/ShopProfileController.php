@@ -9,6 +9,10 @@ use App\Models\SellerIdentityDocument;
 use App\Models\SellerProfile;
 use App\Models\User;
 use App\Notifications\SellerVerificationStatusNotification;
+use App\Rules\ValidFarmgateImage;
+use App\Services\ImageUploadService;
+use App\Support\FarmgateImage;
+use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -20,7 +24,6 @@ use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
-use Illuminate\Contracts\Encryption\DecryptException;
 
 class ShopProfileController extends Controller
 {
@@ -45,8 +48,9 @@ class ShopProfileController extends Controller
                 'nullable',
                 'image',
                 'mimes:jpeg,jpg,png,webp',
-                'max:4096',
-                'dimensions:min_width=256,min_height=256,max_width=4096,max_height=4096',
+                'max:10240',
+                'dimensions:min_width=256,min_height=256',
+                new ValidFarmgateImage,
             ],
         ]);
         $profile = $seller->sellerProfile()->firstOrCreate([]);
@@ -54,7 +58,7 @@ class ShopProfileController extends Controller
         $newImage = null;
 
         if ($request->hasFile('shop_image')) {
-            $newImage = $request->file('shop_image')->store('seller-shops', 'public');
+            $newImage = app(ImageUploadService::class)->storeOptimized($request->file('shop_image'), 'seller-shops', 'public');
             if (! is_string($newImage) || $newImage === '') {
                 throw new \RuntimeException('The shop image could not be stored.');
             }
@@ -87,35 +91,43 @@ class ShopProfileController extends Controller
         abort_unless($seller?->role === Role::SELLER, 403);
 
         $data = $request->validate([
-            'identity_document' => ['required', 'file', 'mimes:jpeg,jpg,png,pdf', 'max:8192'],
+            'identity_document' => ['required', 'file', 'mimes:jpeg,jpg,png,webp,pdf', 'max:10240', new ValidFarmgateImage(['application/pdf'], 8 * 1024 * 1024)],
         ]);
         $file = $data['identity_document'];
         if (str_starts_with((string) $file->getMimeType(), 'image/')) {
             $dimensions = @getimagesize($file->getRealPath());
-            if (! $dimensions || min($dimensions[0], $dimensions[1]) < 360 || max($dimensions[0], $dimensions[1]) > 8192) {
+            if (! $dimensions || min($dimensions[0], $dimensions[1]) < 360) {
                 throw ValidationException::withMessages([
-                    'identity_document' => 'Use a clear identity document image between 360 and 8192 pixels on each side.',
+                    'identity_document' => 'Use a clear identity document image between 360 and 16384 pixels on each side.',
                 ]);
             }
         }
 
-        $contents = file_get_contents($file->getRealPath());
+        $isImage = FarmgateImage::isImage($file);
+        $contents = $isImage
+            ? app(ImageUploadService::class)->encode($file, 2560, 94)
+            : file_get_contents($file->getRealPath());
         if (! is_string($contents)) {
             throw new \RuntimeException('The identity document could not be read.');
         }
+        $mimeType = $isImage ? 'image/webp' : ($file->getMimeType() ?: 'application/octet-stream');
 
         $path = 'seller/'.$seller->id.'/identity/'.Str::uuid().'.enc';
-        if (! Storage::disk('rider_private')->put($path, Crypt::encryptString($contents))) {
-            throw new \RuntimeException('The encrypted identity document could not be stored.');
+        $disk = Storage::disk('rider_private');
+        if (! $disk->put($path, Crypt::encryptString($contents))) {
+            if ($disk->exists($path) && ! $disk->delete($path)) {
+                report(new \RuntimeException('A partially written seller identity document remains in private storage.'));
+            }
+            abort(503, 'The encrypted identity document could not be stored. Please retry.');
         }
 
-        $disk = Storage::disk('rider_private');
         try {
-            [$profile, $previousPath] = DB::transaction(function () use ($request, $seller, $file, $path): array {
+            [$profile, $previousPath] = DB::transaction(function () use ($request, $seller, $path, $mimeType, $contents): array {
+                $profile = $seller->sellerProfile()->firstOrCreate([]);
                 $profile = SellerProfile::query()
-                    ->where('user_id', $seller->id)
+                    ->whereKey($profile->getKey())
                     ->lockForUpdate()
-                    ->firstOrCreate(['user_id' => $seller->id]);
+                    ->firstOrFail();
                 $document = SellerIdentityDocument::query()
                     ->where('seller_profile_id', $profile->id)
                     ->lockForUpdate()
@@ -126,16 +138,16 @@ class ShopProfileController extends Controller
                 if ($document) {
                     $document->forceFill([
                         'encrypted_path' => $path,
-                        'mime_type' => $file->getMimeType() ?: 'application/octet-stream',
-                        'size' => $file->getSize(),
+                        'mime_type' => $mimeType,
+                        'size' => strlen($contents),
                         'uploaded_at' => $now,
                     ])->save();
                 } else {
                     SellerIdentityDocument::query()->create([
                         'seller_profile_id' => $profile->id,
                         'encrypted_path' => $path,
-                        'mime_type' => $file->getMimeType() ?: 'application/octet-stream',
-                        'size' => $file->getSize(),
+                        'mime_type' => $mimeType,
+                        'size' => strlen($contents),
                         'uploaded_at' => $now,
                     ]);
                 }
@@ -170,8 +182,10 @@ class ShopProfileController extends Controller
             });
         } catch (\Throwable $exception) {
             try {
-                if ($disk->exists($path) && ! $disk->delete($path)) {
-                    report(new \RuntimeException('A failed seller identity document upload remains in private storage.'));
+                foreach ([$path, $path.'.preview'] as $partialPath) {
+                    if ($disk->exists($partialPath) && ! $disk->delete($partialPath)) {
+                        report(new \RuntimeException('A failed seller identity document upload remains in private storage.'));
+                    }
                 }
             } catch (\Throwable $cleanupException) {
                 report($cleanupException);
@@ -180,8 +194,12 @@ class ShopProfileController extends Controller
             throw $exception;
         }
 
-        if ($previousPath && $previousPath !== $path && $disk->exists($previousPath) && ! $disk->delete($previousPath)) {
-            report(new \RuntimeException('A replaced seller identity document could not be removed from private storage.'));
+        if ($previousPath && $previousPath !== $path) {
+            foreach ([$previousPath, $previousPath.'.preview'] as $oldPath) {
+                if ($disk->exists($oldPath) && ! $disk->delete($oldPath)) {
+                    report(new \RuntimeException('A replaced seller identity document could not be removed from private storage.'));
+                }
+            }
         }
 
         return response()->json(['profile' => $this->sellerPayload($profile)], 201);

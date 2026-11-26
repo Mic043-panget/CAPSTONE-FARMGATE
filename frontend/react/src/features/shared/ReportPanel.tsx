@@ -192,6 +192,7 @@ export function ReportPanel({ role, onError, onAnalyze, title, hideTypeSelector 
     const debouncedSearch = useDebouncedValue(reportSearch);
     const isAdminReport = role === 'ADMIN' && ['sales', 'transactions', 'users', 'complaints'].includes(reportType);
     const workspaceReportStyle = adminReportsPage || sellerReportsPage || role === 'RIDER';
+    const supportsAdvancedFilters = isAdminReport || sellerReportsPage || role === 'RIDER';
 
     React.useEffect(() => {
         const refresh = () => {
@@ -241,14 +242,15 @@ export function ReportPanel({ role, onError, onAnalyze, title, hideTypeSelector 
             from: reportFrom || undefined,
             to: reportTo || undefined,
         };
-        if (isAdminReport) {
-            if (reportType === 'sales' || reportType === 'transactions') {
-                filters.order_status = orderStatus || undefined;
-                filters.payment_status = paymentStatus || undefined;
-                if (reportType === 'transactions') filters.payment_method = paymentMethod || undefined;
-                filters.amount_min = amountMin || undefined;
-                filters.amount_max = amountMax || undefined;
-            } else if (reportType === 'users') {
+        if (reportType === 'sales' || reportType === 'transactions') {
+            if (isAdminReport) filters.order_status = orderStatus || undefined;
+            filters.payment_status = paymentStatus || undefined;
+            if (reportType === 'transactions') filters.payment_method = paymentMethod || undefined;
+            filters.amount_min = amountMin || undefined;
+            filters.amount_max = amountMax || undefined;
+            if (!isAdminReport) filters.status = reportStatus || undefined;
+        } else if (isAdminReport) {
+            if (reportType === 'users') {
                 filters.role = userRole || undefined;
                 filters.account_status = accountStatus || undefined;
             } else if (reportType === 'complaints') {
@@ -259,10 +261,7 @@ export function ReportPanel({ role, onError, onAnalyze, title, hideTypeSelector 
         } else {
             filters.status = reportStatus || undefined;
         }
-        if (adminReportsPage) {
-            filters.sort = reportSort;
-            filters.direction = reportDirection;
-        } else if (role === 'RIDER' && reportType === 'deliveries') {
+        if (workspaceReportStyle) {
             filters.sort = reportSort;
             filters.direction = reportDirection;
         }
@@ -348,6 +347,9 @@ export function ReportPanel({ role, onError, onAnalyze, title, hideTypeSelector 
                     ? [['VERIFIED', 'Verified email'], ['UNVERIFIED', 'Unverified email']]
                             : reportType === 'deliveries' && role === 'RIDER'
                                 ? [
+                                    ['PENDING_ASSIGNMENT', 'Pending assignment'],
+                                    ['SEARCHING_FOR_RIDER', 'Searching for rider'],
+                                    ['RIDER_OFFERED', 'Rider offered'],
                                     ['RIDER_ACCEPTED', 'Rider accepted'],
                                     ['PICKUP_PENDING', 'Pickup pending'],
                                     ['PICKED_UP', 'Picked up'],
@@ -355,15 +357,38 @@ export function ReportPanel({ role, onError, onAnalyze, title, hideTypeSelector 
                                     ['DELIVERED', 'Delivered'],
                                     ['FAILED', 'Failed'],
                                     ['CANCELLED', 'Cancelled'],
+                                    ['WAITING_FOR_RIDER', 'Waiting for rider'],
                                 ]
                             : [];
-    const adminSortOptions = reportType === 'sales' || reportType === 'transactions'
+    const reportSortOptions = reportType === 'sales' || reportType === 'transactions'
         ? [
             ['created_at:desc', 'Newest first'],
             ['created_at:asc', 'Oldest first'],
             ['total_amount:desc', 'Amount: high to low'],
             ['total_amount:asc', 'Amount: low to high'],
         ]
+        : reportType === 'listings'
+            ? [
+                ['created_at:desc', 'Newest first'],
+                ['created_at:asc', 'Oldest first'],
+                ['name:asc', 'Name: A to Z'],
+                ['name:desc', 'Name: Z to A'],
+                ['quantity:desc', 'Quantity: high to low'],
+                ['quantity:asc', 'Quantity: low to high'],
+            ]
+            : reportType === 'deliveries'
+                ? [
+                    ['created_at:desc', 'Newest first'],
+                    ['created_at:asc', 'Oldest first'],
+                    ['status:asc', 'Status: A to Z'],
+                    ['status:desc', 'Status: Z to A'],
+                    ...(role === 'RIDER' ? [
+                        ['assigned_at:desc', 'Recently assigned'],
+                        ['assigned_at:asc', 'Earliest assigned'],
+                        ['order_reference:asc', 'Order reference: A to Z'],
+                        ['order_reference:desc', 'Order reference: Z to A'],
+                    ] : []),
+                ]
         : reportType === 'users'
             ? [
                 ['created_at:desc', 'Newest first'],
@@ -836,7 +861,7 @@ export function ReportPanel({ role, onError, onAnalyze, title, hideTypeSelector 
     const reportStart = reportTotal > 0 ? (page - 1) * 15 + 1 : 0;
     const reportEnd = Math.min(page * 15, reportTotal);
 
-    return <section className={`report-panel${workspaceReportStyle ? ' admin-reports-panel' : ''}${sellerReportsPage ? ' seller-reports-panel' : ''}`} aria-label={title ?? 'Reports'}>
+    return <section className={`report-panel${workspaceReportStyle ? ' admin-reports-panel' : ''}${workspaceReportStyle && role !== 'ADMIN' ? ' report-workspace-advanced-filters' : ''}${sellerReportsPage ? ' seller-reports-panel' : ''}`} aria-label={title ?? 'Reports'}>
         <div className="report-heading"><div><p className="eyebrow">Operations</p><h2>{title ?? 'Reports'}</h2></div><div className="report-heading-actions">{['ADMIN', 'SELLER'].includes(role) && <>
             <button className="report-action-button report-action-button--export" type="button" aria-label={exporting ? 'Preparing spreadsheet' : 'Export Excel'} title={exporting ? 'Preparing spreadsheet' : 'Export Excel'} aria-busy={exporting} onClick={() => void exportSpreadsheet()} disabled={exporting || reportLoading || invalidDateRange || invalidAmountRange}>
                 {workspaceReportStyle && <ReportActionIcon name="export" />}<span className="report-action-label">{exporting ? 'Preparing spreadsheet...' : 'Export Excel'}</span>
@@ -847,7 +872,7 @@ export function ReportPanel({ role, onError, onAnalyze, title, hideTypeSelector 
             {adminReportsPage && <button className="report-action-button report-action-button--refresh" type="button" aria-label={adminOverviewLoading || reportLoading ? 'Refreshing report' : 'Refresh'} title="Refresh" aria-busy={adminOverviewLoading || reportLoading} onClick={() => setReportRevision((revision) => revision + 1)} disabled={reportLoading || adminOverviewLoading}>
                 <ReportActionIcon name="refresh" /><span className="report-action-label">Refresh</span>
             </button>}
-        </>}{(onAnalyze || isAdminReport) && <div className="report-analyze-actions">{onAnalyze && <button className="report-action-button report-action-button--analyze" type="button" aria-label="Analyze with AI" title="Analyze with AI" disabled={invalidDateRange || invalidAmountRange} onClick={() => {
+        </>}{(onAnalyze || supportsAdvancedFilters) && <div className="report-analyze-actions">{onAnalyze && <button className="report-action-button report-action-button--analyze" type="button" aria-label="Analyze with AI" title="Analyze with AI" disabled={invalidDateRange || invalidAmountRange} onClick={() => {
             const filters = activeFilters(reportSearch);
             onAnalyze({
                 type: reportType,
@@ -867,7 +892,7 @@ export function ReportPanel({ role, onError, onAnalyze, title, hideTypeSelector 
                 amount_max: typeof filters.amount_max === 'string' ? filters.amount_max : undefined,
                 requestId: Date.now(),
             });
-        }}>{workspaceReportStyle && <ReportActionIcon name="analyze" />}<span className="report-action-label">Analyze with AI</span></button>}{isAdminReport && <button className={`report-clear-filters${adminReportsPage ? ' report-action-button report-action-button--clear' : ''}`} type="button" aria-label={adminReportsPage ? 'Clear filters' : undefined} title={adminReportsPage ? 'Clear filters' : undefined} onClick={clearFilters}>{adminReportsPage && <ReportActionIcon name="clear" />}<span className="report-action-label">Clear filters</span></button>}</div>}</div></div>
+        }}>{workspaceReportStyle && <ReportActionIcon name="analyze" />}<span className="report-action-label">Analyze with AI</span></button>}{supportsAdvancedFilters && <button className={`report-clear-filters${adminReportsPage ? ' report-action-button report-action-button--clear' : ''}`} type="button" aria-label={adminReportsPage ? 'Clear filters' : undefined} title={adminReportsPage ? 'Clear filters' : undefined} onClick={clearFilters}>{adminReportsPage && <ReportActionIcon name="clear" />}<span className="report-action-label">Clear filters</span></button>}</div>}</div></div>
         {adminReportsPage && <section className="report-overview" aria-label="Marketplace overview" aria-busy={adminOverviewLoading}>
             <div className="report-overview-heading"><h3>Marketplace overview</h3><span>Live totals · not affected by report filters</span></div>
             <div className="report-overview-grid">
@@ -910,15 +935,24 @@ export function ReportPanel({ role, onError, onAnalyze, title, hideTypeSelector 
             <label>Start date<input type="date" value={reportFrom} max={reportTo || undefined} onChange={(event) => { setReportFrom(event.target.value); setPage(1); }} /></label>
             <label>End date<input type="date" value={reportTo} min={reportFrom || undefined} onChange={(event) => { setReportTo(event.target.value); setPage(1); }} /></label>
         </div>
-        {isAdminReport && <>
+        {supportsAdvancedFilters && <>
             <details className="report-advanced-filters">
                 <summary>Advanced filters</summary>
                 <div className="report-controls report-advanced-controls">
+                    {workspaceReportStyle && !isAdminReport && <label>Date range<select value="" onChange={(event) => {
+                        if (event.target.value) applyDatePreset(event.target.value as 'today' | '7days' | '30days' | 'month');
+                    }}>
+                        <option value="">Choose range</option>
+                        <option value="today">Today</option>
+                        <option value="7days">Last 7 days</option>
+                        <option value="30days">Last 30 days</option>
+                        <option value="month">This month</option>
+                    </select></label>}
                     {(reportType === 'sales' || reportType === 'transactions') && <>
-                        <label>Order status<select value={orderStatus} onChange={(event) => { setOrderStatus(event.target.value); setPage(1); }}>
+                        {isAdminReport && <label>Order status<select value={orderStatus} onChange={(event) => { setOrderStatus(event.target.value); setPage(1); }}>
                             <option value="">All order statuses</option>
                             {(reportType === 'sales' ? orderStatuses.filter(([value]) => value === 'COMPLETED') : orderStatuses).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                        </select></label>
+                        </select></label>}
                         <label>Payment status<select value={paymentStatus} onChange={(event) => { setPaymentStatus(event.target.value); setPage(1); }}>
                             <option value="">All payment statuses</option>
                             {['PENDING', 'PAID', 'UNPAID', 'FAILED'].map((value) => <option key={value} value={value}>{displayStatus(value)}</option>)}
@@ -953,6 +987,12 @@ export function ReportPanel({ role, onError, onAnalyze, title, hideTypeSelector 
                             <option value="UNRESOLVED">Unresolved</option>
                         </select></label>
                     </>}
+                    {workspaceReportStyle && !adminReportsPage && <label>Sort<select value={selectedAdminSort} onChange={(event) => {
+                        const [sort, direction] = event.target.value.split(':');
+                        setReportSort(sort);
+                        setReportDirection(direction as 'asc' | 'desc');
+                        setPage(1);
+                    }}>{reportSortOptions.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>}
                 </div>
             </details>
         </>}
@@ -967,7 +1007,7 @@ export function ReportPanel({ role, onError, onAnalyze, title, hideTypeSelector 
                 setReportSort(sort);
                 setReportDirection(direction as 'asc' | 'desc');
                 setPage(1);
-            }}>{adminSortOptions.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>}
+            }}>{reportSortOptions.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>}
         </div>
         {reportType === 'deliveries' && proofSummary && <p className="report-count" role="status">Proof recorded: {proofSummary.with_proof} · Delivered without proof: {proofSummary.delivered_without_proof}</p>}
         {reportLoading

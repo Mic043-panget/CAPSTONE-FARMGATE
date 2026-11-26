@@ -4,6 +4,8 @@ import { confirmAction, showSuccess } from '../../lib/alerts';
 import type { User } from '../../shared/types';
 import { SettingsCategoryIcon } from '../shared/SettingsCategoryIcon';
 import { RiderSetupGuide } from './RiderSetupGuide';
+import { ImageUploadPreview, IMAGE_UPLOAD_HINT, imageUploadError } from '../../shared/components/ImageUploadPreview';
+import { FileDropzone } from '../../shared/components/FileDropzone';
 
 type SettingsTab = 'profile' | 'password' | 'delivery' | 'vehicle' | 'payout' | 'notifications' | 'location';
 type PayoutMethod = { method_type: 'BANK' | 'GCASH'; status: string };
@@ -85,11 +87,15 @@ function errorMessage(error: any, fallback: string): string {
     return error.userMessage ?? error.response?.data?.message ?? fallback;
 }
 
-export function RiderAccountSettings({ user, onUserUpdated, onError, onReviewTutorial }: {
+export function RiderAccountSettings({ user, onUserUpdated, onError, onReviewTutorial, setupProgressVisible, setupProgressButtonRef, onToggleSetupProgress, onCloseSetupProgress }: {
     user: User;
     onUserUpdated: (user: User) => void;
     onError: (message: string) => void;
     onReviewTutorial: () => void;
+    setupProgressVisible: boolean;
+    setupProgressButtonRef: React.RefObject<HTMLButtonElement | null>;
+    onToggleSetupProgress: () => void;
+    onCloseSetupProgress: () => void;
 }) {
     const [tab, setTab] = React.useState<SettingsTab>('profile');
     const [name, setName] = React.useState(user.name);
@@ -104,6 +110,7 @@ export function RiderAccountSettings({ user, onUserUpdated, onError, onReviewTut
     const [newPassword, setNewPassword] = React.useState('');
     const [passwordConfirmation, setPasswordConfirmation] = React.useState('');
     const [photoBusy, setPhotoBusy] = React.useState(false);
+    const [photoCandidate, setPhotoCandidate] = React.useState<File | null>(null);
     const [settings, setSettings] = React.useState<RiderSettings | null>(null);
     const [payoutDestination, setPayoutDestination] = React.useState<PayoutDestination | null>(null);
     const [payoutMethods, setPayoutMethods] = React.useState<PayoutMethod[]>([]);
@@ -132,7 +139,6 @@ export function RiderAccountSettings({ user, onUserUpdated, onError, onReviewTut
     const [payoutDestinationLoading, setPayoutDestinationLoading] = React.useState(true);
     const [payoutDestinationMessage, setPayoutDestinationMessage] = React.useState('');
     const [locationPermission, setLocationPermission] = React.useState<'checking' | 'granted' | 'prompt' | 'denied' | 'unsupported'>('checking');
-    const fileInputRef = React.useRef<HTMLInputElement>(null);
 
     React.useEffect(() => {
         setName(user.name);
@@ -305,15 +311,15 @@ export function RiderAccountSettings({ user, onUserUpdated, onError, onReviewTut
         }
     }
 
-    async function updatePhoto(event: React.ChangeEvent<HTMLInputElement>) {
-        const file = event.target.files?.[0];
-        event.target.value = '';
+    async function updatePhoto(file: File | null) {
         if (!file) return;
-        if (!['image/jpeg', 'image/png'].includes(file.type) || file.size > 1024 * 1024) {
-            onError('Choose a JPG or PNG image no larger than 1 MB.');
+        const validationError = imageUploadError(file);
+        if (validationError) {
+            onError(validationError);
             return;
         }
         if (!await confirmAction({ title: 'Update your profile photo?', text: 'The new image will appear on your FarmGate account.', confirmText: 'Update photo' })) return;
+        setPhotoCandidate(file);
         const formData = new FormData();
         formData.append('photo', file);
         setPhotoBusy(true);
@@ -321,6 +327,7 @@ export function RiderAccountSettings({ user, onUserUpdated, onError, onReviewTut
             await initializeCsrf();
             const response = await api.post<{ user: User }>('/api/profile/photo', formData);
             onUserUpdated(response.data.user);
+            setPhotoCandidate(null);
             setNotice('Profile photo updated.');
             showSuccess('Profile photo updated.');
         } catch (requestError: any) {
@@ -380,13 +387,14 @@ export function RiderAccountSettings({ user, onUserUpdated, onError, onReviewTut
         setVehicleFields((current) => ({ ...current, [field]: value }));
     }
 
-    function validVehicleFiles(files: FileList | null, imagesOnly: boolean): File[] | null {
-        const selected = Array.from(files ?? []);
-        const allowed = imagesOnly ? ['image/jpeg', 'image/png', 'image/webp'] : ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
-        if (selected.some((file) => !allowed.includes(file.type) || file.size > 10 * 1024 * 1024)) {
-            onError(imagesOnly
-                ? 'Vehicle photos must be JPEG, PNG, or WebP images no larger than 10 MB.'
-                : 'Documents must be JPEG, PNG, WebP, or PDF files no larger than 10 MB.');
+    function validVehicleFiles(selected: File[], imagesOnly: boolean): File[] | null {
+        const invalid = selected.find((file) => file.type === 'application/pdf'
+            ? imagesOnly || file.size > 10 * 1024 * 1024
+            : Boolean(imageUploadError(file)));
+        if (invalid) {
+            onError(invalid.type === 'application/pdf'
+                ? 'PDF documents must be 10 MB or smaller.'
+                : imageUploadError(invalid) ?? 'Choose a supported image.');
             return null;
         }
         return selected;
@@ -517,12 +525,22 @@ export function RiderAccountSettings({ user, onUserUpdated, onError, onReviewTut
                 <span className="settings-page-icon"><SettingsCategoryIcon name="rider" /></span>
                 <div><p className="eyebrow">Rider portal settings</p><h2 id="rider-account-settings-title">Account settings</h2></div>
             </div>
+            <button
+                ref={setupProgressButtonRef}
+                type="button"
+                className="seller-inline-action settings-setup-progress-button"
+                aria-controls="rider-setup-progress"
+                aria-expanded={setupProgressVisible}
+                onClick={onToggleSetupProgress}
+            >{setupProgressVisible ? 'Hide setup progress' : 'View setup progress'}</button>
         </header>
         <p className="rider-settings-intro">Only your signed-in account can view and update these settings. Changes to phone number require verification.</p>
         {notice && <p className="rider-settings-notice" role="status">{notice}</p>}
         <RiderSetupGuide
             user={user}
             refreshKey={setupRefreshKey}
+            progressVisible={setupProgressVisible}
+            onCloseProgress={onCloseSetupProgress}
             onOpenSection={(section, focusTarget = true, targetId) => {
                 setTab(section);
                 if (focusTarget) {
@@ -556,12 +574,11 @@ export function RiderAccountSettings({ user, onUserUpdated, onError, onReviewTut
                 <RiderSettingsHeading icon="account" eyebrow="Rider account" title="Profile & contact" description="Manage your account details and verified contact information." />
                 <div className="rider-profile-header">
                     <div className="rider-profile-avatar">{photoUrl ? <img src={photoUrl} alt={`${user.name}'s profile`} /> : <span aria-label="Default profile image" role="img">{user.name.slice(0, 1).toUpperCase()}</span>}</div>
+                    <ImageUploadPreview file={photoCandidate} alt="Selected rider profile photo preview" />
                     <div><p className="eyebrow">Rider profile</p><h3>{user.name}</h3><p>{user.role} · {settings?.is_verified ? 'Verified rider' : 'Verification pending'}</p></div>
                     <div className="rider-photo-actions">
-                        <button type="button" className="seller-inline-action" disabled={photoBusy} onClick={() => fileInputRef.current?.click()}>{photoBusy ? 'Updating…' : 'Change photo'}</button>
+                        <FileDropzone label="Profile photo" accept="image/jpeg,image/png,image/webp" disabled={photoBusy} buttonLabel={photoBusy ? 'Updating…' : 'Change photo'} onFiles={(files) => void updatePhoto(files[0] ?? null)} helperText={IMAGE_UPLOAD_HINT} />
                         {photoUrl && <button type="button" className="seller-text-action" disabled={photoBusy} onClick={() => void removePhoto()}>Remove photo</button>}
-                        <input ref={fileInputRef} className="sr-only" type="file" accept="image/jpeg,image/png" onChange={(event) => void updatePhoto(event)} />
-                        <small>JPG or PNG · up to 1 MB</small>
                     </div>
                 </div>
                 <form className="seller-account-form rider-profile-form" onSubmit={(event) => void saveProfile(event)}>
@@ -628,9 +645,9 @@ export function RiderAccountSettings({ user, onUserUpdated, onError, onReviewTut
                 <label>Color<input maxLength={60} required value={vehicleFields.vehicle_color} onChange={(event) => updateVehicleField('vehicle_color', event.target.value)} /></label>
                 <label>Driver license expiry<input type="date" min={new Date().toISOString().slice(0, 10)} required value={vehicleFields.license_expires_on} onChange={(event) => updateVehicleField('license_expires_on', event.target.value)} /></label>
                 <label>OR/CR expiry<input type="date" min={new Date().toISOString().slice(0, 10)} required value={vehicleFields.vehicle_registration_expires_on} onChange={(event) => updateVehicleField('vehicle_registration_expires_on', event.target.value)} /></label>
-                <label>Replacement driver license<input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" onChange={(event) => { const files = validVehicleFiles(event.currentTarget.files, false); if (files?.[0]) setVehicleLicense(files[0]); event.currentTarget.value = ''; }} /><small>Why required: verify current license details. JPEG, PNG, WebP, or PDF, up to 10 MB. {vehicleLicense?.name}</small></label>
-                <label>Current OR/CR<input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" onChange={(event) => { const files = validVehicleFiles(event.currentTarget.files, false); if (files?.[0]) setVehicleRegistration(files[0]); event.currentTarget.value = ''; }} /><small>Why required: verify current registration. JPEG, PNG, WebP, or PDF, up to 10 MB. {vehicleRegistration?.name}</small></label>
-                <label>Vehicle photos<input type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={(event) => { const files = validVehicleFiles(event.currentTarget.files, true); if (files?.length) { if (files.length + vehiclePhotos.length > 5) onError('Upload no more than 5 vehicle photos.'); else setVehiclePhotos((current) => [...current, ...files]); } event.currentTarget.value = ''; }} /><small>1 to 5 clear JPEG, PNG, or WebP photos, up to 10 MB each.</small>{vehiclePhotos.map((file, index) => <span className="rider-vehicle-photo-file" key={`${file.name}-${index}`}>{file.name}<button type="button" className="seller-text-action" onClick={() => setVehiclePhotos((current) => current.filter((_, fileIndex) => fileIndex !== index))}>Remove</button></span>)}</label>
+                <div><FileDropzone label="Replacement driver license" accept="image/jpeg,image/png,image/webp,application/pdf" onFiles={(selected) => { const files = validVehicleFiles(selected, false); if (files?.[0]) setVehicleLicense(files[0]); }} helperText={`Why required: verify current license details. Images: ${IMAGE_UPLOAD_HINT} PDF: up to 10 MB. ${vehicleLicense?.name ?? ''}`} /><ImageUploadPreview file={vehicleLicense} alt="Selected replacement driver license preview" /></div>
+                <div><FileDropzone label="Current OR/CR" accept="image/jpeg,image/png,image/webp,application/pdf" onFiles={(selected) => { const files = validVehicleFiles(selected, false); if (files?.[0]) setVehicleRegistration(files[0]); }} helperText={`Why required: verify current registration. Images: ${IMAGE_UPLOAD_HINT} PDF: up to 10 MB. ${vehicleRegistration?.name ?? ''}`} /><ImageUploadPreview file={vehicleRegistration} alt="Selected vehicle registration preview" /></div>
+                <div><FileDropzone label="Vehicle photos" accept="image/jpeg,image/png,image/webp" multiple onFiles={(selected) => { const files = validVehicleFiles(selected, true); if (files?.length) { if (files.length + vehiclePhotos.length > 5) onError('Upload no more than 5 vehicle photos.'); else setVehiclePhotos((current) => [...current, ...files]); } }} helperText={`1 to 5 clear photos; ${IMAGE_UPLOAD_HINT}`} />{vehiclePhotos.map((file, index) => <span className="rider-vehicle-photo-file" key={`${file.name}-${index}`}>{file.name}<button type="button" className="seller-text-action" onClick={() => setVehiclePhotos((current) => current.filter((_, fileIndex) => fileIndex !== index))}>Remove</button><ImageUploadPreview file={file} alt={`Vehicle photo ${index + 1} preview`} /></span>)}</div>
                 {settings?.pending_vehicle_change?.status !== 'PENDING' && <button className="seller-inline-action" type="submit" disabled={settingsBusy}>{settingsBusy ? 'Submitting…' : 'Submit vehicle update'}</button>}
                 </form>
             </section>

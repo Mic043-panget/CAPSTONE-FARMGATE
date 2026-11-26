@@ -79,7 +79,7 @@ export function SellerShopPage({ sellerId, onOpenListing, onMessageSeller, onBac
             if (current === requestId.current) setShop(data);
         }).catch((requestError: any) => {
             if (current !== requestId.current) return;
-            const message = requestError.userMessage ?? 'This seller shop could not be loaded.';
+            const message = requestError.userMessage ?? 'This seller farm could not be loaded.';
             setError(message);
             onError(message);
         }).finally(() => {
@@ -94,17 +94,17 @@ export function SellerShopPage({ sellerId, onOpenListing, onMessageSeller, onBac
         window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
-    const sellerName = shop?.seller.shop_name?.trim() || shop?.seller.business_name?.trim() || shop?.seller.name || 'Seller shop';
+    const sellerName = shop?.seller.shop_name?.trim() || shop?.seller.business_name?.trim() || shop?.seller.name || 'Seller farm';
 
     return <main className="seller-shop-page" aria-labelledby="seller-shop-title">
         <button className="product-back-link" type="button" onClick={onBack}>← Back to livestock</button>
-        {loading && (!shop || shop.seller.id !== sellerId) ? <p className="seller-shop-state" role="status">Loading seller shop…</p>
+        {loading && (!shop || shop.seller.id !== sellerId) ? <p className="seller-shop-state" role="status">Loading seller farm…</p>
             : error && (!shop || shop.seller.id !== sellerId) ? <div className="seller-shop-state seller-shop-error" role="alert"><p>{error}</p><button type="button" onClick={() => setRetry((value) => value + 1)}>Try again</button></div>
                 : shop && shop.seller.id === sellerId && <>
                     <header className="seller-shop-header">
                         <div className="seller-shop-avatar" aria-hidden="true">{shop.seller.shop_image_url ? <img src={shop.seller.shop_image_url} alt="" /> : sellerName.slice(0, 1).toUpperCase()}</div>
                         <div className="seller-shop-profile">
-                            <p className="eyebrow">Farmgate seller shop</p>
+                            <p className="eyebrow">Farmgate seller farm</p>
                             <h1 id="seller-shop-title">{sellerName}</h1>
                             {sellerName !== shop.seller.name && <p className="seller-shop-owner">Seller: {shop.seller.name}</p>}
                             {shop.seller.is_verified && <span className="seller-shop-verified">Verified seller</span>}
@@ -128,7 +128,7 @@ export function SellerShopPage({ sellerId, onOpenListing, onMessageSeller, onBac
                     <section className="seller-shop-listings" aria-labelledby="seller-shop-listings-title">
                         <div className="seller-shop-section-heading"><div><p className="eyebrow">Available from this seller</p><h2 id="seller-shop-listings-title">Livestock listings</h2></div><span aria-live="polite">{shop.listings.total} {shop.listings.total === 1 ? 'listing' : 'listings'}</span></div>
                         <div className="seller-shop-tools">
-                            <label className="search-field"><span className="sr-only">Search seller listings</span><input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Search this shop" /></label>
+                            <label className="search-field"><span className="sr-only">Search seller listings</span><input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Search this farm" /></label>
                             <label>Category<select value={categoryId} onChange={(event) => { setCategoryId(event.target.value); setPage(1); }}><option value="">All categories</option>{shop.categories.map((category) => <option value={category.id} key={category.id}>{category.name}</option>)}</select></label>
                             <label>Sort by<select value={sort} onChange={(event) => { setSort(event.target.value); setPage(1); }}><option value="newest">Newest</option><option value="oldest">Oldest</option><option value="price_asc">Price: low to high</option><option value="price_desc">Price: high to low</option><option value="popular">Popular</option></select></label>
                         </div>

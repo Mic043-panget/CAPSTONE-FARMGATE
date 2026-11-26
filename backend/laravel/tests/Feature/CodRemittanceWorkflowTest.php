@@ -160,7 +160,7 @@ class CodRemittanceWorkflowTest extends TestCase
             ->assertJsonPath('seller_payouts_pending.count', 0)
             ->assertJsonPath('paymongo_payouts_enabled', false);
         $proofUrl = $this->getJson('/api/admin/cod/remittances')->json('remittances.data.0.collections.0.proof_url');
-        $this->get($proofUrl)->assertOk()->assertHeader('Content-Type', 'image/png');
+        $this->get($proofUrl)->assertOk()->assertHeader('Content-Type', 'image/webp');
         $this->actingAs($admin)
             ->postJson('/api/admin/cod/remittances/'.$remittance->id.'/reconcile', [
                 'received_amount_cents' => 9500,

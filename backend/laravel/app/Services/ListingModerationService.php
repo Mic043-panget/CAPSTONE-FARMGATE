@@ -14,7 +14,10 @@ use Throwable;
 
 class ListingModerationService
 {
-    public function __construct(private readonly ListingModerationProvider $provider) {}
+    public function __construct(
+        private readonly ListingModerationProvider $provider,
+        private readonly SellerPickupLocationService $pickupLocations,
+    ) {}
 
     public function moderate(int $listingId): void
     {
@@ -170,14 +173,17 @@ class ListingModerationService
                 }
             }
 
-            $autoApprove = $autoApproveCandidate && $this->sellerHasApprovalCapacity($listing);
+            $hasPickupLocation = ! $autoApproveCandidate || $this->pickupLocations->hasValidLocation($listing->seller_id, true);
+            $autoApprove = $autoApproveCandidate && $hasPickupLocation && $this->sellerHasApprovalCapacity($listing);
             $applied = $autoApprove || $autoReject;
             $finalStatus = $autoApprove
                 ? ListingStatus::ACTIVE
                 : ($autoReject ? ListingStatus::REJECTED : ListingStatus::PENDING_REVIEW);
 
             if ($autoApproveCandidate && ! $autoApprove) {
-                array_unshift($reasons, 'Seller has reached the configured active-listing limit.');
+                array_unshift($reasons, $hasPickupLocation
+                    ? 'Seller has reached the configured active-listing limit.'
+                    : SellerPickupLocationService::REQUIRED_MESSAGE);
             }
             if (! $applied && $reasons === []) {
                 $reasons[] = 'The listing did not meet all automatic approval checks.';

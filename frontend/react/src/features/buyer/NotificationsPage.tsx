@@ -115,6 +115,9 @@ function notificationContent(notification: AppNotification, role: 'BUYER' | 'SEL
     if (notification.data.type === 'review_moderation_updated') {
         return { title: `Review moderation · ${notification.data.review_reference ?? 'Review'}`, message: notification.data.message ?? 'Your review was reviewed by admin.' };
     }
+    if (notification.data.type === 'seller_review_report_status') {
+        return { title: `Review report · ${notification.data.review_reference ?? 'Review'}`, message: notification.data.message ?? 'There is an update to your review report.' };
+    }
     if (notification.data.type === 'rider_application_status') {
         const reference = notification.data.vehicle_reference ?? notification.data.application_reference ?? 'Rider application';
         return { title: reference, message: notification.data.message ?? 'Your rider application status has changed.' };

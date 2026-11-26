@@ -77,6 +77,32 @@ export function WorkspaceMobileHeader({
     </>;
 }
 
+type WorkspaceNotificationsButtonProps = {
+    count: number;
+    active: boolean;
+    onClick: () => void;
+};
+
+export function WorkspaceNotificationsButton({ count, active, onClick }: WorkspaceNotificationsButtonProps) {
+    const label = count > 0
+        ? `Notifications, ${navigationBadgeLabel(count, 'unread notification', 'unread notifications')}`
+        : 'Notifications';
+
+    return <button
+        className={`workspace-notifications-header-link${active ? ' active' : ''}`}
+        type="button"
+        aria-label={label}
+        aria-current={active ? 'page' : undefined}
+        title={label}
+        onClick={onClick}
+    >
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none">
+            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        <NavigationBadge count={count} />
+    </button>;
+}
+
 type WorkspaceAccountControlProps = {
     role: WorkspaceRole;
     userName: string;

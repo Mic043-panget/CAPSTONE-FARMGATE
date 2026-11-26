@@ -194,7 +194,7 @@ class NotificationDispatchService
         if ($preference !== null && ! $recipient->accountPreferenceEnabled($preference)) {
             return 'skipped';
         }
-        if (! WebPushNotificationSender::isConfigured()) {
+        if (! FirebaseCloudMessagingSender::isConfigured() && ! WebPushNotificationSender::isConfigured()) {
             return 'not_configured';
         }
         if (! $recipient->pushSubscriptions()->exists()) {

@@ -2,6 +2,8 @@ import React from 'react';
 import api from '../../lib/api';
 import { confirmAction } from '../../lib/alerts';
 import { Pagination } from '../../shared/components/Pagination';
+import { ImageUploadPreview, IMAGE_UPLOAD_HINT, imageUploadError } from '../../shared/components/ImageUploadPreview';
+import { FileDropzone } from '../../shared/components/FileDropzone';
 
 type Earning = {
     id: number;
@@ -259,7 +261,19 @@ export function RiderPayouts({ onError }: { onError: (message: string) => void }
                     <label>External transfer reference<input required minLength={4} maxLength={120} value={manualForm.reference} onChange={(event) => setManualForm({ ...manualForm, reference: event.target.value })} /></label>
                     <label>Transferred amount (PHP)<input required type="number" min="0.01" step="0.01" value={manualForm.amount} onChange={(event) => setManualForm({ ...manualForm, amount: event.target.value })} /></label>
                     <label>Transfer date<input required type="date" max={new Date().toISOString().slice(0, 10)} value={manualForm.date} onChange={(event) => setManualForm({ ...manualForm, date: event.target.value })} /></label>
-                    <label>Private transfer receipt<input required type="file" accept="image/jpeg,image/png,image/webp,application/pdf" onChange={(event) => setManualForm({ ...manualForm, receipt: event.target.files?.[0] ?? null })} /></label>
+                    <div><FileDropzone label="Private transfer receipt" accept="image/jpeg,image/png,image/webp,application/pdf" required onFiles={(files) => {
+                        const selected = files[0] ?? null;
+                        const validationError = selected
+                            ? selected.type === 'application/pdf'
+                                ? selected.size > 10 * 1024 * 1024 ? 'PDF receipts must be 10 MB or smaller.' : null
+                                : imageUploadError(selected)
+                            : null;
+                        if (validationError) {
+                            onError(validationError);
+                            return;
+                        }
+                        setManualForm({ ...manualForm, receipt: selected });
+                    }} helperText={`Private receipt: ${IMAGE_UPLOAD_HINT} PDF up to 10 MB.`} /><ImageUploadPreview file={manualForm.receipt} alt="Selected payout receipt preview" /></div>
                     <label>Independent confirmation reason<textarea required minLength={8} maxLength={500} value={manualForm.reason} onChange={(event) => setManualForm({ ...manualForm, reason: event.target.value })} /></label>
                     <button className="seller-inline-action" type="submit" disabled={busy}>{busy ? 'Recording…' : 'Confirm external payment'}</button>
                     <button className="payments-text-button" type="button" onClick={() => setManualForm(null)}>Cancel</button>

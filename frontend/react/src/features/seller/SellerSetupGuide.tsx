@@ -3,6 +3,7 @@ import api from '../../lib/api';
 import { AccountSetupProgress, type AccountSetupGroup, type AccountSetupStatus } from '../../shared/components/AccountSetupChecklist';
 import { GuidedWalkthrough, type GuidedWalkthroughStep } from '../../shared/components/GuidedWalkthrough';
 import type { User } from '../../shared/types';
+import { hasValidPickupCoordinates, hasValidSavedPickupLocation } from './pickupLocation';
 
 type SellerProfile = {
     business_name: string | null;
@@ -40,8 +41,8 @@ const sellerTourSteps: GuidedWalkthroughStep[] = [
         targetSelectors: ['#seller-settings-panel-profile', '#seller-settings-tab-profile'],
     },
     {
-        title: 'Shop profile',
-        description: 'Set the shop name, image, and public business information buyers see on your storefront. Identity verification is handled separately and requires admin review.',
+        title: 'Farm profile',
+        description: 'Set the farm name, image, and public business information buyers see on your farm page. Identity verification is handled separately and requires admin review.',
         targetSelectors: ['#seller-settings-panel-shop', '#seller-settings-tab-shop'],
     },
     {
@@ -90,9 +91,11 @@ function payoutStatus(destination: PayoutDestination): AccountSetupStatus {
     return 'In progress';
 }
 
-export function SellerSetupGuide({ user, refreshKey, onOpenSection }: {
+export function SellerSetupGuide({ user, refreshKey, progressVisible, onCloseProgress, onOpenSection }: {
     user: User;
     refreshKey: number;
+    progressVisible: boolean;
+    onCloseProgress: () => void;
     onOpenSection: (section: SettingsSection, focusTarget?: boolean) => void;
 }) {
     const [data, setData] = React.useState<SetupData | null>(null);
@@ -140,14 +143,24 @@ export function SellerSetupGuide({ user, refreshKey, onOpenSection }: {
         }
     }
 
-    if (loading || error || !data) return <AccountSetupProgress
-        title="Seller setup"
-        groups={[]}
-        loading={loading}
-        error={error || (!data ? 'Saved setup data is unavailable. Try again.' : '')}
-        onRetry={() => void refresh()}
-        onReviewTutorial={() => setTourOpen(true)}
-    />;
+    if (loading || error || !data) return <>
+        <AccountSetupProgress
+            id="seller-setup-progress"
+            hidden={!progressVisible}
+            title="Seller setup"
+            groups={[]}
+            loading={loading}
+            error={error || (!data ? 'Saved setup data is unavailable. Try again.' : '')}
+            onRetry={() => void refresh()}
+            onReviewTutorial={() => setTourOpen(true)}
+        />
+        <GuidedWalkthrough
+            open={tourOpen}
+            steps={sellerTourSteps}
+            onStepChange={(index) => onOpenSection(sellerTourSections[index], false)}
+            onClose={() => setTourOpen(false)}
+        />
+    </>;
 
     const profileComplete = Boolean(
         user.name.trim()
@@ -189,10 +202,10 @@ export function SellerSetupGuide({ user, refreshKey, onOpenSection }: {
                 },
                 {
                     id: 'shop-profile',
-                    title: 'Shop profile',
-                    description: 'Add a shop name, shop picture, and business information for your public storefront.',
+                    title: 'Farm profile',
+                    description: 'Add a farm name, farm picture, and business information for your public farm page.',
                     status: stepStatus(shopComplete, shopStarted),
-                    actionLabel: 'Open shop profile',
+                    actionLabel: 'Open farm profile',
                     onAction: () => onOpenSection('shop'),
                 },
                 {
@@ -239,13 +252,13 @@ export function SellerSetupGuide({ user, refreshKey, onOpenSection }: {
                 {
                     id: 'pickup-location',
                     title: 'Pickup location',
-                    description: data.profile.pickup_location_confirmed
-                        ? 'Your pickup location has been saved and confirmed.'
-                        : data.profile.latitude !== null && data.profile.longitude !== null
-                            ? 'A location is saved but not confirmed. Confirm and save it from the map.'
-                            : 'Set your pickup pin on the map and save it to confirm the collection point.',
+                    description: hasValidSavedPickupLocation(data.profile)
+                        ? 'Your pickup location has been saved and confirmed. A valid saved pin is required before a listing can be submitted or activated.'
+                        : hasValidPickupCoordinates(data.profile.latitude, data.profile.longitude)
+                            ? 'A location pin is saved but not confirmed. Confirm and save it from the map before submitting or activating listings.'
+                            : 'Set your pickup pin on the map and save it to confirm the collection point before submitting or activating listings.',
                     status: stepStatus(
-                        Boolean(data.profile.pickup_location_confirmed && data.profile.latitude !== null && data.profile.longitude !== null),
+                        hasValidSavedPickupLocation(data.profile),
                         data.profile.latitude !== null || data.profile.longitude !== null,
                     ),
                     actionLabel: 'Open pickup location',
@@ -282,6 +295,9 @@ export function SellerSetupGuide({ user, refreshKey, onOpenSection }: {
 
     return <>
         <AccountSetupProgress
+            id="seller-setup-progress"
+            hidden={!progressVisible}
+            onClose={onCloseProgress}
             title="Seller setup"
             groups={groups}
             loading={false}

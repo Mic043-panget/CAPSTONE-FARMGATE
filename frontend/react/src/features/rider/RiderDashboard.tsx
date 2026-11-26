@@ -16,12 +16,15 @@ import type { User } from '../../shared/types';
 import { SystemCalendar } from '../shared/SystemCalendar';
 import { LoadingSkeleton } from '../../shared/components/LoadingSkeleton';
 import { RiderEarningsPage } from './RiderEarningsPage';
-import { WorkspaceAccountControl, WorkspaceMobileHeader, useWorkspaceMobileMenu } from '../shared/WorkspaceMobileHeader';
+import { WorkspaceAccountControl, WorkspaceMobileHeader, WorkspaceNotificationsButton, useWorkspaceMobileMenu } from '../shared/WorkspaceMobileHeader';
 import { WorkspaceBannerArtwork } from '../shared/WorkspaceBannerArtwork';
 import { RiderDeliveryTutorial } from './RiderDeliveryTutorial';
 import { RoleMobileBottomNavigation } from '../shared/RoleMobileBottomNavigation';
 import { FarmgateBrand } from '../shared/FarmgateBrand';
 import { WorkspaceSidebarIcon } from '../shared/WorkspaceSidebarIcon';
+import { ImageUploadPreview, IMAGE_UPLOAD_HINT, imageUploadError } from '../../shared/components/ImageUploadPreview';
+import { FileDropzone } from '../../shared/components/FileDropzone';
+import { compressDeliveryProofImage } from '../../shared/imageCompression';
 
 const NearbyOrdersMap = React.lazy(() => import('./NearbyOrdersMap').then((module) => ({ default: module.NearbyOrdersMap })));
 
@@ -209,9 +212,18 @@ function CodCollectionAction({ delivery, onSaved }: { delivery: RiderDelivery; o
                         <label>Cash received (PHP)
                             <input type="number" min="0.01" step="0.01" inputMode="decimal" required value={amount} onChange={(event) => setAmount(event.target.value)} />
                         </label>
-                        <label><span><RiderDeliveryIcon name="photo" />Handover record photo</span>
-                            <input type="file" accept="image/jpeg,image/png,image/webp" required onChange={(event) => setProof(event.target.files?.[0] ?? null)} />
-                        </label>
+                        <div><FileDropzone label="Handover record photo" accept="image/jpeg,image/png,image/webp" required onFiles={(files) => {
+                                const selected = files[0] ?? null;
+                                const validationError = selected ? imageUploadError(selected) : null;
+                                if (validationError) {
+                                    setError(validationError);
+                                    return;
+                                }
+                                setError('');
+                                setProof(selected);
+                            }} helperText={IMAGE_UPLOAD_HINT} />
+                        <ImageUploadPreview file={proof} alt="Selected cash handover photo preview" />
+                        </div>
                         <button type="submit" className="seller-inline-action" disabled={busy}>{busy ? 'Saving collection…' : 'Record cash received'}</button>
                     </form>}
         {message && <p role="status" aria-live="polite">{message}</p>}
@@ -304,7 +316,6 @@ function RiderRemittancePanel({ onSubmitted }: { onSubmitted: () => void }) {
     const [transactionReference, setTransactionReference] = React.useState(newCodTransferReference);
     const [proof, setProof] = React.useState<File | null>(null);
     const busyRef = React.useRef(false);
-    const proofInputRef = React.useRef<HTMLInputElement>(null);
 
     const selectedMethod = methods.find((method) => String(method.id) === methodChoice);
     const methodType = selectedMethod?.method_type ?? 'CASH_HANDOVER';
@@ -371,6 +382,10 @@ function RiderRemittancePanel({ onSubmitted }: { onSubmitted: () => void }) {
             setError('Choose a JPEG, PNG, or WebP image for remittance proof.');
             return;
         }
+        if (proof && imageUploadError(proof)) {
+            setError(imageUploadError(proof) ?? 'Choose a supported image.');
+            return;
+        }
         busyRef.current = true;
         setBusy(true);
         setError('');
@@ -394,7 +409,6 @@ function RiderRemittancePanel({ onSubmitted }: { onSubmitted: () => void }) {
             setReceiverName('');
             setTransactionReference(newCodTransferReference());
             setProof(null);
-            if (proofInputRef.current) proofInputRef.current.value = '';
             await refresh();
             onSubmitted();
         } catch (requestError: any) {
@@ -451,12 +465,18 @@ function RiderRemittancePanel({ onSubmitted }: { onSubmitted: () => void }) {
                     <input id="rider-cod-reference" type="text" maxLength={120} required value={transactionReference} onChange={(event) => setTransactionReference(event.target.value)} disabled={busy} />
                     <small>Use this Farmgate reference in your bank transfer description. You can replace it with a bank-provided transaction reference.</small>
                 </label>}
-            <label htmlFor="rider-cod-proof">Remittance proof {isElectronic ? '(required)' : '(optional)'}
-                <input ref={proofInputRef} id="rider-cod-proof" type="file" accept="image/jpeg,image/png,image/webp" required={isElectronic} onChange={(event) => {
-                    setProof(event.target.files?.[0] ?? null);
+            <div><FileDropzone label={`Remittance proof ${isElectronic ? '(required)' : '(optional)'}`} accept="image/jpeg,image/png,image/webp" required={isElectronic} disabled={busy} onFiles={(files) => {
+                    const selected = files[0] ?? null;
+                    const validationError = selected ? imageUploadError(selected) : null;
+                    if (validationError) {
+                        setError(validationError);
+                        return;
+                    }
+                    setProof(selected);
                     setError('');
-                }} disabled={busy} />
-            </label>
+                }} helperText={IMAGE_UPLOAD_HINT} />
+            </div>
+            <ImageUploadPreview file={proof} alt="Selected COD remittance proof preview" />
             <button className="seller-inline-action" type="submit" disabled={busy || loadingCollections || loadingHistory}>{busy ? 'Submitting…' : 'Submit remittance to admin'}</button>
         </form>}
         {message && <p className="rider-cod-feedback" role="status" aria-live="polite">{message}</p>}
@@ -480,6 +500,7 @@ function RiderRemittancePanel({ onSubmitted }: { onSubmitted: () => void }) {
 }
 
 function DeliveryProofCapture({ delivery, onSaved }: { delivery: RiderDelivery; onSaved: () => void }) {
+    const maxSourcePhotoBytes = 40 * 1024 * 1024;
     const [photo, setPhoto] = React.useState<File | null>(null);
     const [previewUrl, setPreviewUrl] = React.useState('');
     const [recipientName, setRecipientName] = React.useState('');
@@ -489,7 +510,6 @@ function DeliveryProofCapture({ delivery, onSaved }: { delivery: RiderDelivery; 
     const [message, setMessage] = React.useState('');
     const [error, setError] = React.useState('');
     const inputRef = React.useRef<HTMLInputElement>(null);
-    const libraryInputRef = React.useRef<HTMLInputElement>(null);
     const savingRef = React.useRef(false);
 
     React.useEffect(() => {
@@ -503,6 +523,11 @@ function DeliveryProofCapture({ delivery, onSaved }: { delivery: RiderDelivery; 
     }, [photo]);
 
     function selectPhoto(file: File | null) {
+        const validationError = file ? imageUploadError(file, maxSourcePhotoBytes) : null;
+        if (validationError) {
+            setError(validationError);
+            return;
+        }
         setError('');
         setMessage('');
         setPhoto(file);
@@ -513,12 +538,6 @@ function DeliveryProofCapture({ delivery, onSaved }: { delivery: RiderDelivery; 
         if (!inputRef.current) return;
         inputRef.current.value = '';
         inputRef.current.click();
-    }
-
-    function openPhotoLibrary() {
-        if (!libraryInputRef.current) return;
-        libraryInputRef.current.value = '';
-        libraryInputRef.current.click();
     }
 
     async function saveProof(event: React.FormEvent<HTMLFormElement>) {
@@ -532,11 +551,11 @@ function DeliveryProofCapture({ delivery, onSaved }: { delivery: RiderDelivery; 
         setError('');
         setMessage('');
         const formData = new FormData();
-        formData.append('photo', photo);
-        formData.append('recipient_name', recipientName.trim());
-        formData.append('recipient_confirmed', '1');
-        formData.append('captured_at', capturedAt);
         try {
+            formData.append('photo', await compressDeliveryProofImage(photo));
+            formData.append('recipient_name', recipientName.trim());
+            formData.append('recipient_confirmed', '1');
+            formData.append('captured_at', capturedAt);
             const response = await api.post<{ message: string }>(`/api/deliveries/${delivery.id}/proof`, formData);
             setMessage(response.data.message);
             setPhoto(null);
@@ -544,10 +563,9 @@ function DeliveryProofCapture({ delivery, onSaved }: { delivery: RiderDelivery; 
             setRecipientConfirmed(false);
             setCapturedAt('');
             if (inputRef.current) inputRef.current.value = '';
-            if (libraryInputRef.current) libraryInputRef.current.value = '';
             onSaved();
         } catch (requestError: any) {
-            setError(requestError.userMessage ?? requestError.response?.data?.message ?? 'Delivery proof could not be saved. Check your connection and try again.');
+            setError(requestError.userMessage ?? requestError.response?.data?.message ?? requestError.message ?? 'Delivery proof could not be saved. Check your connection and try again.');
         } finally {
             savingRef.current = false;
             setSaving(false);
@@ -563,17 +581,17 @@ function DeliveryProofCapture({ delivery, onSaved }: { delivery: RiderDelivery; 
             <img src={previewUrl} alt="Preview of delivery proof photo" />
             <div className="rider-proof-photo-actions">
                 <button type="button" className="seller-inline-action" disabled={saving} onClick={openCamera}>Retake photo</button>
-                <button type="button" className="rider-proof-secondary-action" disabled={saving} onClick={openPhotoLibrary}>Choose photo</button>
+                <FileDropzone label="Choose or drop a proof photo" accept="image/jpeg,image/png,image/webp" disabled={saving} buttonLabel="Choose photo" onFiles={(files) => selectPhoto(files[0] ?? null)} />
             </div>
         </div> : <div className="rider-proof-photo-actions">
             <button type="button" className="seller-inline-action rider-proof-camera-button" disabled={saving} onClick={openCamera}>
                 <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 8h4l2-3h6l2 3h4v11H3z" /><circle cx="12" cy="13" r="3.5" /></svg>
                 Take photo
             </button>
-            <button type="button" className="rider-proof-secondary-action" disabled={saving} onClick={openPhotoLibrary}>Choose photo</button>
+            <FileDropzone label="Choose or drop a proof photo" accept="image/jpeg,image/png,image/webp" disabled={saving} buttonLabel="Choose photo" onFiles={(files) => selectPhoto(files[0] ?? null)} />
         </div>}
-        <input ref={inputRef} className="rider-proof-file-input" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" tabIndex={-1} aria-hidden="true" onChange={(event) => selectPhoto(event.target.files?.[0] ?? null)} />
-        <input ref={libraryInputRef} className="rider-proof-file-input" type="file" accept="image/jpeg,image/png,image/webp" tabIndex={-1} aria-hidden="true" onChange={(event) => selectPhoto(event.target.files?.[0] ?? null)} />
+        <input ref={inputRef} className="rider-proof-file-input" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" tabIndex={-1} aria-hidden="true" onChange={(event) => { selectPhoto(event.target.files?.[0] ?? null); event.currentTarget.value = ''; }} />
+        <small>JPEG, PNG, or WebP; up to 40 MB before local optimization. The photo is resized and compressed before it is securely saved.</small>
         <label className="rider-proof-recipient"><span><RiderDeliveryIcon name="buyer" />Recipient</span><input value={recipientName} onChange={(event) => setRecipientName(event.target.value)} required maxLength={120} autoComplete="name" /></label>
         <label className="rider-proof-confirmation"><input type="checkbox" checked={recipientConfirmed} onChange={(event) => setRecipientConfirmed(event.target.checked)} required />Receipt confirmed</label>
         {error && <p className="rider-delivery-error" role="alert">{error}</p>}
@@ -865,12 +883,18 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
     const [scannerError, setScannerError] = React.useState('');
     const [scannerSuccessMessage, setScannerSuccessMessage] = React.useState('');
     const [navigationCounts, setNavigationCounts] = React.useState({ notifications: 0, chats: 0 });
+    const [setupProgressVisible, setSetupProgressVisible] = React.useState(true);
+    const setupProgressButtonRef = React.useRef<HTMLButtonElement>(null);
     const [activeConversationId, setActiveConversationId] = React.useState<number | undefined>();
     const [sharingDeliveryId, setSharingDeliveryId] = React.useState<number | null>(null);
     const [locationNotice, setLocationNotice] = React.useState('');
     const locationWatchRef = React.useRef<number | null>(null);
     const lastLocationPostedRef = React.useRef(0);
     const offerActionLockRef = React.useRef(false);
+    const closeSetupProgress = React.useCallback(() => {
+        setSetupProgressVisible(false);
+        window.requestAnimationFrame(() => setupProgressButtonRef.current?.focus());
+    }, []);
     const debouncedSearch = useDebouncedValue(deliverySearch);
     const debouncedDashboardSearch = useDebouncedValue(dashboardSearch);
 
@@ -1303,7 +1327,7 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
             <nav aria-label="Rider navigation">{navigation.map((item) => {
                 const count = badgeCount(item.id);
                 const mobileMenuExcluded = ['notifications', 'chats', 'listings'].includes(item.id);
-                return <button type="button" key={item.id} className={`${page === item.id ? 'active' : ''}${mobileMenuExcluded ? ' role-mobile-menu-excluded' : ''}`} aria-current={page === item.id ? 'page' : undefined} aria-label={count ? `${item.label}, ${count} unread` : item.label} onClick={() => { setPage(item.id); setNotice(''); setMobileNavOpen(false); }}>
+                return <button type="button" key={item.id} className={`${page === item.id ? 'active' : ''}${item.id === 'notifications' ? ' admin-notifications-sidebar-link' : ''}${mobileMenuExcluded ? ' role-mobile-menu-excluded' : ''}`} aria-current={page === item.id ? 'page' : undefined} aria-label={count ? `${item.label}, ${count} unread` : item.label} onClick={() => { setPage(item.id); setNotice(''); setMobileNavOpen(false); }}>
                     <span className="nav-icon"><WorkspaceSidebarIcon name={item.id} /></span><span className="seller-nav-label">{item.label}</span><NavigationBadge count={count} />
                 </button>;
             })}</nav>
@@ -1311,7 +1335,7 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
             </div>
         </aside>
         <section className="admin-content seller-content">
-            <header className="admin-header workspace-banner-header"><div><p className="eyebrow">FARMGATE rider workspace</p><h1>{pageTitle}</h1><p>{page === 'earnings' ? 'Track your payouts and earning history.' : 'Manage your assigned deliveries and keep customers updated.'}</p></div><WorkspaceBannerArtwork /><div className="role-header-context"><span className="admin-role">RIDER</span><WorkspaceAccountControl role="rider" userName={user.name} profilePhotoUrl={user.profile_photo_url} onOpenAccount={() => setPage('account')} /></div></header>
+            <header className="admin-header workspace-banner-header"><div><p className="eyebrow">FARMGATE rider workspace</p><h1>{pageTitle}</h1><p>{page === 'earnings' ? 'Track your payouts and earning history.' : 'Manage your assigned deliveries and keep customers updated.'}</p></div><WorkspaceBannerArtwork /><div className="role-header-context"><WorkspaceNotificationsButton count={navigationCounts.notifications} active={page === 'notifications'} onClick={() => setPage('notifications')} /><WorkspaceAccountControl role="rider" userName={user.name} profilePhotoUrl={user.profile_photo_url} onOpenAccount={() => setPage('account')} /></div></header>
             {notice && <p className="rider-offer-notice" role="status">{notice}</p>}
             {page === 'dashboard' && <section className="role-dashboard rider-dashboard" aria-busy={summaryLoading}>
                 <div className="rider-dashboard-heading">
@@ -1617,6 +1641,10 @@ function RiderDashboardContent({ user, onUserUpdated, onError, onLogout }: {
                 user={user}
                 onUserUpdated={onUserUpdated}
                 onError={onError}
+                setupProgressVisible={setupProgressVisible}
+                setupProgressButtonRef={setupProgressButtonRef}
+                onToggleSetupProgress={() => setSetupProgressVisible((visible) => !visible)}
+                onCloseSetupProgress={closeSetupProgress}
                 onReviewTutorial={() => {
                     setDeliveryTab('nearby');
                     setDeliveryTutorialOpen(true);
@@ -1643,8 +1671,8 @@ class RiderDashboardBoundary extends React.Component<{
         return { hasError: true };
     }
 
-    componentDidCatch(error: Error): void {
-        console.error('Rider workspace rendering failed.', error);
+    componentDidCatch(): void {
+        console.error('Rider workspace rendering failed.');
     }
 
     render() {
@@ -1652,8 +1680,8 @@ class RiderDashboardBoundary extends React.Component<{
             return <main className="admin-shell seller-shell rider-shell">
                 <section className="admin-content seller-content rider-workspace-fallback" role="alert">
                     <h1>Rider workspace could not be displayed</h1>
-                    <p>Your assignment remains saved on the server. Try the workspace again; if the issue continues, refresh this page.</p>
-                    <button type="button" onClick={() => this.setState({ hasError: false })}>Try again</button>
+                    <p>Refresh the page and try again. Check your recent activity before repeating an action.</p>
+                    <button type="button" onClick={() => window.location.reload()}>Refresh page</button>
                 </section>
             </main>;
         }

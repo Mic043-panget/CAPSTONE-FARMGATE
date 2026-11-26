@@ -11,8 +11,7 @@ use App\Models\DeliveryProofCorrection;
 use App\Models\Order;
 use App\Models\RiderProfile;
 use App\Models\User;
-use Illuminate\Contracts\Filesystem\Factory as FilesystemFactory;
-use Illuminate\Filesystem\FilesystemAdapter;
+use App\Services\ImageUploadService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
@@ -103,11 +102,11 @@ class DeliveryProofTest extends TestCase
     public function test_upload_persistence_failure_does_not_mark_delivery_delivered(): void
     {
         ['rider' => $rider, 'delivery' => $delivery, 'token' => $token] = $this->dropoff();
-        $filesystem = Mockery::mock(FilesystemAdapter::class);
-        $filesystem->shouldReceive('putFileAs')->once()->andReturn(false);
-        $factory = Mockery::mock(FilesystemFactory::class);
-        $factory->shouldReceive('disk')->once()->with('delivery_proofs')->andReturn($filesystem);
-        $this->app->instance(FilesystemFactory::class, $factory);
+        $imageUploads = Mockery::mock(ImageUploadService::class);
+        $imageUploads->shouldReceive('storeEvidence')
+            ->once()
+            ->andThrow(new \Symfony\Component\HttpKernel\Exception\HttpException(503));
+        $this->app->instance(ImageUploadService::class, $imageUploads);
 
         $this->actingAs($rider)->post('/api/deliveries/'.$delivery->id.'/proof', [
             'photo' => UploadedFile::fake()->image('proof.jpg'),

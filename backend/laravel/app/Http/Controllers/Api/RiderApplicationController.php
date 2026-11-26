@@ -13,8 +13,11 @@ use App\Models\RiderProfile;
 use App\Models\RiderVehicleChange;
 use App\Models\User;
 use App\Notifications\RiderApplicationStatusNotification;
+use App\Rules\ValidFarmgateImage;
+use App\Services\ImageUploadService;
 use App\Services\RiderPolicyService;
 use App\Services\SystemSettingsService;
+use App\Support\FarmgateImage;
 use App\Support\PhilippinePhoneNumber;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
@@ -339,11 +342,11 @@ class RiderApplicationController extends Controller
             'vehicle_color' => ['sometimes', 'nullable', 'string', 'max:60'],
             'license_expires_on' => ['sometimes', 'nullable', 'date'],
             'vehicle_registration_expires_on' => ['sometimes', 'nullable', 'date'],
-            'driver_license' => ['sometimes', 'nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:10240'],
-            'vehicle_registration' => ['sometimes', 'nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:10240'],
+            'driver_license' => ['sometimes', 'nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:10240', new ValidFarmgateImage(['application/pdf'])],
+            'vehicle_registration' => ['sometimes', 'nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:10240', new ValidFarmgateImage(['application/pdf'])],
             'selfie' => ['prohibited'],
             'vehicle_photos' => ['sometimes', 'array', 'min:1', 'max:5'],
-            'vehicle_photos.*' => ['file', 'image', 'mimes:jpg,jpeg,png,webp', 'max:10240'],
+            'vehicle_photos.*' => ['file', 'image', 'mimes:jpg,jpeg,png,webp', 'max:10240', new ValidFarmgateImage],
         ]);
 
         $licenseNumber = isset($data['license_number'])
@@ -466,11 +469,11 @@ class RiderApplicationController extends Controller
             'vehicle_color' => ['required', 'string', 'max:60'],
             'license_expires_on' => ['required', 'date', 'after:today'],
             'vehicle_registration_expires_on' => ['required', 'date', 'after:today'],
-            'driver_license' => [Rule::requiredIf(! in_array('DRIVER_LICENSE', $existingDocumentTypes, true)), 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:10240'],
-            'vehicle_registration' => [Rule::requiredIf(! in_array('VEHICLE_REGISTRATION', $existingDocumentTypes, true)), 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:10240'],
+            'driver_license' => [Rule::requiredIf(! in_array('DRIVER_LICENSE', $existingDocumentTypes, true)), 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:10240', new ValidFarmgateImage(['application/pdf'])],
+            'vehicle_registration' => [Rule::requiredIf(! in_array('VEHICLE_REGISTRATION', $existingDocumentTypes, true)), 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:10240', new ValidFarmgateImage(['application/pdf'])],
             'selfie' => ['prohibited'],
             'vehicle_photos' => [Rule::requiredIf(! in_array('VEHICLE_PHOTO', $existingDocumentTypes, true)), 'array', 'min:1', 'max:5'],
-            'vehicle_photos.*' => ['image', 'mimes:jpg,jpeg,png,webp', 'max:10240'],
+            'vehicle_photos.*' => ['image', 'mimes:jpg,jpeg,png,webp', 'max:10240', new ValidFarmgateImage],
         ]);
         $plate = mb_strtoupper(trim(preg_replace('/\s+/', ' ', $data['plate_number'])));
         Validator::make(['plate_number' => $plate], [
@@ -576,10 +579,10 @@ class RiderApplicationController extends Controller
             'vehicle_color' => ['required', 'string', 'max:60'],
             'license_expires_on' => ['required', 'date', 'after:today'],
             'vehicle_registration_expires_on' => ['required', 'date', 'after:today'],
-            'vehicle_registration' => ['required', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:10240'],
-            'driver_license' => ['required', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:10240'],
+            'vehicle_registration' => ['required', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:10240', new ValidFarmgateImage(['application/pdf'])],
+            'driver_license' => ['required', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:10240', new ValidFarmgateImage(['application/pdf'])],
             'vehicle_photos' => ['required', 'array', 'min:1', 'max:5'],
-            'vehicle_photos.*' => ['image', 'mimes:jpg,jpeg,png,webp', 'max:10240'],
+            'vehicle_photos.*' => ['image', 'mimes:jpg,jpeg,png,webp', 'max:10240', new ValidFarmgateImage],
         ]);
         $plate = mb_strtoupper(trim(preg_replace('/\s+/', ' ', $data['plate_number'])));
         $this->assertNoPendingPlateCollision($plate, $user->id);
@@ -637,16 +640,19 @@ class RiderApplicationController extends Controller
         abort_unless($user->role === Role::ADMIN || $applicationOwnerId === $user->id, 403);
         abort_unless($document->deleted_at === null, 404);
         $disk = Storage::disk('rider_private');
-        abort_unless($disk->exists($document->path), 404, 'The requested rider document could not be found.');
+        $previewPath = $document->path.'.preview';
+        $usePreview = ! $request->boolean('original') && $disk->exists($previewPath);
+        $storedPath = $usePreview ? $previewPath : $document->path;
+        abort_unless($disk->exists($storedPath), 404, 'The requested rider document could not be found.');
         try {
-            $contents = Crypt::decryptString($disk->get($document->path));
+            $contents = Crypt::decryptString($disk->get($storedPath));
         } catch (\Throwable $exception) {
             report($exception);
             abort(500, 'The requested rider document could not be decrypted.');
         }
 
         return response($contents, 200, [
-            'Content-Type' => $document->mime_type,
+            'Content-Type' => $usePreview ? 'image/webp' : $document->mime_type,
             'Content-Disposition' => 'inline; filename="'.str_replace(['"', "\r", "\n"], '', $document->original_name).'"',
             'Cache-Control' => 'private, no-store',
             'X-Content-Type-Options' => 'nosniff',
@@ -661,7 +667,9 @@ class RiderApplicationController extends Controller
         $vehicleChange = $document->vehicleChange;
         abort_unless($application || $vehicleChange, 422, 'The rider document is not attached to an application or vehicle update.');
         $disk = Storage::disk('rider_private');
-        abort_unless(! $disk->exists($document->path) || $disk->delete($document->path), 500, 'The protected document could not be deleted. No deletion record was saved.');
+        foreach ([$document->path, $document->path.'.preview'] as $path) {
+            abort_unless(! $disk->exists($path) || $disk->delete($path), 500, 'The protected document could not be deleted. No deletion record was saved.');
+        }
         $document->forceFill(['deleted_at' => now(), 'deleted_by' => $request->user()->id])->save();
         if ($application) {
             RiderApplicationHistory::create([
@@ -1085,17 +1093,21 @@ class RiderApplicationController extends Controller
         string $type,
         UploadedFile $file,
     ): string {
-        $contents = file_get_contents($file->getRealPath());
+        $isImage = FarmgateImage::isImage($file);
+        $contents = $isImage
+            ? app(ImageUploadService::class)->encode($file, 2560, 94)
+            : file_get_contents($file->getRealPath());
         if (! is_string($contents)) {
             throw new \RuntimeException('The uploaded rider document could not be read.');
         }
+        $mimeType = $isImage ? 'image/webp' : ($file->getMimeType() ?: 'application/octet-stream');
         $path = 'rider/'.Str::uuid().'.enc';
-        if (! Storage::disk('rider_private')->put($path, Crypt::encryptString($contents))) {
-            $disk = Storage::disk('rider_private');
+        $disk = Storage::disk('rider_private');
+        if (! $disk->put($path, Crypt::encryptString($contents))) {
             if ($disk->exists($path) && ! $disk->delete($path)) {
                 report(new \RuntimeException('A partially written rider document remains in private storage.'));
             }
-            throw new \RuntimeException('The encrypted rider document could not be stored.');
+            abort(503, 'The encrypted rider document could not be stored. Please retry.');
         }
         RiderDocument::create([
             'rider_application_id' => $application?->id,
@@ -1103,9 +1115,9 @@ class RiderApplicationController extends Controller
             'uploaded_by' => $userId,
             'document_type' => $type,
             'path' => $path,
-            'mime_type' => $file->getMimeType() ?: 'application/octet-stream',
+            'mime_type' => $mimeType,
             'original_name' => mb_substr($file->getClientOriginalName(), 0, 255),
-            'size' => $file->getSize(),
+            'size' => strlen($contents),
         ]);
 
         return $path;
@@ -1115,8 +1127,10 @@ class RiderApplicationController extends Controller
     {
         foreach ($paths as $path) {
             $disk = Storage::disk('rider_private');
-            if (! $disk->delete($path) && $disk->exists($path)) {
-                report(new \RuntimeException('A replaced or failed rider document remains in private storage.'));
+            foreach ([$path, $path.'.preview'] as $storedPath) {
+                if (! $disk->delete($storedPath) && $disk->exists($storedPath)) {
+                    report(new \RuntimeException('A replaced or failed rider document remains in private storage.'));
+                }
             }
         }
     }

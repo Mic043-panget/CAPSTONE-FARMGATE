@@ -9,4 +9,5 @@
 **/vendor/
 **/dist/
 **/.vite/
+secrets/
 *.log

@@ -102,9 +102,11 @@ function applicationReviewMessage(status: string | undefined, verified: boolean)
     return 'Your verified rider account is active. Account setup progress is available in the floating progress control.';
 }
 
-export function RiderSetupGuide({ user, refreshKey, onOpenSection, onReviewTutorial }: {
+export function RiderSetupGuide({ user, refreshKey, progressVisible, onCloseProgress, onOpenSection, onReviewTutorial }: {
     user: User;
     refreshKey: number;
+    progressVisible: boolean;
+    onCloseProgress: () => void;
     onOpenSection: (section: SettingsSection, focusTarget?: boolean, targetId?: string) => void;
     onReviewTutorial: () => void;
 }) {
@@ -157,6 +159,9 @@ export function RiderSetupGuide({ user, refreshKey, onOpenSection, onReviewTutor
     }
 
     if (loading || error || !data) return <AccountSetupProgress
+        id="rider-setup-progress"
+        hidden={!progressVisible}
+        onClose={onCloseProgress}
         title="Rider setup"
         groups={[]}
         loading={loading}
@@ -355,6 +360,9 @@ export function RiderSetupGuide({ user, refreshKey, onOpenSection, onReviewTutor
             <button type="button" className="seller-text-action" onClick={onReviewTutorial}>Review delivery tutorial</button>
         </div>
         <AccountSetupProgress
+            id="rider-setup-progress"
+            hidden={!progressVisible}
+            onClose={onCloseProgress}
             title="Rider setup"
             groups={groups}
             loading={false}

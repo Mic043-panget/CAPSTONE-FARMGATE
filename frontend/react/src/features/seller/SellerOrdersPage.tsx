@@ -251,9 +251,16 @@ export function SellerOrdersPage({ onNavigationCountsChanged, initialOrderId, on
             setPickupCodeLoading(false);
         }
 
+        const previousScrollX = window.scrollX;
+        const previousScrollY = window.scrollY;
         document.body.classList.add('printing-order-receipt');
-        window.print();
-        document.body.classList.remove('printing-order-receipt');
+        window.scrollTo(0, 0);
+        try {
+            window.print();
+        } finally {
+            document.body.classList.remove('printing-order-receipt');
+            window.scrollTo(previousScrollX, previousScrollY);
+        }
     }
 
     async function decideOrder(status: 'CONFIRMED' | 'REJECTED' | 'PREPARING' | 'READY_FOR_PICKUP') {
@@ -514,7 +521,7 @@ export function SellerOrdersPage({ onNavigationCountsChanged, initialOrderId, on
                             {shopAddress && <p>{shopAddress}</p>}
                             <p className="seller-receipt-document-label">Farmgate order receipt · Not a BIR-registered invoice or official receipt</p>
                         </header>
-                        <p className="buyer-order-receipt-meta"><strong>{selectedOrder.order_reference}</strong><br />Issued {new Date(selectedOrder.created_at).toLocaleString()}</p>
+                        <p className="buyer-order-receipt-meta"><strong>Order reference: {selectedOrder.order_reference}</strong><br />Order placed <time dateTime={selectedOrder.created_at}>{new Date(selectedOrder.created_at).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Manila' })} (Asia/Manila)</time>{delivery?.delivery_reference && <><br /><span className="receipt-print-exclude">Delivery reference: {delivery.delivery_reference}</span></>}</p>
                         <div className="buyer-order-receipt-parties">
                             <div><strong>Buyer</strong><span>{selectedOrder.shipping_address?.recipient_name ?? selectedOrder.buyer?.name ?? 'Buyer'}</span>{selectedOrder.shipping_address?.phone_number && <span>{selectedOrder.shipping_address.phone_number}</span>}</div>
                             <div><strong>{selectedOrder.delivery_method === 'SELF_PICKUP' ? 'Pickup' : 'Delivery'}</strong><span>{orderAddress(selectedOrder)}</span></div>
@@ -522,13 +529,14 @@ export function SellerOrdersPage({ onNavigationCountsChanged, initialOrderId, on
                         <dl className="buyer-order-receipt-payment">
                             <div><dt>Payment method</dt><dd>{selectedOrder.payment_method?.replaceAll('_', ' ') ?? 'Not specified'}</dd></div>
                             <div><dt>Payment status</dt><dd>{selectedOrder.payment_status?.replaceAll('_', ' ') ?? 'Status unavailable'}</dd></div>
-                            <div><dt>Current order status</dt><dd>{displayOrderStatus(selectedOrder)}</dd></div>
-                            <div><dt>Order status</dt><dd>{formatStatus(selectedOrder.status)}</dd></div>
+                            {selectedOrder.payment_reference && <div><dt>Payment reference</dt><dd>{selectedOrder.payment_reference}</dd></div>}
+                            <div><dt>Order status</dt><dd>{displayOrderStatus(selectedOrder)}</dd></div>
                         </dl>
                         <table className="buyer-order-receipt-items">
-                            <thead><tr><th scope="col">Livestock</th><th scope="col">Unit price</th><th scope="col">Line total</th></tr></thead>
+                            <thead><tr><th scope="col">Livestock</th><th scope="col">Quantity</th><th scope="col">Unit price</th><th scope="col">Line total</th></tr></thead>
                             <tbody>{selectedOrder.items.map((item) => <tr key={item.id}>
-                                <td>{item.quantity.toLocaleString()} {item.pricing_type === 'PER_KILO' ? 'kg' : 'head'} × {item.listing?.name ?? 'Removed listing'}</td>
+                                <td>{item.listing?.name ?? 'Removed listing'}</td>
+                                <td>{item.quantity.toLocaleString('en-PH')} {item.pricing_type === 'PER_KILO' ? 'kg' : 'head'}</td>
                                 <td>{amount(item.unit_price)} / {item.pricing_type === 'PER_KILO' ? 'kg' : 'head'}</td>
                                 <td>{amount(item.total_amount)}</td>
                             </tr>)}</tbody>
@@ -548,13 +556,14 @@ export function SellerOrdersPage({ onNavigationCountsChanged, initialOrderId, on
                             <h4>Order verification QR · Assigned rider only</h4>
                             {pickupCodeIsCurrent && pickupCode
                                 ? <div className="buyer-order-receipt-verification">
-                                    <QRCodeSVG value={pickupCode.code} size={152} level="M" marginSize={2} aria-label="One-time pickup verification QR code for the assigned rider" />
+                                    <QRCodeSVG value={pickupCode.code} size={152} level="M" marginSize={2} aria-label="Order pickup verification QR code for the assigned rider" />
                                     <p>Persistent order QR · for pickup and drop-off verification</p>
                                     <small>Show this code only to the currently assigned rider. It remains valid until delivery is verified or the order is cancelled.</small>
                                 </div>
-                                : <p>A one-time pickup QR will be included when you print this receipt. You can also create one now.</p>}
+                                : <p>An order pickup QR will be included when you print this receipt. You can also create one now.</p>}
                             <button type="button" className="seller-inline-action seller-receipt-screen-action" disabled={pickupCodeLoading} onClick={() => void issuePickupCode()}>{pickupCodeLoading ? 'Preparing secure QR…' : pickupCodeIsCurrent ? 'Refresh order QR' : 'Show order QR in receipt'}</button>
                         </div>}
+                        <footer className="seller-receipt-footer">Generated by Farmgate · {new Date().toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Manila' })} (Asia/Manila)</footer>
                         {pickupCodeError && <p className="seller-orders-error seller-receipt-screen-action" role="alert">{pickupCodeError}</p>}
                         <div className="buyer-order-receipt-actions seller-receipt-screen-action">
                             <button className="buyer-order-receipt-done" type="button" disabled={pickupCodeLoading} onClick={() => void printReceipt()}>{pickupCodeLoading ? 'Preparing receipt…' : 'Print receipt'}</button>

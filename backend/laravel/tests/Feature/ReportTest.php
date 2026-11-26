@@ -94,6 +94,34 @@ class ReportTest extends TestCase
             ->assertJsonPath('data.data.0.status', 'PENDING_CONFIRMATION');
     }
 
+    public function test_seller_transaction_report_supports_payment_amount_and_sort_filters(): void
+    {
+        $seller = User::factory()->create(['role' => Role::SELLER]);
+        $buyer = User::factory()->create(['role' => Role::BUYER]);
+        $matchingOrder = Order::create([
+            'buyer_id' => $buyer->id,
+            'seller_id' => $seller->id,
+            'status' => OrderStatus::COMPLETED,
+            'payment_status' => 'PAID',
+            'payment_method' => 'GCASH',
+            'total_amount' => 1500,
+        ]);
+        Order::create([
+            'buyer_id' => $buyer->id,
+            'seller_id' => $seller->id,
+            'status' => OrderStatus::COMPLETED,
+            'payment_status' => 'UNPAID',
+            'payment_method' => 'COD',
+            'total_amount' => 1200,
+        ]);
+
+        $this->actingAs($seller)->getJson('/api/reports/transactions?payment_status=PAID&payment_method=GCASH&amount_min=1000&amount_max=2000&sort=total_amount&direction=desc')
+            ->assertOk()
+            ->assertJsonPath('summary.total', 1)
+            ->assertJsonPath('data.data.0.order_reference', $matchingOrder->order_reference)
+            ->assertJsonPath('data.data.0.total_amount', '1500.00');
+    }
+
     public function test_seller_report_pages_and_filters_never_expose_another_sellers_records(): void
     {
         $seller = User::factory()->create(['role' => Role::SELLER, 'name' => 'Current Seller']);

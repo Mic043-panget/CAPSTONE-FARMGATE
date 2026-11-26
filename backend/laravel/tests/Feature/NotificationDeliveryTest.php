@@ -16,6 +16,7 @@ use App\Notifications\OrderStatusChangedNotification;
 use App\Notifications\RiderApplicationStatusNotification;
 use App\Notifications\SellerPayoutRecordedNotification;
 use App\Services\EmailDeliveryConfiguration;
+use App\Services\FirebaseCloudMessagingSender;
 use App\Services\WebPushNotificationSender;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -183,6 +184,7 @@ class NotificationDeliveryTest extends TestCase
         config([
             'services.webpush.public_key' => 'public',
             'services.webpush.private_key' => 'private',
+            'services.webpush.subject' => 'mailto:test@example.test',
         ]);
         $buyer = User::factory()->create(['role' => 'BUYER']);
         $other = User::factory()->create(['role' => 'BUYER']);
@@ -191,7 +193,9 @@ class NotificationDeliveryTest extends TestCase
             'keys' => ['p256dh' => 'public-device-key', 'auth' => 'auth-device-key'],
         ];
 
-        $this->getJson('/api/notifications/push-config')->assertUnauthorized();
+        $this->getJson('/api/notifications/push-config')
+            ->assertOk()
+            ->assertJsonPath('enabled', false);
         $this->actingAs($buyer)->getJson('/api/notifications/push-config')
             ->assertOk()
             ->assertJsonPath('enabled', true)
@@ -223,6 +227,44 @@ class NotificationDeliveryTest extends TestCase
             'keys' => ['p256dh' => 'public-device-key', 'auth' => 'auth-device-key'],
         ])->assertUnprocessable();
         $this->assertSame(0, $buyer->pushSubscriptions()->count());
+    }
+
+    public function test_firebase_push_config_is_public_and_registration_tokens_are_encrypted_and_account_scoped(): void
+    {
+        $credentialsPath = $this->configureFirebase();
+        try {
+            $buyer = User::factory()->create(['role' => 'BUYER']);
+            $other = User::factory()->create(['role' => 'BUYER']);
+            $token = 'firebase-registration-token';
+
+            $this->getJson('/api/notifications/push-config')
+                ->assertOk()
+                ->assertJsonPath('enabled', true)
+                ->assertJsonPath('firebase.projectId', 'farmgate-test')
+                ->assertJsonPath('vapid_key', 'public-vapid-key')
+                ->assertJsonMissingPath('firebase.credentials');
+            $this->actingAs($buyer)->postJson('/api/notifications/push-subscriptions', [
+                'provider' => 'fcm',
+                'token' => $token,
+            ])->assertCreated();
+
+            $stored = DB::table('push_subscriptions')->where('user_id', $buyer->id)->first();
+            $this->assertSame('fcm', $stored->provider);
+            $this->assertStringNotContainsString($token, $stored->subscription);
+            $this->assertSame('fcm', $buyer->pushSubscriptions()->firstOrFail()->provider);
+            $this->actingAs($other)->deleteJson('/api/notifications/push-subscriptions', [
+                'provider' => 'fcm',
+                'token' => $token,
+            ])->assertOk();
+            $this->assertSame(1, $buyer->pushSubscriptions()->count());
+            $this->actingAs($buyer)->deleteJson('/api/notifications/push-subscriptions', [
+                'provider' => 'fcm',
+                'token' => $token,
+            ])->assertOk();
+            $this->assertSame(0, $buyer->pushSubscriptions()->count());
+        } finally {
+            @unlink($credentialsPath);
+        }
     }
 
     public function test_push_job_uses_a_stored_subscription_and_records_success(): void
@@ -257,6 +299,39 @@ class NotificationDeliveryTest extends TestCase
 
         $this->assertSame('delivered', $delivery->fresh()->status);
         $this->assertNotNull($delivery->fresh()->delivered_at);
+    }
+
+    public function test_push_job_sends_fcm_tokens_and_marks_the_delivery(): void
+    {
+        Queue::fake();
+        config([
+            'services.webpush.public_key' => 'public',
+            'services.webpush.private_key' => 'private',
+        ]);
+        $buyer = User::factory()->create(['role' => 'BUYER']);
+        $token = 'firebase-registration-token';
+        PushSubscription::query()->create([
+            'user_id' => $buyer->id,
+            'endpoint_hash' => hash('sha256', $token),
+            'provider' => 'fcm',
+            'subscription' => ['token' => $token],
+        ]);
+        $buyer->notify(new OrderCaseUpdatedNotification(76, 'FG-C-76', 23, 'FG-O-23', 'COMPLAINT', 'A case was updated.'));
+        $delivery = NotificationDelivery::query()->where('channel', 'push')->firstOrFail();
+
+        $sender = Mockery::mock(WebPushNotificationSender::class);
+        $sender->shouldNotReceive('send');
+        $firebaseSender = Mockery::mock(FirebaseCloudMessagingSender::class);
+        $firebaseSender->shouldReceive('send')->once()
+            ->withArgs(fn ($subscriptions, array $payload): bool => $subscriptions->count() === 1
+                && $payload['notification_id'] === $delivery->notification_id)
+            ->andReturn(['successful' => [hash('sha256', $token)], 'expired' => []]);
+
+        (new DeliverFarmgatePushNotification($delivery->id))->handle($sender, $firebaseSender);
+
+        $this->assertSame('delivered', $delivery->fresh()->status);
+        $this->assertNotNull($delivery->fresh()->delivered_at);
+        $this->assertNotNull(PushSubscription::query()->where('endpoint_hash', hash('sha256', $token))->value('last_used_at'));
     }
 
     public function test_push_provider_errors_are_retried_and_reported(): void
@@ -353,5 +428,33 @@ class NotificationDeliveryTest extends TestCase
             'status' => 'not_configured',
         ]);
         Queue::assertNotPushed(DeliverFarmgateNotificationEmail::class);
+    }
+
+    private function configureFirebase(): string
+    {
+        $key = openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_RSA, 'private_key_bits' => 2048]);
+        $this->assertNotFalse($key);
+        $this->assertTrue(openssl_pkey_export($key, $privateKey));
+        $credentialsPath = tempnam(sys_get_temp_dir(), 'farmgate-firebase-test-');
+        $this->assertNotFalse($credentialsPath);
+        file_put_contents($credentialsPath, json_encode([
+            'client_email' => 'firebase-test@farmgate-test.iam.gserviceaccount.com',
+            'private_key' => $privateKey,
+        ], JSON_THROW_ON_ERROR));
+        config([
+            'services.firebase.project_id' => 'farmgate-test',
+            'services.firebase.credentials' => $credentialsPath,
+            'services.firebase.web' => [
+                'api_key' => 'test-api-key',
+                'auth_domain' => 'farmgate-test.firebaseapp.com',
+                'project_id' => 'farmgate-test',
+                'storage_bucket' => '',
+                'messaging_sender_id' => '123456789',
+                'app_id' => '1:123456789:web:test',
+                'vapid_key' => 'public-vapid-key',
+            ],
+        ]);
+
+        return $credentialsPath;
     }
 }

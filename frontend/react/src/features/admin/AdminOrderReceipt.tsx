@@ -247,7 +247,7 @@ export function AdminOrderReceipt({ orderId, reference, onError, openInitially =
                         {Number(order.discount_amount ?? 0) > 0 && <div><dt>Discount</dt><dd>− {money(order.discount_amount)}</dd></div>}
                         <div className="buyer-order-grand-total"><dt>Total</dt><dd>{money(order.total_amount)}</dd></div>
                     </dl>
-                    <section className="admin-order-investigation"><h3>Delivery and rider assignment</h3>{order.delivery ? <>
+                    <section className="admin-order-investigation receipt-print-exclude"><h3>Delivery and rider assignment</h3>{order.delivery ? <>
                         <p><strong>Delivery reference:</strong> {order.delivery.delivery_reference} · <strong>Status:</strong> {statusLabel(order.delivery.status)} · <strong>Rider:</strong> {order.delivery.rider?.name ?? 'Unassigned'}{order.delivery.rider?.email ? ` (${order.delivery.rider.email})` : ''}</p>
                         <p><strong>Assigned:</strong> {order.delivery.assigned_at ? new Date(order.delivery.assigned_at).toLocaleString() : 'Not assigned'} · <strong>Pickup verified:</strong> {order.delivery.pickup_verified_at ? new Date(order.delivery.pickup_verified_at).toLocaleString() : 'No'} · <strong>Delivery verified:</strong> {order.delivery.delivery_verified_at ? new Date(order.delivery.delivery_verified_at).toLocaleString() : 'No'}</p>
                         <p><strong>Proof:</strong> {order.delivery.has_delivery_proof ? 'Saved' : 'Not recorded'}{order.delivery.proof_captured_at && ` · captured ${new Date(order.delivery.proof_captured_at).toLocaleString()}`}{order.delivery.proof_recorded_at && ` · recorded ${new Date(order.delivery.proof_recorded_at).toLocaleString()}`}</p>
@@ -255,7 +255,7 @@ export function AdminOrderReceipt({ orderId, reference, onError, openInitially =
                         {!!order.delivery.status_history?.length && <ol>{order.delivery.status_history.map((entry) => <li key={entry.id}><strong>{statusLabel(entry.to_status)}</strong> · {entry.actor?.name ?? 'System'} · {new Date(entry.created_at).toLocaleString()}{entry.reason && <p>{entry.reason}</p>}</li>)}</ol>}
                         {!!order.delivery.proof_corrections?.length && <div><h4>Proof corrections</h4><ul>{order.delivery.proof_corrections.map((entry) => <li key={entry.id}>{entry.corrected_by?.name ?? 'Admin'} · {new Date(entry.created_at).toLocaleString()} · {entry.reason}</li>)}</ul></div>}
                     </> : <p>No rider delivery record exists.</p>}</section>
-                    {order.payment_method === 'COD' && <section className="admin-order-investigation">
+                    {order.payment_method === 'COD' && <section className="admin-order-investigation receipt-print-exclude">
                         <h3>COD collection and remittance evidence</h3>
                         {order.cod_reconciliation_evidence ? <>
                             <p><strong>Collection:</strong> {statusLabel(order.cod_reconciliation_evidence.collection_status)} · expected {money(order.cod_reconciliation_evidence.expected_amount_cents / 100)} · collected {order.cod_reconciliation_evidence.collected_amount_cents == null ? 'Not recorded' : money(order.cod_reconciliation_evidence.collected_amount_cents / 100)} · {order.cod_reconciliation_evidence.collected_at ? new Date(order.cod_reconciliation_evidence.collected_at).toLocaleString() : 'No collection timestamp'}</p>
@@ -289,9 +289,46 @@ export function AdminOrderReceipt({ orderId, reference, onError, openInitially =
                         {!!item.messages?.length && <ul>{item.messages.map((message) => <li key={message.id}>{message.sender?.name ?? 'Participant'} · {new Date(message.created_at).toLocaleString()}: {message.message}{message.media_files?.map((file) => <a key={file.id} href={file.url} target="_blank" rel="noreferrer"> {file.original_name}</a>)}</li>)}</ul>}
                     </article>)}</section>}
                     {order.review && <section className="admin-order-investigation"><h3>Buyer review</h3><p>{order.review.listing?.name ?? 'Livestock listing'} · {'★'.repeat(order.review.rating)} · {statusLabel(order.review.status)}</p><p>{order.review.comment ?? 'No written review.'}</p></section>}
-                    {!!order.status_history?.length && <section className="admin-order-investigation"><h3>Order status timeline</h3><ol>{order.status_history.map((entry) => <li key={entry.id}><strong>{statusLabel(entry.to_status)}</strong> · {entry.actor?.name ?? 'System'} · {new Date(entry.created_at).toLocaleString()}{entry.reason && <p>{entry.reason}</p>}</li>)}</ol></section>}
-                    {!!order.activities?.length && <section className="seller-order-history admin-order-activity"><h3>Order and case activity</h3><ol>{order.activities.map((activity) => <li key={activity.id}><strong>{activity.activity_key.replaceAll('_', ' ')}</strong><span>{activity.actor?.name ? ` · ${activity.actor.name}` : ''} · {new Date(activity.created_at).toLocaleString()}</span><p>{activity.details}</p></li>)}</ol></section>}
-                    {!!order.audit_history?.length && <section className="admin-order-investigation"><h3>Related audit history</h3><ol>{order.audit_history.map((event) => <li key={event.id}><strong>{event.action}</strong> · {event.actor?.name ?? 'Guest'} ({event.actor?.role ?? '-'}) · {new Date(event.created_at).toLocaleString()}<p>{event.description}</p></li>)}</ol></section>}
+                    {!!order.status_history?.length && (
+                        <section className="admin-order-investigation receipt-print-exclude">
+                            <h3>Order status timeline</h3>
+                            <ol>
+                                {order.status_history.map((entry) => (
+                                    <li key={entry.id}>
+                                        <strong>{statusLabel(entry.to_status)}</strong> · {entry.actor?.name ?? 'System'} · {new Date(entry.created_at).toLocaleString()}
+                                        {entry.reason && <p>{entry.reason}</p>}
+                                    </li>
+                                ))}
+                            </ol>
+                        </section>
+                    )}
+                    {!!order.activities?.length && (
+                        <section className="seller-order-history admin-order-activity receipt-print-exclude">
+                            <h3>Order and case activity</h3>
+                            <ol>
+                                {order.activities.map((activity) => (
+                                    <li key={activity.id}>
+                                        <strong>{activity.activity_key.replaceAll('_', ' ')}</strong>
+                                        <span>{activity.actor?.name ? ` · ${activity.actor.name}` : ''} · {new Date(activity.created_at).toLocaleString()}</span>
+                                        <p>{activity.details}</p>
+                                    </li>
+                                ))}
+                            </ol>
+                        </section>
+                    )}
+                    {!!order.audit_history?.length && (
+                        <section className="admin-order-investigation receipt-print-exclude">
+                            <h3>Related audit history</h3>
+                            <ol>
+                                {order.audit_history.map((event) => (
+                                    <li key={event.id}>
+                                        <strong>{event.action}</strong> · {event.actor?.name ?? 'Guest'} ({event.actor?.role ?? '-'}) · {new Date(event.created_at).toLocaleString()}
+                                        <p>{event.description}</p>
+                                    </li>
+                                ))}
+                            </ol>
+                        </section>
+                    )}
                     <div className="buyer-order-receipt-actions admin-order-receipt-actions">
                         <button className="buyer-order-receipt-done" type="button" onClick={printReceipt}>Print receipt</button>
                         <button className="buyer-order-receipt-done" type="button" onClick={() => setOpen(false)}>Close</button>

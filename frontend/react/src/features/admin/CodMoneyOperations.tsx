@@ -3,6 +3,8 @@ import { ViewDetailsAction } from '../../shared/components/Button';
 import api from '../../lib/api';
 import { confirmAction } from '../../lib/alerts';
 import { Pagination } from '../../shared/components/Pagination';
+import { ImageUploadPreview, IMAGE_UPLOAD_HINT, imageUploadError } from '../../shared/components/ImageUploadPreview';
+import { FileDropzone } from '../../shared/components/FileDropzone';
 
 type SummaryMetric = { count: number; amount_cents: number };
 type Summary = {
@@ -240,6 +242,16 @@ export function CodMoneyOperations({ onError, onOpenSettings }: { onError: (mess
     }
 
     function updatePayoutForm(payout: Payout, changes: Partial<PayoutForm>) {
+        const receipt = changes.receipt;
+        if (receipt) {
+            const validationError = receipt.type === 'application/pdf'
+                ? receipt.size > 10 * 1024 * 1024 ? 'PDF receipts must be 10 MB or smaller.' : null
+                : imageUploadError(receipt);
+            if (validationError) {
+                onError(validationError);
+                return;
+            }
+        }
         const current = payoutForms[payout.id] ?? { reference: '', amount: (payout.amount_cents / 100).toFixed(2), paidDate: '', reason: '', receipt: null };
         setPayoutForms((forms) => ({ ...forms, [payout.id]: { ...current, ...changes } }));
     }
@@ -395,7 +407,7 @@ function PayoutTable({
                                 <label>Amount externally transferred (PHP)<input inputMode="decimal" value={form.amount} onChange={(event) => updatePayoutForm(payout, { amount: event.target.value })} /></label>
                                 <label>External transfer date<input type="date" max={new Date().toISOString().slice(0, 10)} value={form.paidDate} onChange={(event) => updatePayoutForm(payout, { paidDate: event.target.value })} /></label>
                                 <label>Transfer reference<input maxLength={100} value={form.reference} onChange={(event) => updatePayoutForm(payout, { reference: event.target.value })} /></label>
-                                <label>Private receipt (optional)<input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" onChange={(event) => updatePayoutForm(payout, { receipt: event.target.files?.[0] ?? null })} /></label>
+                                <div><FileDropzone label="Private receipt (optional)" accept="image/jpeg,image/png,image/webp,application/pdf" onFiles={(files) => updatePayoutForm(payout, { receipt: files[0] ?? null })} helperText={`${IMAGE_UPLOAD_HINT} PDF up to 10 MB.`} /><ImageUploadPreview file={form.receipt} alt="Selected seller payout receipt preview" /></div>
                                 <button className="seller-inline-action" type="button" disabled={busy} onClick={() => confirmPayout(payout)}>Record externally completed payout</button>
                             </div>}
                             {payoutsEnabled && !payout.seller_payout_eligible && <div className="payments-eligibility-block"><strong>Seller prerequisites are not met</strong><ul>{payout.eligibility_unmet.map((item) => <li key={item}>{item}</li>)}</ul></div>}

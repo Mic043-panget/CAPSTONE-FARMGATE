@@ -140,7 +140,7 @@ export function AdminSellerVerificationPage() {
             <div><p className="eyebrow">Seller governance</p><h2 id="admin-seller-verification-title">Seller identity verification</h2><p>Review submitted identity documents privately. A public Verified badge appears only after approval.</p></div>
         </header>
         <div className="seller-verification-controls">
-            <label className="search-field"><span className="sr-only">Search seller verifications</span><input type="search" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Search shop or seller name" /></label>
+            <label className="search-field"><span className="sr-only">Search seller verifications</span><input type="search" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Search farm or seller name" /></label>
             <label>Status<select value={status} onChange={(event) => { setStatus(event.target.value as VerificationStatus); setPage(1); }} aria-label="Filter by verification status">{Object.entries(statusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
             <button type="button" className="seller-inline-action" disabled={loading} onClick={() => setRevision((value) => value + 1)}>{loading ? 'Refreshing...' : 'Refresh'}</button>
         </div>

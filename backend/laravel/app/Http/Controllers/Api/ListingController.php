@@ -12,8 +12,12 @@ use App\Models\Category;
 use App\Models\LivestockListing;
 use App\Models\Review;
 use App\Models\User;
+use App\Rules\ValidFarmgateImage;
+use App\Services\ImageUploadService;
 use App\Services\PromotionPricingService;
+use App\Services\SellerPickupLocationService;
 use App\Services\SystemSettingsService;
+use App\Support\SellerInventoryListingKey;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -26,8 +30,34 @@ use Illuminate\Validation\ValidationException;
 
 class ListingController extends Controller
 {
+    private const MARKETPLACE_SEARCH_STOP_WORDS = [
+        'a', 'an', 'and', 'are', 'at', 'above', 'below', 'by', 'for', 'from', 'in',
+        'is', 'less', 'more', 'of', 'old', 'or', 'over', 'per', 'the', 'than', 'to',
+        'under', 'with', 'available', 'head', 'kg', 'kilo', 'kilos', 'kilogram',
+        'kilograms', 'month', 'months', 'year', 'years',
+    ];
+
+    private const LIVESTOCK_SEARCH_SYNONYMS = [
+        ['goat', 'goats', 'kambing'],
+        ['carabao', 'kalabaw', 'buffalo', 'buffaloes'],
+        ['cow', 'cows', 'cattle', 'baka', 'bovine'],
+        ['swine', 'pig', 'pigs', 'hog', 'hogs', 'baboy', 'pork'],
+        ['sheep', 'lamb', 'lambs', 'tupa'],
+    ];
+
     public function index(Request $request, SystemSettingsService $settings, PromotionPricingService $promotionPricing): JsonResponse
     {
+        $filters = $request->validate([
+            'q' => ['nullable', 'string', 'max:120'],
+            'category_id' => ['nullable', 'integer', 'min:1'],
+            'sex' => ['nullable', 'in:male,female'],
+            'min_age_months' => ['nullable', 'integer', 'min:0', 'max:600'],
+            'max_age_months' => ['nullable', 'integer', 'min:0', 'max:600'],
+            'min_price' => ['nullable', 'numeric', 'min:0', 'max:100000000'],
+            'max_price' => ['nullable', 'numeric', 'min:0', 'max:100000000'],
+            'pricing_type' => ['nullable', Rule::in(array_map(static fn (PricingType $type): string => $type->value, PricingType::cases()))],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:20'],
+        ]);
         $query = LivestockListing::query()
             ->with(['category', 'images', 'seller:id,name', 'seller.sellerProfile:user_id,shop_name,business_name,shop_image_path,verification_status'])
             ->where('status', ListingStatus::ACTIVE);
@@ -57,27 +87,73 @@ class ListingController extends Controller
             $query->where('created_at', '>=', now()->subDays($expirationDays));
         }
 
-        if ($request->filled('q')) {
-            $term = trim((string) $request->q);
-            $query->where(function ($listingQuery) use ($term): void {
-                $listingQuery->where('name', 'like', "%{$term}%")
-                    ->orWhere('breed', 'like', "%{$term}%")
-                    ->orWhere('description', 'like', "%{$term}%");
+        if (filled($filters['q'] ?? null)) {
+            $term = trim($filters['q']);
+            $tokens = preg_split('/[^\p{L}\p{N}]+/u', mb_strtolower($term), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+            $terms = array_values(array_unique(array_filter(
+                $tokens,
+                static fn (string $token): bool => mb_strlen($token) > 1
+                    && ! in_array($token, self::MARKETPLACE_SEARCH_STOP_WORDS, true),
+            )));
+            if ($terms === []) {
+                $terms = [$term];
+            }
+            foreach (self::LIVESTOCK_SEARCH_SYNONYMS as $synonyms) {
+                if (array_intersect($terms, $synonyms) !== []) {
+                    $terms = array_merge($terms, $synonyms);
+                }
+            }
+            $terms = array_values(array_unique($terms));
+
+            $query->where(function ($listingQuery) use ($terms): void {
+                foreach ($terms as $searchTerm) {
+                    $pattern = "%{$searchTerm}%";
+                    $listingQuery->orWhere(function ($matchingTerm) use ($pattern): void {
+                        $matchingTerm->where('name', 'like', $pattern)
+                            ->orWhere('breed', 'like', $pattern)
+                            ->orWhere('description', 'like', $pattern)
+                            ->orWhere('sex', 'like', $pattern)
+                            ->orWhere('age_months', 'like', $pattern)
+                            ->orWhere('estimated_weight_kg', 'like', $pattern)
+                            ->orWhere('quantity', 'like', $pattern)
+                            ->orWhere('price_per_head', 'like', $pattern)
+                            ->orWhere('price_per_kilo', 'like', $pattern)
+                            ->orWhere('pickup_location', 'like', $pattern)
+                            ->orWhere('health_information', 'like', $pattern)
+                            ->orWhere('vaccination_information', 'like', $pattern)
+                            ->orWhereHas('category', fn ($categoryQuery) => $categoryQuery->where('name', 'like', $pattern))
+                            ->orWhereHas('seller.sellerProfile', fn ($profileQuery) => $profileQuery
+                                ->where('shop_name', 'like', $pattern)
+                                ->orWhere('business_name', 'like', $pattern));
+                    });
+                }
             });
         }
 
-        if ($request->filled('category_id')) {
-            $query->where('category_id', (int) $request->category_id);
+        if (filled($filters['category_id'] ?? null)) {
+            $query->where('category_id', (int) $filters['category_id']);
         }
 
-        if ($request->filled('pricing_type')) {
-            $pricingType = $request->pricing_type;
+        if (filled($filters['sex'] ?? null)) {
+            $query->whereRaw('LOWER(sex) = ?', [$filters['sex']]);
+        }
+
+        if (filled($filters['min_age_months'] ?? null)) {
+            $query->where('age_months', '>=', (int) $filters['min_age_months']);
+        }
+
+        if (filled($filters['max_age_months'] ?? null)) {
+            $query->where('age_months', '<=', (int) $filters['max_age_months']);
+        }
+
+        if (filled($filters['pricing_type'] ?? null)) {
+            $pricingType = $filters['pricing_type'];
             abort_unless(in_array($pricingType, array_map(fn (PricingType $type): string => $type->value, PricingType::cases()), true), 422);
             $query->where('pricing_type', $pricingType);
         }
 
-        if ($request->filled('min_price')) {
-            $minPrice = (float) $request->min_price;
+        if (filled($filters['min_price'] ?? null)) {
+            $minPrice = (float) $filters['min_price'];
             $query->where(function ($priceQuery) use ($minPrice): void {
                 $priceQuery->where(function ($q) use ($minPrice): void {
                     $q->where('pricing_type', PricingType::PER_HEAD)
@@ -89,8 +165,8 @@ class ListingController extends Controller
             });
         }
 
-        if ($request->filled('max_price')) {
-            $maxPrice = (float) $request->max_price;
+        if (filled($filters['max_price'] ?? null)) {
+            $maxPrice = (float) $filters['max_price'];
             $query->where(function ($priceQuery) use ($maxPrice): void {
                 $priceQuery->where(function ($q) use ($maxPrice): void {
                     $q->where('pricing_type', PricingType::PER_HEAD)
@@ -118,7 +194,7 @@ class ListingController extends Controller
             'popular' => $query->orderByDesc('interests_count')->orderByDesc('created_at')->orderByDesc('id'),
         };
 
-        $listings = $query->paginate(15)->appends($request->query());
+        $listings = $query->paginate((int) ($filters['per_page'] ?? 15))->appends($request->query());
         $this->attachSellerPublicProfiles($listings->getCollection());
         $promotionPricing->attach($listings->getCollection());
 
@@ -204,6 +280,7 @@ class ListingController extends Controller
     public function mine(Request $request): JsonResponse
     {
         abort_unless($request->user()?->role === Role::SELLER, 403);
+        $sellerId = (int) $request->user()->id;
 
         $filters = $request->validate([
             'q' => ['nullable', 'string', 'max:120'],
@@ -255,8 +332,13 @@ class ListingController extends Controller
         };
         $query->orderByDesc('id');
 
+        $listings = $query->paginate(15)->appends($request->query());
+        $listings->getCollection()->each(function (LivestockListing $listing) use ($sellerId): void {
+            $listing->setAttribute('inventory_key', SellerInventoryListingKey::make($sellerId, (int) $listing->id));
+        });
+
         return response()->json([
-            'listings' => $query->paginate(15)->appends($request->query()),
+            'listings' => $listings,
             'summary' => $summary,
         ]);
     }
@@ -354,17 +436,17 @@ class ListingController extends Controller
         ]);
     }
 
-    public function submit(Request $request, LivestockListing $listing, SystemSettingsService $settings): JsonResponse
+    public function submit(Request $request, LivestockListing $listing, SystemSettingsService $settings, SellerPickupLocationService $pickupLocations): JsonResponse
     {
         abort_unless($request->user()?->role === Role::SELLER && $listing->seller_id === $request->user()->id, 403);
         abort_unless(in_array($listing->status, [ListingStatus::DRAFT, ListingStatus::REJECTED], true), 409);
 
-        $this->assertActiveListingLimit($listing->seller_id, $settings, $listing->id);
-
         if ($settings->getBoolean('seller_listing_approval_required')) {
-            DB::transaction(function () use ($listing): void {
+            DB::transaction(function () use ($listing, $settings, $pickupLocations): void {
                 $locked = LivestockListing::query()->lockForUpdate()->findOrFail($listing->id);
                 abort_unless(in_array($locked->status, [ListingStatus::DRAFT, ListingStatus::REJECTED], true), 409);
+                $pickupLocations->assertValidLocation($locked->seller_id, true);
+                $this->assertActiveListingLimit($locked->seller_id, $settings, $locked->id);
                 $locked->update(['status' => ListingStatus::PENDING_REVIEW]);
             });
             ModerateListing::dispatch($listing->id)->onConnection('database')->afterCommit();
@@ -373,11 +455,12 @@ class ListingController extends Controller
             return response()->json(['listing' => $listing]);
         }
 
-        DB::transaction(function () use ($request, $listing, $settings): void {
+        DB::transaction(function () use ($request, $listing, $settings, $pickupLocations): void {
             $locked = LivestockListing::query()->lockForUpdate()->findOrFail($listing->id);
             abort_unless($locked->seller_id === $request->user()->id, 403);
             abort_unless(in_array($locked->status, [ListingStatus::DRAFT, ListingStatus::REJECTED], true), 409);
             User::query()->lockForUpdate()->findOrFail($locked->seller_id);
+            $pickupLocations->assertValidLocation($locked->seller_id, true);
             $this->assertActiveListingLimit($locked->seller_id, $settings, $locked->id);
             $locked->update(['status' => ListingStatus::ACTIVE]);
         });
@@ -386,19 +469,22 @@ class ListingController extends Controller
         return response()->json(['listing' => $listing]);
     }
 
-    public function review(Request $request, LivestockListing $listing, SystemSettingsService $settings): JsonResponse
+    public function review(Request $request, LivestockListing $listing, SystemSettingsService $settings, SellerPickupLocationService $pickupLocations): JsonResponse
     {
         abort_unless($request->user()?->role === Role::ADMIN, 403);
         $data = $request->validate(['status' => ['required', Rule::in([ListingStatus::ACTIVE->value, ListingStatus::REJECTED->value, ListingStatus::DISABLED->value])]]);
-        abort_unless($listing->status === ListingStatus::PENDING_REVIEW, 409);
+        DB::transaction(function () use ($listing, $data, $settings, $pickupLocations): void {
+            $locked = LivestockListing::query()->lockForUpdate()->findOrFail($listing->id);
+            abort_unless($locked->status === ListingStatus::PENDING_REVIEW, 409);
+            if ($data['status'] === ListingStatus::ACTIVE->value) {
+                User::query()->lockForUpdate()->findOrFail($locked->seller_id);
+                $pickupLocations->assertValidLocation($locked->seller_id, true);
+                $this->assertActiveListingLimit($locked->seller_id, $settings, $locked->id);
+            }
+            $locked->update(['status' => $data['status']]);
+        });
 
-        if ($data['status'] === ListingStatus::ACTIVE->value) {
-            $this->assertActiveListingLimit($listing->seller_id, $settings, $listing->id);
-        }
-
-        $listing->update(['status' => $data['status']]);
-
-        return response()->json(['listing' => $listing]);
+        return response()->json(['listing' => $listing->fresh()]);
     }
 
     private function assertActiveListingLimit(int $sellerId, SystemSettingsService $settings, ?int $excludeListingId = null): void
@@ -435,7 +521,7 @@ class ListingController extends Controller
             'images' => ['nullable', 'array', 'max:5'],
             'images.*' => ['url:http,https', 'max:2048'],
             'image_files' => ['nullable', 'array', 'max:5'],
-            'image_files.*' => ['file', 'image', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
+            'image_files.*' => ['file', 'image', 'mimes:jpg,jpeg,png,webp', 'max:10240', new ValidFarmgateImage],
         ]);
 
         if (count($data['images'] ?? []) + count($data['image_files'] ?? []) > 5) {
@@ -459,10 +545,7 @@ class ListingController extends Controller
         }
 
         foreach ($files as $index => $file) {
-            $path = $file->storePublicly('listing-images', 'public');
-            if (! is_string($path) || $path === '') {
-                throw new \RuntimeException('Listing photo storage failed.');
-            }
+            $path = app(ImageUploadService::class)->storeOptimized($file, 'listing-images', 'public');
             $storedPaths[] = $path;
             /** @var FilesystemAdapter $publicDisk */
             $publicDisk = Storage::disk('public');

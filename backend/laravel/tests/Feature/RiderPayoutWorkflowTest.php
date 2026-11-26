@@ -7,6 +7,7 @@ use App\Enums\OrderStatus;
 use App\Enums\Role;
 use App\Models\Delivery;
 use App\Models\Order;
+use App\Models\RiderEarningHistory;
 use App\Models\RiderPayoutDestination;
 use App\Models\RiderPayoutMethod;
 use App\Models\RiderProfile;
@@ -60,6 +61,34 @@ class RiderPayoutWorkflowTest extends TestCase
             'action' => 'CALCULATED',
             'to_status' => 'READY',
         ]);
+    }
+
+    public function test_admin_can_list_rider_earnings_with_system_and_admin_history_actors(): void
+    {
+        $admin = User::factory()->create(['role' => Role::ADMIN]);
+        $actors = $this->completedDelivery();
+        app(SystemSettingsService::class)->update([
+            'rider_base_compensation' => 40,
+            'rider_per_km_compensation' => 10,
+            'rider_minimum_compensation' => 50,
+            'rider_maximum_compensation' => 100,
+        ], $admin->id, 'Configure rider compensation for earnings listing coverage.');
+        $earning = app(RiderEarningsService::class)->recordCompletedDelivery($actors['delivery']);
+        RiderEarningHistory::query()->create([
+            'rider_earning_id' => $earning->id,
+            'actor_id' => $admin->id,
+            'action' => 'REVIEWED',
+            'from_status' => 'PENDING_ELIGIBILITY',
+            'to_status' => 'READY',
+            'reason' => 'Administrator reviewed the delivery evidence and approved the earning.',
+        ]);
+
+        $this->actingAs($admin)
+            ->getJson('/api/admin/rider-earnings?page=1&per_page=10&sort=newest&search=')
+            ->assertOk()
+            ->assertJsonPath('earnings.data.0.id', $earning->id)
+            ->assertJsonPath('earnings.data.0.history.0.actor', 'System')
+            ->assertJsonPath('earnings.data.0.history.1.actor', $admin->name);
     }
 
     public function test_rider_payout_destination_is_encrypted_masked_and_requires_admin_verification(): void
@@ -200,7 +229,10 @@ class RiderPayoutWorkflowTest extends TestCase
             'amount_cents' => $firstResponse->json('payout.amount_cents'),
             'transfer_date' => today()->toDateString(),
             'reason' => 'Independently checked bank statement and confirmed external settlement.',
-            'receipt' => UploadedFile::fake()->create('receipt.pdf', 20, 'application/pdf'),
+            'receipt' => UploadedFile::fake()->createWithContent(
+                'receipt.pdf',
+                "%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n",
+            ),
         ];
         $this->actingAs($creator)
             ->post('/api/admin/rider-payouts/'.$payoutId.'/manual-confirm', $transfer)

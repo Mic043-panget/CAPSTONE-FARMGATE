@@ -238,7 +238,7 @@ class FeedbackDisputeTest extends TestCase
         ])->assertCreated();
         $reviewId = $response->json('review.id');
         $mediaId = $response->json('review.media.0.id');
-        $this->assertDatabaseHas('review_media', ['review_id' => $reviewId, 'mime_type' => 'image/jpeg']);
+        $this->assertDatabaseHas('review_media', ['review_id' => $reviewId, 'mime_type' => 'image/webp']);
 
         $this->actingAs($reporter)->postJson("/api/buyer/reviews/{$reviewId}/reports", ['reason' => 'Please verify this review.'])->assertCreated();
         $this->actingAs($admin)->getJson('/api/admin/reviews/reports')->assertOk()
@@ -316,7 +316,7 @@ class FeedbackDisputeTest extends TestCase
         $this->assertDatabaseHas('complaints', ['id' => $caseId, 'payout_reference' => 'BANK-TRANSFER-01', 'refund_status' => 'PAID']);
         $this->assertDatabaseHas('order_activities', ['order_id' => $order->id, 'activity_key' => 'COD_PAYOUT_RECORDED']);
         $this->actingAs($admin)->get("/api/cases/{$caseId}/payout-evidence")->assertOk()
-            ->assertHeader('Content-Type', 'image/png');
+            ->assertHeader('Content-Type', 'image/webp');
 
         $this->travel(8)->days();
         $this->actingAs($buyer)->postJson("/api/orders/{$order->id}/return-refund", [

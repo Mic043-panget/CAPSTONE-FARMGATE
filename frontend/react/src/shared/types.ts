@@ -28,6 +28,12 @@ export type Listing = {
     id: number;
     name: string;
     breed?: string;
+    description?: string | null;
+    sex?: string | null;
+    age_months?: number | null;
+    pickup_location?: string | null;
+    health_information?: string | null;
+    vaccination_information?: string | null;
     pricing_type: 'PER_KILO' | 'PER_HEAD';
     price_per_kilo?: string;
     price_per_head?: string;
@@ -42,7 +48,7 @@ export type Listing = {
         discount_value: string;
         ends_at: string;
     } | null;
-    estimated_weight_kg?: string;
+    estimated_weight_kg?: string | null;
     quantity: number;
     category: Category;
     seller: {

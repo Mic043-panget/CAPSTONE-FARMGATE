@@ -1,24 +1,24 @@
 import React from 'react';
+import { getApps, initializeApp } from 'firebase/app';
+import { deleteToken, getMessaging, getToken, isSupported } from 'firebase/messaging';
 import api from '../../lib/api';
 
-type PushConfig = { enabled: boolean; public_key: string | null };
+type FirebaseWebConfig = {
+    apiKey: string;
+    authDomain: string;
+    projectId: string;
+    storageBucket?: string;
+    messagingSenderId: string;
+    appId: string;
+};
 
-function decodePushKey(value: string): ArrayBuffer {
-    const padded = value + '='.repeat((4 - value.length % 4) % 4);
-    const binary = window.atob(padded.replaceAll('-', '+').replaceAll('_', '/'));
-    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
-    const buffer = new ArrayBuffer(bytes.length);
-    new Uint8Array(buffer).set(bytes);
+type PushConfig = { enabled: boolean; firebase: FirebaseWebConfig | null; vapid_key: string | null };
 
-    return buffer;
-}
+function firebaseMessaging(config: FirebaseWebConfig) {
+    const app = getApps().find((candidate) => candidate.name === '[DEFAULT]')
+        ?? initializeApp(config);
 
-function samePushKey(current: ArrayBuffer | null, expected: ArrayBuffer): boolean {
-    if (!current) return false;
-    const actual = new Uint8Array(current);
-    const expectedBytes = new Uint8Array(expected);
-
-    return actual.length === expectedBytes.length && actual.every((value, index) => value === expectedBytes[index]);
+    return getMessaging(app);
 }
 
 type DeviceNotificationSettingsState = {
@@ -39,6 +39,7 @@ export function useDeviceNotificationSettings(): DeviceNotificationSettingsState
     const [browserPermissionMessage, setBrowserPermissionMessage] = React.useState('');
     const [pushConfig, setPushConfig] = React.useState<PushConfig | null>(null);
     const [pushSubscribed, setPushSubscribed] = React.useState(false);
+    const [pushToken, setPushToken] = React.useState<string | null>(null);
     const [pushBusy, setPushBusy] = React.useState(false);
     const [pushMessage, setPushMessage] = React.useState('');
 
@@ -48,29 +49,22 @@ export function useDeviceNotificationSettings(): DeviceNotificationSettingsState
             .then(async ({ data }) => {
                 if (!active) return;
                 setPushConfig(data);
-                if (!data.enabled || !data.public_key
+                if (!data.enabled || !data.firebase || !data.vapid_key
                     || browserPermission !== 'granted'
                     || !('serviceWorker' in navigator)
                     || !('PushManager' in window)) return;
+                if (!await isSupported()) return;
 
                 const registration = await navigator.serviceWorker.register('/service-worker.js');
-                let subscription = await registration.pushManager.getSubscription();
-                const serverKey = decodePushKey(data.public_key);
-                if (subscription && !samePushKey(subscription.options.applicationServerKey, serverKey)) {
-                    await subscription.unsubscribe();
-                    subscription = null;
-                }
-                if (!subscription) return;
-
-                const serialized = subscription.toJSON();
-                if (serialized.endpoint && serialized.keys?.p256dh && serialized.keys.auth) {
-                    await api.post('/api/notifications/push-subscriptions', {
-                        endpoint: serialized.endpoint,
-                        expirationTime: serialized.expirationTime,
-                        keys: serialized.keys,
-                        contentEncoding: 'aes128gcm',
-                    });
-                    if (active) setPushSubscribed(true);
+                const token = await getToken(firebaseMessaging(data.firebase), {
+                    vapidKey: data.vapid_key,
+                    serviceWorkerRegistration: registration,
+                });
+                if (!token) return;
+                await api.post('/api/notifications/push-subscriptions', { provider: 'fcm', token });
+                if (active) {
+                    setPushToken(token);
+                    setPushSubscribed(true);
                 }
             })
             .catch((requestError: { userMessage?: string }) => {
@@ -81,11 +75,11 @@ export function useDeviceNotificationSettings(): DeviceNotificationSettingsState
     }, [browserPermission]);
 
     async function enableBrowserNotifications(): Promise<void> {
-        if (browserPermission === 'unsupported' || !('serviceWorker' in navigator) || !('PushManager' in window) || !window.isSecureContext) {
+        if (browserPermission === 'unsupported' || !('serviceWorker' in navigator) || !('PushManager' in window) || !window.isSecureContext || !await isSupported()) {
             setBrowserPermissionMessage('Background device notifications are not supported here. In-app notifications and email remain available.');
             return;
         }
-        if (!pushConfig?.enabled || !pushConfig.public_key) {
+        if (!pushConfig?.enabled || !pushConfig.firebase || !pushConfig.vapid_key) {
             setBrowserPermissionMessage('Device notifications are not configured on this Farmgate server. In-app notifications and email remain available.');
             return;
         }
@@ -99,26 +93,13 @@ export function useDeviceNotificationSettings(): DeviceNotificationSettingsState
             }
 
             const registration = await navigator.serviceWorker.register('/service-worker.js');
-            const serverKey = decodePushKey(pushConfig.public_key);
-            let subscription = await registration.pushManager.getSubscription();
-            if (subscription && !samePushKey(subscription.options.applicationServerKey, serverKey)) {
-                await subscription.unsubscribe();
-                subscription = null;
-            }
-            subscription ??= await registration.pushManager.subscribe({
-                userVisibleOnly: true,
-                applicationServerKey: serverKey,
+            const token = await getToken(firebaseMessaging(pushConfig.firebase), {
+                vapidKey: pushConfig.vapid_key,
+                serviceWorkerRegistration: registration,
             });
-            const serialized = subscription.toJSON();
-            if (!serialized.endpoint || !serialized.keys?.p256dh || !serialized.keys.auth) {
-                throw new Error('The browser returned an incomplete device subscription.');
-            }
-            await api.post('/api/notifications/push-subscriptions', {
-                endpoint: serialized.endpoint,
-                expirationTime: serialized.expirationTime,
-                keys: serialized.keys,
-                contentEncoding: 'aes128gcm',
-            });
+            if (!token) throw new Error('Firebase did not return a device registration token.');
+            await api.post('/api/notifications/push-subscriptions', { provider: 'fcm', token });
+            setPushToken(token);
             setPushSubscribed(true);
             setBrowserPermissionMessage('Device notifications are enabled. Important updates can appear even when Farmgate is closed.');
         } catch (requestError) {
@@ -133,12 +114,15 @@ export function useDeviceNotificationSettings(): DeviceNotificationSettingsState
     async function disableDeviceNotifications(): Promise<void> {
         setPushBusy(true);
         try {
-            const registration = await navigator.serviceWorker.getRegistration('/service-worker.js');
-            const subscription = await registration?.pushManager.getSubscription();
-            if (subscription) {
-                await api.delete('/api/notifications/push-subscriptions', { data: { endpoint: subscription.endpoint } });
-                await subscription.unsubscribe();
+            if (pushToken && pushConfig?.firebase) {
+                await api.delete('/api/notifications/push-subscriptions', {
+                    data: { provider: 'fcm', token: pushToken },
+                });
+                if (await isSupported()) {
+                    await deleteToken(firebaseMessaging(pushConfig.firebase));
+                }
             }
+            setPushToken(null);
             setPushSubscribed(false);
             setBrowserPermissionMessage('Device notifications are disabled for this browser. In-app notifications and email remain available.');
         } catch (requestError) {
@@ -176,7 +160,7 @@ export function NotificationDeviceSettingsControls({
         ? 'Device notifications are unavailable on this browser or device. In-app notifications and email remain available.'
         : browserPermission === 'denied'
             ? 'Device notification permission is blocked in browser settings. In-app notifications and email remain available.'
-            : pushConfig?.enabled === false
+            : pushConfig?.enabled === false || !pushConfig?.firebase || !pushConfig?.vapid_key
                 ? 'Device notifications are not configured on this Farmgate server. In-app notifications and email remain available.'
                 : 'Allow browser permission to receive important updates on this device, even when Farmgate is closed.');
 

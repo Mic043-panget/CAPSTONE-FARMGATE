@@ -12,6 +12,8 @@ use App\Models\FarmgateEventHistory;
 use App\Models\SellerPromotion;
 use App\Models\User;
 use App\Notifications\CalendarEventNotification;
+use App\Rules\ValidFarmgateImage;
+use App\Services\ImageUploadService;
 use App\Services\SystemSettingsService;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
@@ -154,7 +156,7 @@ class EventController extends Controller
         $data = $this->validated($request, $user->role === Role::ADMIN);
         $image = $data['image'] ?? null;
         unset($data['image']);
-        $imagePath = $image?->storePublicly('calendar-events', 'public');
+        $imagePath = $image ? app(ImageUploadService::class)->storeOptimized($image, 'calendar-events', 'public') : null;
         if ($image && (! is_string($imagePath) || $imagePath === '')) {
             throw new \RuntimeException('Calendar event image storage failed.');
         }
@@ -197,7 +199,7 @@ class EventController extends Controller
         $image = $data['image'] ?? null;
         $removeImage = (bool) ($data['remove_image'] ?? false);
         unset($data['image'], $data['remove_image']);
-        $newImagePath = $image?->storePublicly('calendar-events', 'public');
+        $newImagePath = $image ? app(ImageUploadService::class)->storeOptimized($image, 'calendar-events', 'public') : null;
         if ($image && (! is_string($newImagePath) || $newImagePath === '')) {
             throw new \RuntimeException('Calendar event image storage failed.');
         }
@@ -588,7 +590,7 @@ class EventController extends Controller
             'timezone' => ['required', 'timezone'],
             'location' => ['nullable', 'string', 'max:255', 'required_without:online_url'],
             'online_url' => ['nullable', 'url', 'max:2048', 'required_without:location'],
-            'image' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
+            'image' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:10240', new ValidFarmgateImage],
             'remove_image' => ['sometimes', 'boolean'],
             'audience' => ['required', Rule::in($admin ? self::AUDIENCES : ['PUBLIC'])],
             'promotion_id' => ['nullable', 'integer', Rule::exists('seller_promotions', 'id')],

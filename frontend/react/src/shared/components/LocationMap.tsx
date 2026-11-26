@@ -42,9 +42,14 @@ export function LocationMap({ latitude, longitude, onChange, tooltip = 'Drag to 
         });
         mapRef.current = map;
         markerRef.current = marker;
-        requestAnimationFrame(() => map.invalidateSize());
+        const invalidateFrame = requestAnimationFrame(() => {
+            if (mapRef.current === map && containerRef.current?.isConnected) {
+                map.invalidateSize();
+            }
+        });
 
         return () => {
+            cancelAnimationFrame(invalidateFrame);
             map.remove();
             mapRef.current = null;
             markerRef.current = null;

@@ -6,8 +6,11 @@ use App\Enums\Role;
 use App\Http\Controllers\Controller;
 use App\Models\RiderPayout;
 use App\Models\RiderPayoutDestination;
+use App\Rules\ValidFarmgateImage;
+use App\Services\ImageUploadService;
 use App\Services\RiderPayoutService;
 use App\Services\SystemSettingsService;
+use App\Support\FarmgateImage;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -113,22 +116,28 @@ class RiderPayoutController extends Controller
             'paid_at' => ['required', 'date', 'after_or_equal:'.$payout->created_at->toDateString(), 'before_or_equal:today'],
             'reason' => ['required', 'string', 'min:8', 'max:500'],
             'externally_completed_confirmed' => ['required', 'accepted'],
-            'receipt' => ['required', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:10240'],
+            'receipt' => ['required', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:10240', new ValidFarmgateImage(['application/pdf'])],
         ]);
         $reason = $settings->sanitizeFinancialReason($data['reason']);
         $reason = $this->safeReason($reason, $payout->destination);
         abort_if(mb_strlen((string) $reason) < 8, 422, 'The sanitized payout reason must contain at least eight characters.');
         $request->merge(['reason' => $reason]);
         $file = $request->file('receipt');
-        $extension = $file->guessExtension();
-        abort_if(! $extension, 422, 'The payout receipt type could not be identified.');
-        $receiptPath = 'rider-payout-receipts/'.Str::random(40).'.'.$extension;
-        $storedPath = $file->storeAs('rider-payout-receipts', basename($receiptPath), 'delivery_proofs');
-        abort_unless(
-            $storedPath === $receiptPath && Storage::disk('delivery_proofs')->exists($receiptPath),
-            500,
-            'The payout receipt could not be securely stored.',
-        );
+        if (FarmgateImage::isImage($file)) {
+            $stored = app(ImageUploadService::class)->storeEvidence($file, 'rider-payout-receipts', 'delivery_proofs');
+            $receiptPath = $stored['path'];
+            $receiptMime = $stored['mime_type'];
+        } else {
+            $extension = $file->guessExtension();
+            abort_if(! $extension, 422, 'The payout receipt type could not be identified.');
+            $receiptPath = 'rider-payout-receipts/'.Str::random(40).'.'.$extension;
+            abort_unless(
+                $file->storeAs('rider-payout-receipts', basename($receiptPath), 'delivery_proofs') === $receiptPath,
+                503,
+                'The payout receipt could not be securely stored. Please retry.',
+            );
+            $receiptMime = $file->getMimeType() ?? $file->getClientMimeType() ?? 'application/octet-stream';
+        }
 
         try {
             $updated = $service->confirmManualPayout(
@@ -139,11 +148,11 @@ class RiderPayoutController extends Controller
                 $reason,
                 $data['paid_at'],
                 $receiptPath,
-                $file->getMimeType() ?? $file->getClientMimeType() ?? 'application/octet-stream',
+                $receiptMime,
                 (int) $data['amount_cents'],
             );
         } catch (Throwable $exception) {
-            Storage::disk('delivery_proofs')->delete($receiptPath);
+            app(ImageUploadService::class)->deleteEvidence($receiptPath, 'delivery_proofs');
             throw $exception;
         }
         $updated->setAttribute('payout_reference', $this->payoutReference($updated->id));
@@ -170,10 +179,13 @@ class RiderPayoutController extends Controller
         $path = $payout->receipt_path;
         abort_unless(filled($path), 404, 'Rider payout receipt is unavailable.');
         $disk = Storage::disk('delivery_proofs');
-        abort_unless($disk->exists($path), 404, 'Rider payout receipt is unavailable.');
+        $previewPath = app(ImageUploadService::class)->previewPath($path);
+        $usePreview = $disk->exists($previewPath);
+        $streamPath = $usePreview ? $previewPath : $path;
+        abort_unless($disk->exists($streamPath), 404, 'Rider payout receipt is unavailable.');
 
-        return response()->stream(function () use ($disk, $path): void {
-            $stream = $disk->readStream($path);
+        return response()->stream(function () use ($disk, $streamPath): void {
+            $stream = $disk->readStream($streamPath);
             if (! is_resource($stream)) {
                 throw new \RuntimeException('The private rider payout receipt could not be opened.');
             }
@@ -183,7 +195,7 @@ class RiderPayoutController extends Controller
                 fclose($stream);
             }
         }, 200, [
-            'Content-Type' => $payout->receipt_mime_type ?? 'application/octet-stream',
+            'Content-Type' => $usePreview ? 'image/webp' : ($payout->receipt_mime_type ?? 'application/octet-stream'),
             'Content-Disposition' => 'inline; filename="farmgate-rider-payout-receipt"',
             'Cache-Control' => 'private, no-store',
             'X-Content-Type-Options' => 'nosniff',

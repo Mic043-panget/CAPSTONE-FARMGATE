@@ -16,7 +16,7 @@ import { AdminPromotionsPage } from './AdminPromotionsPage';
 import { AdminDeliveryDetails } from './AdminDeliveryDetails';
 import { AdminPaymentsPage } from './AdminPaymentsPage';
 import api from '../../lib/api';
-import { WorkspaceAccountControl, WorkspaceMobileHeader, useWorkspaceMobileMenu } from '../shared/WorkspaceMobileHeader';
+import { WorkspaceAccountControl, WorkspaceMobileHeader, WorkspaceNotificationsButton, useWorkspaceMobileMenu } from '../shared/WorkspaceMobileHeader';
 import { WorkspaceBannerArtwork } from '../shared/WorkspaceBannerArtwork';
 import { RoleMobileBottomNavigation } from '../shared/RoleMobileBottomNavigation';
 import { FarmgateBrand } from '../shared/FarmgateBrand';
@@ -445,9 +445,7 @@ export function AdminWorkspace({ onError, onLogout, userName, profilePhotoUrl }:
                 </div>
                 <WorkspaceBannerArtwork />
                 <div className="role-header-context">
-                    <button className={`admin-notifications-header-link${page === 'notifications' ? ' active' : ''}`} type="button" aria-label="Notifications" aria-current={page === 'notifications' ? 'page' : undefined} title="Notifications" onClick={() => navigate('notifications')}>
-                        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                    </button>
+                    <WorkspaceNotificationsButton count={unreadNotificationCount} active={page === 'notifications'} onClick={() => navigate('notifications')} />
                     <WorkspaceAccountControl role="admin" userName={userName} profilePhotoUrl={profilePhotoUrl} onOpenAccount={() => { setSettingsInitialCategory('account'); navigate('settings'); }} />
                 </div>
             </header>

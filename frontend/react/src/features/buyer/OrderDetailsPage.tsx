@@ -268,7 +268,7 @@ export function OrderDetailsPage({ orderId, user, onBack, onChatWithSeller, onOp
                     <p className="eyebrow">From</p>
                     <h2>Seller shipping address</h2>
                     <p className="buyer-order-address-name">{order.seller?.name ?? 'Seller'}</p>
-                    {order.seller?.id && <button className="seller-shop-inline-link" type="button" onClick={() => { if (order.seller) onOpenSeller(order.seller.id); }}>Visit seller shop</button>}
+                    {order.seller?.id && <button className="seller-shop-inline-link" type="button" onClick={() => { if (order.seller) onOpenSeller(order.seller.id); }}>Visit seller farm</button>}
                     <p>{sellerAddress || 'Street address not provided; use the pinned seller location on the map.'}</p>
                     {sellerCoordinates && <p className="buyer-order-address-coordinates">Pinned location: {sellerCoordinates}</p>}
                 </article>
@@ -326,7 +326,7 @@ export function OrderDetailsPage({ orderId, user, onBack, onChatWithSeller, onOp
                     <h2 id="buyer-order-receipt-title">Order {order.order_reference}</h2>
                     <p className="buyer-order-receipt-meta">{new Date(order.created_at).toLocaleString()} · {displayOrderStatus}</p>
                     <p className="buyer-order-receipt-meta">Payment reference: {order.payment_reference ?? 'Not available'}</p>
-                    {order.delivery?.delivery_reference && <p className="buyer-order-receipt-meta">Delivery reference: {order.delivery.delivery_reference}</p>}
+                    {order.delivery?.delivery_reference && <p className="buyer-order-receipt-meta receipt-print-exclude">Delivery reference: {order.delivery.delivery_reference}</p>}
                     <div className="buyer-order-receipt-parties"><div><strong>Seller</strong><span>{order.seller?.name ?? 'Seller'}</span></div><div><strong>Buyer</strong><span>{order.shipping_address?.recipient_name ?? user.name}</span></div></div>
                     <div className="buyer-order-receipt-address"><strong>Seller shipping address</strong><span>{sellerAddress || 'Address not provided'}</span></div>
                     <div className="buyer-order-receipt-address"><strong>{order.delivery_method === 'SELF_PICKUP' ? 'Buyer pickup location' : 'Buyer shipping address'}</strong><span>{deliveryAddress}</span></div>

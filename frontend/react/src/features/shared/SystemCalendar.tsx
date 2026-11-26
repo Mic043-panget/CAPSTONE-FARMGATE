@@ -5,6 +5,8 @@ import { Pagination } from '../../shared/components/Pagination';
 import { LoadingSkeleton } from '../../shared/components/LoadingSkeleton';
 import { FarmgateDetailDialog } from './FarmgateDetailDialog';
 import { ViewDetailsAction } from '../../shared/components/Button';
+import { ImageUploadPreview, IMAGE_UPLOAD_HINT, imageUploadError } from '../../shared/components/ImageUploadPreview';
+import { FileDropzone } from '../../shared/components/FileDropzone';
 
 type CalendarRole = 'BUYER' | 'SELLER' | 'RIDER' | 'ADMIN';
 type CalendarEntry = {
@@ -531,8 +533,18 @@ export function SystemCalendar({ role, onError, onOpenDelivery }: {
                 <label>Location<input maxLength={255} value={form.location} onChange={(event) => setForm({ ...form, location: event.target.value, online_url: '' })} placeholder="Venue or meeting place" /></label>
                 <label>Online link<input type="url" maxLength={2048} value={form.online_url} onChange={(event) => setForm({ ...form, online_url: event.target.value, location: '' })} placeholder="https://" /></label>
                 {role === 'ADMIN' && form.category === 'PROMOTION_CAMPAIGN' && <label>Existing promotion ID<input type="number" min="1" value={form.promotion_id} onChange={(event) => setForm({ ...form, promotion_id: event.target.value })} /></label>}
-                <label>Event image<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setImage(event.target.files?.[0] ?? null)} /></label>
+                <div><FileDropzone label="Event image" accept="image/jpeg,image/png,image/webp" onFiles={(files) => {
+                    const selected = files[0] ?? null;
+                    const validationError = selected ? imageUploadError(selected) : null;
+                    if (validationError) {
+                        setError(validationError);
+                        return;
+                    }
+                    setError('');
+                    setImage(selected);
+                }} helperText={IMAGE_UPLOAD_HINT} /></div>
             </div>
+            <ImageUploadPreview file={image} alt="Selected event image preview" />
             <label className="calendar-description-field">Description<textarea required maxLength={5000} rows={4} value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} /></label>
             <div className="calendar-form-actions"><button type="submit" disabled={saving}>{saving ? 'Saving...' : editing ? 'Save changes' : role === 'ADMIN' ? 'Create event' : 'Submit for review'}</button>{editing && <button type="button" onClick={resetForm}>Stop editing</button>}</div>
             </form>

@@ -1,6 +1,8 @@
 import React from 'react';
 import api from '../../lib/api';
 import { DeliveryProofSummary } from '../shared/DeliveryProofSummary';
+import { ImageUploadPreview, IMAGE_UPLOAD_HINT, imageUploadError } from '../../shared/components/ImageUploadPreview';
+import { FileDropzone } from '../../shared/components/FileDropzone';
 
 type Correction = { reason: string; created_at: string; corrected_by?: { name: string } | null };
 
@@ -15,7 +17,6 @@ export function AdminDeliveryProofActions({ row, onCorrected }: {
     const [reason, setReason] = React.useState('');
     const [saving, setSaving] = React.useState(false);
     const [error, setError] = React.useState('');
-    const photoInputRef = React.useRef<HTMLInputElement>(null);
     const corrections: Correction[] = row.proof_corrections ?? [];
 
     React.useEffect(() => {
@@ -39,7 +40,6 @@ export function AdminDeliveryProofActions({ row, onCorrected }: {
             await api.post(`/api/admin/deliveries/${row.id}/proof-correction`, formData);
             setPhoto(null);
             setPhotoCapturedAt('');
-            if (photoInputRef.current) photoInputRef.current.value = '';
             setReason('');
             setEditing(false);
             onCorrected();
@@ -65,11 +65,18 @@ export function AdminDeliveryProofActions({ row, onCorrected }: {
             </button>
             {editing && <form className="admin-proof-correction-form" onSubmit={(event) => void submitCorrection(event)}>
                 <label>Correct recipient name<input value={recipientName} onChange={(event) => setRecipientName(event.target.value)} maxLength={120} /></label>
-                <label>Replacement photo (optional)<input ref={photoInputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => {
-                    const selected = event.target.files?.[0] ?? null;
+                <FileDropzone label="Replacement photo (optional)" accept="image/jpeg,image/png,image/webp" disabled={saving} onFiles={(files) => {
+                    const selected = files[0] ?? null;
+                    const validationError = selected ? imageUploadError(selected) : null;
+                    if (validationError) {
+                        setError(validationError);
+                        return;
+                    }
                     setPhoto(selected);
                     setPhotoCapturedAt(selected ? new Date().toISOString() : '');
-                }} /></label>
+                    setError('');
+                }} helperText={`${IMAGE_UPLOAD_HINT} The replacement is retained as evidentiary original.`} />
+                <ImageUploadPreview file={photo} alt="Selected replacement delivery proof preview" />
                 <label>Correction reason (required)<textarea value={reason} onChange={(event) => setReason(event.target.value)} required minLength={5} maxLength={500} /></label>
                 {error && <p role="alert">{error}</p>}
                 <button type="submit" disabled={saving || !reason.trim() || (!photo && !recipientName.trim())}>{saving ? 'Saving…' : 'Save audited correction'}</button>

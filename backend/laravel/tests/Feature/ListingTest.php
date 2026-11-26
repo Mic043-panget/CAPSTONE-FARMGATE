@@ -13,6 +13,7 @@ use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\Review;
 use App\Models\User;
+use App\Services\SellerPickupLocationService;
 use App\Services\SystemSettingsService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -27,6 +28,11 @@ class ListingTest extends TestCase
             'role' => Role::SELLER,
             'email_verified_at' => now(),
             'phone_verified_at' => null,
+        ]);
+        $seller->sellerProfile()->create([
+            'latitude' => 12.6,
+            'longitude' => 121.1,
+            'pickup_location_confirmed' => true,
         ]);
         $category = Category::create(['name' => 'Swine', 'slug' => 'swine']);
 
@@ -57,6 +63,100 @@ class ListingTest extends TestCase
             'pricing_type' => PricingType::PER_HEAD->value,
             'price_per_head' => 1000,
         ])->assertForbidden();
+    }
+
+    public function test_seller_cannot_submit_or_admin_activate_a_listing_without_a_saved_pickup_location(): void
+    {
+        $admin = User::factory()->create(['role' => Role::ADMIN]);
+        $seller = User::factory()->create(['role' => Role::SELLER]);
+        $category = Category::create(['name' => 'Goat', 'slug' => 'goat']);
+        $listing = LivestockListing::create([
+            'seller_id' => $seller->id,
+            'category_id' => $category->id,
+            'name' => 'Pickup-required goat',
+            'quantity' => 1,
+            'pricing_type' => PricingType::PER_HEAD,
+            'price_per_head' => 1000,
+            'status' => ListingStatus::DRAFT,
+        ]);
+
+        app(SystemSettingsService::class)->update(['seller_listing_approval_required' => false], $admin->id, 'Pickup requirement test');
+        $this->actingAs($seller)->postJson("/api/seller/listings/{$listing->id}/submit")
+            ->assertStatus(422)
+            ->assertJsonPath('message', SellerPickupLocationService::REQUIRED_MESSAGE);
+        $this->assertSame(ListingStatus::DRAFT, $listing->fresh()->status);
+
+        app(SystemSettingsService::class)->update(['seller_listing_approval_required' => true], $admin->id, 'Pickup requirement test');
+        $this->actingAs($seller)->postJson("/api/seller/listings/{$listing->id}/submit")
+            ->assertStatus(422)
+            ->assertJsonPath('message', SellerPickupLocationService::REQUIRED_MESSAGE);
+        $this->assertSame(ListingStatus::DRAFT, $listing->fresh()->status);
+
+        $listing->update(['status' => ListingStatus::PENDING_REVIEW]);
+        $this->actingAs($admin)->postJson("/api/admin/listings/{$listing->id}/review", ['status' => ListingStatus::ACTIVE->value])
+            ->assertStatus(422)
+            ->assertJsonPath('message', SellerPickupLocationService::REQUIRED_MESSAGE);
+        $this->assertSame(ListingStatus::PENDING_REVIEW, $listing->fresh()->status);
+
+        $this->actingAs($seller)->putJson('/api/seller/profile/location', [
+            'latitude' => 12.6,
+            'longitude' => 121.1,
+        ])->assertOk()->assertJsonPath('profile.pickup_location_confirmed', true);
+        $listing->update(['status' => ListingStatus::DRAFT]);
+        $this->actingAs($seller)->postJson("/api/seller/listings/{$listing->id}/submit")
+            ->assertOk()
+            ->assertJsonPath('listing.status', ListingStatus::PENDING_REVIEW->value);
+        $this->actingAs($admin)->postJson("/api/admin/listings/{$listing->id}/review", ['status' => ListingStatus::ACTIVE->value])
+            ->assertOk()
+            ->assertJsonPath('listing.status', ListingStatus::ACTIVE->value);
+    }
+
+    public function test_invalid_confirmed_pickup_coordinates_block_seller_submission_and_admin_activation(): void
+    {
+        $admin = User::factory()->create(['role' => Role::ADMIN]);
+        $seller = User::factory()->create(['role' => Role::SELLER]);
+        $seller->sellerProfile()->create([
+            'latitude' => 91,
+            'longitude' => 121.1,
+            'pickup_location_confirmed' => true,
+        ]);
+        $category = Category::create(['name' => 'Cattle', 'slug' => 'invalid-pickup-cattle']);
+        $listing = LivestockListing::create([
+            'seller_id' => $seller->id,
+            'category_id' => $category->id,
+            'name' => 'Invalid pickup pin listing',
+            'quantity' => 1,
+            'pricing_type' => PricingType::PER_HEAD,
+            'price_per_head' => 1000,
+            'status' => ListingStatus::DRAFT,
+        ]);
+
+        app(SystemSettingsService::class)->update(['seller_listing_approval_required' => false], $admin->id, 'Invalid pickup test');
+        $this->actingAs($seller)->postJson("/api/seller/listings/{$listing->id}/submit")
+            ->assertStatus(422)
+            ->assertJsonPath('message', SellerPickupLocationService::REQUIRED_MESSAGE);
+        $this->assertSame(ListingStatus::DRAFT, $listing->fresh()->status);
+
+        $listing->update(['status' => ListingStatus::PENDING_REVIEW]);
+        $this->actingAs($admin)->postJson("/api/admin/listings/{$listing->id}/review", ['status' => ListingStatus::ACTIVE->value])
+            ->assertStatus(422)
+            ->assertJsonPath('message', SellerPickupLocationService::REQUIRED_MESSAGE);
+        $this->assertSame(ListingStatus::PENDING_REVIEW, $listing->fresh()->status);
+    }
+
+    public function test_seller_must_save_a_real_pickup_pin_before_it_is_confirmed(): void
+    {
+        $seller = User::factory()->create(['role' => Role::SELLER]);
+        $this->actingAs($seller)->putJson('/api/seller/profile/location', [
+            'latitude' => 0,
+            'longitude' => 0,
+        ])->assertStatus(422);
+
+        $this->actingAs($seller)->putJson('/api/seller/profile/location', [
+            'latitude' => 12.6,
+            'longitude' => 121.1,
+        ])->assertOk()
+            ->assertJsonPath('profile.pickup_location_confirmed', true);
     }
 
     public function test_seller_with_verified_mobile_can_create_a_listing_without_verified_email(): void
@@ -116,11 +216,51 @@ class ListingTest extends TestCase
         $this->getJson('/api/listings')->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.name', 'Visible');
     }
 
+    public function test_marketplace_supports_load_more_page_sizes_without_changing_the_default(): void
+    {
+        $seller = User::factory()->create(['role' => Role::SELLER]);
+        $category = Category::create(['name' => 'Cattle', 'slug' => 'cattle']);
+        for ($index = 1; $index <= 21; $index++) {
+            $listing = new LivestockListing([
+                'category_id' => $category->id,
+                'name' => "Farm listing {$index}",
+                'quantity' => 1,
+                'pricing_type' => PricingType::PER_HEAD,
+                'price_per_head' => 50000,
+                'status' => ListingStatus::ACTIVE,
+            ]);
+            $listing->seller_id = $seller->id;
+            $listing->save();
+        }
+
+        $this->getJson('/api/listings?per_page=20&page=1')
+            ->assertOk()
+            ->assertJsonCount(20, 'data')
+            ->assertJsonPath('per_page', 20)
+            ->assertJsonPath('last_page', 2);
+        $this->getJson('/api/listings?per_page=20&page=2')
+            ->assertOk()
+            ->assertJsonCount(1, 'data');
+        $this->getJson('/api/listings')
+            ->assertOk()
+            ->assertJsonCount(15, 'data')
+            ->assertJsonPath('per_page', 15);
+        $this->getJson('/api/listings?per_page=21')
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('per_page');
+    }
+
     public function test_admin_can_approve_a_submitted_listing(): void
     {
         $admin = User::factory()->create(['role' => Role::ADMIN]);
         $seller = User::factory()->create(['role' => Role::SELLER]);
-        $seller->sellerProfile()->create(['business_name' => 'Verified Seller', 'is_verified' => true]);
+        $seller->sellerProfile()->create([
+            'business_name' => 'Verified Seller',
+            'is_verified' => true,
+            'latitude' => 12.6,
+            'longitude' => 121.1,
+            'pickup_location_confirmed' => true,
+        ]);
         $category = Category::create(['name' => 'Duck', 'slug' => 'duck']);
         $listing = new LivestockListing([
             'category_id' => $category->id,
@@ -176,6 +316,45 @@ class ListingTest extends TestCase
         $this->getJson('/api/listings?sort=newest')
             ->assertOk()
             ->assertJsonPath('data.0.name', 'Highland Cattle');
+    }
+
+    public function test_marketplace_search_matches_words_from_listing_details_and_local_livestock_names(): void
+    {
+        $seller = User::factory()->create(['role' => Role::SELLER]);
+        $seller->sellerProfile()->create(['business_name' => 'Kambing at Kalabaw sa Hulo']);
+        $category = Category::create(['name' => 'Goat', 'slug' => 'goat']);
+        $listing = LivestockListing::create([
+            'seller_id' => $seller->id,
+            'category_id' => $category->id,
+            'name' => 'Goat',
+            'breed' => 'native goat',
+            'sex' => 'FEMALE',
+            'age_months' => 10,
+            'estimated_weight_kg' => 23,
+            'quantity' => 6,
+            'description' => 'Small / medium local goats (13–23 kg): roughly 3,250 to 5,750 per head.',
+            'pickup_location' => 'Orcunoma, Bongabong Oriental Mindoro',
+            'health_information' => 'good and healthy',
+            'vaccination_information' => 'vaccinated',
+            'pricing_type' => PricingType::PER_HEAD,
+            'price_per_head' => 5750,
+            'status' => ListingStatus::ACTIVE,
+        ]);
+
+        foreach ([
+            'Small / medium local goats (13–23 kg)',
+            'female',
+            '23 kg',
+            'good and healthy',
+            'vaccinated',
+            'Orcunoma',
+            'kambing',
+        ] as $term) {
+            $this->getJson('/api/listings?'.http_build_query(['q' => $term]))
+                ->assertOk()
+                ->assertJsonCount(1, 'data')
+                ->assertJsonPath('data.0.id', $listing->id);
+        }
     }
 
     public function test_marketplace_can_sort_active_listings_by_buyer_interest(): void
@@ -314,7 +493,13 @@ class ListingTest extends TestCase
     {
         $admin = User::factory()->create(['role' => Role::ADMIN]);
         $seller = User::factory()->create(['role' => Role::SELLER]);
-        $seller->sellerProfile()->create(['business_name' => 'Verified Seller', 'is_verified' => true]);
+        $seller->sellerProfile()->create([
+            'business_name' => 'Verified Seller',
+            'is_verified' => true,
+            'latitude' => 12.6,
+            'longitude' => 121.1,
+            'pickup_location_confirmed' => true,
+        ]);
         $category = Category::create(['name' => 'Chicken', 'slug' => 'chicken']);
 
         app(SystemSettingsService::class)->update([
@@ -486,6 +671,11 @@ class ListingTest extends TestCase
     {
         $admin = User::factory()->create(['role' => Role::ADMIN]);
         $seller = User::factory()->create(['role' => Role::SELLER]);
+        $seller->sellerProfile()->create([
+            'latitude' => 12.6,
+            'longitude' => 121.1,
+            'pickup_location_confirmed' => true,
+        ]);
         $category = Category::create(['name' => 'Sheep', 'slug' => 'sheep']);
         app(SystemSettingsService::class)->update([
             'seller_listing_approval_required' => false,

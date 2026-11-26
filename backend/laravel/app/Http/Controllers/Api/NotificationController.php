@@ -2,11 +2,14 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Enums\OrderStatus;
 use App\Http\Controllers\Controller;
 use App\Models\AuditLog;
 use App\Models\NotificationDelivery;
+use App\Models\Order;
 use App\Models\OrderStatusEmailDelivery;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -15,13 +18,11 @@ use Illuminate\Notifications\DatabaseNotification;
 class NotificationController extends Controller
 {
     private const CRITICAL_NOTIFICATION_TYPES = [
-        'order_status_changed',
         'order_rider_assigned',
         'order_delivery_status_changed',
         'order_update_requested',
         'order_case_updated',
         'rider_offer_available',
-        'rider_assignment_waiting',
         'rider_assignment_confirmed',
         'delivery_proof_recorded',
     ];
@@ -34,13 +35,14 @@ class NotificationController extends Controller
             ->latest()
             ->limit(100)
             ->get(['id', 'type', 'data', 'read_at', 'created_at']);
+        $completedPickupOrderIds = $this->completedPickupOrderIds($notifications);
         $deliveryStatuses = NotificationDelivery::query()
             ->where('notifiable_type', $user->getMorphClass())
             ->where('notifiable_id', $user->getKey())
             ->whereIn('notification_id', $notifications->pluck('id'))
             ->get(['notification_id', 'channel', 'status', 'attempts', 'delivered_at'])
             ->groupBy('notification_id');
-        $notifications->each(function (DatabaseNotification $notification) use ($deliveryStatuses): void {
+        $notifications->each(function (DatabaseNotification $notification) use ($deliveryStatuses, $completedPickupOrderIds): void {
             $statuses = $deliveryStatuses->get($notification->id, collect())
                 ->map(fn (NotificationDelivery $delivery): array => [
                     'channel' => $delivery->channel,
@@ -75,8 +77,9 @@ class NotificationController extends Controller
                 'delivery_statuses',
                 $statuses->values(),
             );
-            $notification->setAttribute('is_critical', $this->isCritical($notification->data));
+            $notification->setAttribute('is_critical', $this->isCritical($notification->data, $completedPickupOrderIds));
         });
+
         return response()->json([
             'notifications' => $notifications,
             'preferences' => [
@@ -162,12 +165,18 @@ class NotificationController extends Controller
         ];
     }
 
-    private function isCritical(array $data): bool
+    /**
+     * @param  list<string>  $completedPickupOrderIds
+     */
+    private function isCritical(array $data, array $completedPickupOrderIds): bool
     {
         $type = strtolower((string) ($data['type'] ?? ''));
 
         return ($data['critical'] ?? false) === true
             || ($data['attention_required'] ?? false) === true
+            || ($type === 'order_status_changed'
+                && ($data['status'] ?? null) === OrderStatus::COMPLETED->value
+                && in_array((string) ($data['order_id'] ?? ''), $completedPickupOrderIds, true))
             || in_array($type, self::CRITICAL_NOTIFICATION_TYPES, true)
             || str_contains($type, 'payment')
             || str_contains($type, 'security')
@@ -180,6 +189,7 @@ class NotificationController extends Controller
             $critical->where('data->critical', true)
                 ->orWhere('data->attention_required', true)
                 ->orWhereIn('data->type', self::CRITICAL_NOTIFICATION_TYPES)
+                ->orWhere(fn ($pickupCompletion) => $this->completedPickupOrderStatuses($pickupCompletion))
                 ->orWhere('data->type', 'like', '%payment%')
                 ->orWhere('data->type', 'like', '%security%')
                 ->orWhere('data->type', 'like', '%safety%');
@@ -199,9 +209,45 @@ class NotificationController extends Controller
                         $nonCriticalType->whereNotIn('data->type', self::CRITICAL_NOTIFICATION_TYPES)
                             ->where('data->type', 'not like', '%payment%')
                             ->where('data->type', 'not like', '%security%')
-                            ->where('data->type', 'not like', '%safety%');
+                            ->where('data->type', 'not like', '%safety%')
+                            ->whereNot(fn ($pickupCompletion) => $this->completedPickupOrderStatuses($pickupCompletion));
                     });
             });
         });
+    }
+
+    /**
+     * @param  Collection<int, DatabaseNotification>  $notifications
+     * @return list<string>
+     */
+    private function completedPickupOrderIds($notifications): array
+    {
+        $orderIds = $notifications
+            ->filter(fn (DatabaseNotification $notification): bool => ($notification->data['type'] ?? null) === 'order_status_changed'
+                && ($notification->data['status'] ?? null) === OrderStatus::COMPLETED->value)
+            ->map(fn (DatabaseNotification $notification): mixed => $notification->data['order_id'] ?? null)
+            ->filter(fn (mixed $orderId): bool => is_int($orderId) || is_string($orderId) && ctype_digit($orderId))
+            ->unique()
+            ->values();
+
+        if ($orderIds->isEmpty()) {
+            return [];
+        }
+
+        return Order::query()
+            ->whereIn('id', $orderIds)
+            ->where('delivery_method', 'SELF_PICKUP')
+            ->pluck('id')
+            ->map(fn (int $orderId): string => (string) $orderId)
+            ->all();
+    }
+
+    private function completedPickupOrderStatuses($query): void
+    {
+        $query->where('data->type', 'order_status_changed')
+            ->where('data->status', OrderStatus::COMPLETED->value)
+            ->whereIn('data->order_id', Order::query()
+                ->select('id')
+                ->where('delivery_method', 'SELF_PICKUP'));
     }
 }

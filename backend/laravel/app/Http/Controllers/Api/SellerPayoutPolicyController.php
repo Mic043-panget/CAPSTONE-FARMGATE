@@ -6,7 +6,10 @@ use App\Enums\Role;
 use App\Http\Controllers\Controller;
 use App\Models\SellerPayoutPolicy;
 use App\Models\SellerPayoutPolicyAcknowledgement;
+use App\Rules\ValidFarmgateImage;
+use App\Services\ImageUploadService;
 use App\Services\SellerPayoutPolicyService;
+use App\Support\FarmgateImage;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -51,7 +54,7 @@ class SellerPayoutPolicyController extends Controller
             'version' => ['required', 'string', 'max:40', 'regex:/^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/', 'unique:seller_payout_policies,version'],
             'effective_date' => ['required', 'date', 'after_or_equal:today'],
             'policy_text' => ['required', 'string', 'min:100', 'max:50000'],
-            'supporting_document' => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png,webp', 'max:10240'],
+            'supporting_document' => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png,webp', 'max:10240', new ValidFarmgateImage(['application/pdf'])],
         ]);
         [$path, $mime] = $request->hasFile('supporting_document')
             ? $this->storeDocument($request)
@@ -68,7 +71,7 @@ class SellerPayoutPolicyController extends Controller
                 'created_by' => $request->user()->id,
             ]);
         } catch (Throwable $exception) {
-            Storage::disk('delivery_proofs')->delete($path);
+            app(ImageUploadService::class)->deleteEvidence($path, 'delivery_proofs');
             throw $exception;
         }
 
@@ -130,7 +133,7 @@ class SellerPayoutPolicyController extends Controller
             'version' => ['required', 'string', 'max:40', 'regex:/^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/', Rule::unique('seller_payout_policies', 'version')->ignore($policy->id)],
             'effective_date' => ['required', 'date', 'after_or_equal:today'],
             'policy_text' => ['required', 'string', 'min:100', 'max:50000'],
-            'supporting_document' => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png,webp', 'max:10240'],
+            'supporting_document' => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png,webp', 'max:10240', new ValidFarmgateImage(['application/pdf'])],
         ]);
         $oldPath = $policy->supporting_document_path;
         $newDocument = $request->hasFile('supporting_document') ? $this->storeDocument($request) : null;
@@ -152,13 +155,13 @@ class SellerPayoutPolicyController extends Controller
             });
         } catch (Throwable $exception) {
             if ($newDocument) {
-                Storage::disk('delivery_proofs')->delete($newDocument[0]);
+                app(ImageUploadService::class)->deleteEvidence($newDocument[0], 'delivery_proofs');
             }
             throw $exception;
         }
 
         if ($newDocument && $oldPath) {
-            Storage::disk('delivery_proofs')->delete($oldPath);
+            app(ImageUploadService::class)->deleteEvidence($oldPath, 'delivery_proofs');
         }
 
         return response()->json(['message' => 'Seller payout policy draft updated.', 'policy' => $this->payload($policy->fresh())])
@@ -343,11 +346,16 @@ class SellerPayoutPolicyController extends Controller
     private function storeDocument(Request $request): array
     {
         $file = $request->file('supporting_document');
+        if (FarmgateImage::isImage($file)) {
+            $stored = app(ImageUploadService::class)->storeEvidence($file, 'seller-payout-policies', 'delivery_proofs');
+
+            return [$stored['path'], $stored['mime_type']];
+        }
         $extension = $file->guessExtension();
         abort_if(! $extension, 422, 'The supporting document type could not be identified.');
         $path = 'seller-payout-policies/'.Str::random(40).'.'.$extension;
         $storedPath = $file->storeAs('seller-payout-policies', basename($path), 'delivery_proofs');
-        abort_unless($storedPath === $path && Storage::disk('delivery_proofs')->exists($path), 500, 'The supporting policy document could not be securely stored.');
+        abort_unless($storedPath === $path && Storage::disk('delivery_proofs')->exists($path), 503, 'The supporting policy document could not be securely stored. Please retry.');
 
         return [$path, $file->getMimeType() ?? 'application/octet-stream'];
     }

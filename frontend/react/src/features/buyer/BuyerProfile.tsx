@@ -7,6 +7,8 @@ import { BuyerAddresses } from './BuyerAddresses';
 import { LoadingSkeleton } from '../../shared/components/LoadingSkeleton';
 import { Pagination } from '../../shared/components/Pagination';
 import { NotificationDeviceSettings } from './NotificationDeviceSettings';
+import { ImageUploadPreview, IMAGE_UPLOAD_HINT, imageUploadError } from '../../shared/components/ImageUploadPreview';
+import { FileDropzone } from '../../shared/components/FileDropzone';
 
 type ProfileSection = 'profile' | 'addresses' | 'password' | 'settings' | 'orders' | 'reviews';
 
@@ -240,7 +242,7 @@ export function BuyerProfile({ user, onUserUpdated, onLogout, onNavigateHome, on
         event_notifications: true,
         allow_direct_messages: true,
     });
-    const [photoInput, setPhotoInput] = React.useState<HTMLInputElement | null>(null);
+    const [photoCandidate, setPhotoCandidate] = React.useState<File | null>(null);
     const [message, setMessage] = React.useState('');
     const [error, setError] = React.useState('');
 
@@ -481,14 +483,15 @@ export function BuyerProfile({ user, onUserUpdated, onLogout, onNavigateHome, on
         }
     }
 
-    async function uploadPhoto(event: React.ChangeEvent<HTMLInputElement>) {
-        const file = event.target.files?.[0];
-        event.target.value = '';
+    async function uploadPhoto(file: File | null) {
         if (!file) return;
-        if (!['image/jpeg', 'image/png'].includes(file.type) || file.size > 1024 * 1024) {
-            setError('Choose a JPG or PNG image no larger than 1 MB.');
+        const validationError = imageUploadError(file);
+        if (validationError) {
+            setError(validationError);
+            showError(validationError);
             return;
         }
+        setPhotoCandidate(file);
         const formData = new FormData();
         formData.append('photo', file);
         setSaving(true);
@@ -497,6 +500,7 @@ export function BuyerProfile({ user, onUserUpdated, onLogout, onNavigateHome, on
         try {
             const response = await api.post<{ user: User }>('/api/profile/photo', formData);
             onUserUpdated(response.data.user);
+            setPhotoCandidate(null);
             setMessage('Profile photo updated.');
             showSuccess('Profile photo updated.');
         } catch (requestError: any) {
@@ -669,10 +673,10 @@ export function BuyerProfile({ user, onUserUpdated, onLogout, onNavigateHome, on
                     </div>
                     <aside className="buyer-profile-photo-panel">
                         <ProfileAvatar user={user} large />
-                        <button type="button" onClick={() => photoInput?.click()} disabled={saving}>Change photo</button>
-                        <input ref={setPhotoInput} className="sr-only" type="file" accept="image/jpeg,image/png" onChange={uploadPhoto} />
+                        <FileDropzone label="Profile photo" accept="image/jpeg,image/png,image/webp" disabled={saving} buttonLabel="Change photo" onFiles={(files) => void uploadPhoto(files[0] ?? null)} helperText={IMAGE_UPLOAD_HINT} />
+                        <ImageUploadPreview file={photoCandidate} alt="Selected profile photo preview" />
                         {user.profile_photo_url && <button className="buyer-profile-remove-photo" type="button" onClick={removePhoto} disabled={saving}>Remove photo</button>}
-                        <p>Max size: 1 MB<br />Format: JPG, PNG</p>
+                        <p>{IMAGE_UPLOAD_HINT}</p>
                     </aside>
                 </>}
 

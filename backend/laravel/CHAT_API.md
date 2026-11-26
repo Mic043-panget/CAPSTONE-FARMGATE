@@ -96,14 +96,17 @@ messages, and `allow_direct_messages` controls whether other users can start
 or continue a direct thread with that account.
 
 Notification emails and device push share the notification center record and
-its reference. Device delivery uses the Web Push API; configure
-`VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and `VAPID_SUBJECT` through the
-deployment's secret manager, apply migrations, and run a queue worker for the
-`notifications` queue. Never commit the VAPID private key. Users enable device permission from the Notifications page; denied or
-unsupported devices continue to receive in-app notifications and eligible
-transactional email. Push subscriptions are owner-scoped and encrypted at rest.
-Email and push delivery attempts and outcomes are recorded per notification in
-`notification_deliveries`.
+its reference. New browser devices register with Firebase Cloud Messaging.
+Configure the Firebase Web app values and `FIREBASE_VAPID_KEY` in the Laravel
+environment, and keep the service-account JSON configured by
+`FIREBASE_CREDENTIALS` private and outside the public web root. Apply
+migrations and run a queue worker for the `notifications` queue. Existing Web
+Push subscriptions continue to use `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`,
+and `VAPID_SUBJECT`. Users enable device permission from the Notifications page;
+denied or unsupported devices continue to receive in-app notifications and
+eligible transactional email. Push tokens/subscriptions are owner-scoped and
+encrypted at rest. Email and push delivery attempts and outcomes are recorded
+per notification in `notification_deliveries`.
 
 AI role access follows existing reports: admins can request all report types;
 sellers can request sales, transactions, listings, and deliveries; buyers can

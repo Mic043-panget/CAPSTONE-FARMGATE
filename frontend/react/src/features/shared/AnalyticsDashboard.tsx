@@ -35,6 +35,76 @@ type AnalyticsDashboardProps = { role: Extract<UserRole, 'SELLER' | 'ADMIN'>; pr
 type ChartData = { label: string; value: number; formatted?: string }[];
 type ChartKind = 'bar' | 'donut';
 type AnalyticsChart = { title: string; kind: ChartKind; values: ChartData; currencyValues?: boolean; unitLabel?: string; emptyMessage?: string; limit?: number };
+type AnalyticsPrintRow = { id: string; cells: string[] };
+
+function EditablePrintValue({ id, value, edits, onEdit }: {
+    id: string;
+    value: string;
+    edits: Record<string, string>;
+    onEdit: (id: string, value: string) => void;
+}) {
+    return <span
+        className="analytics-print-editable-text"
+        contentEditable
+        suppressContentEditableWarning
+        role="textbox"
+        aria-label={`Edit print value ${id}`}
+        onBlur={(event) => onEdit(id, event.currentTarget.textContent ?? '')}
+    >{edits[id] ?? value}</span>;
+}
+
+function AnalyticsPrintTable({ title, unitLabel, headers, rows, excludedRows, edits, onToggleRow, onEdit, headingLevel = 3 }: {
+    title: string;
+    unitLabel?: string;
+    headers: string[];
+    rows: AnalyticsPrintRow[];
+    excludedRows: Set<string>;
+    edits: Record<string, string>;
+    onToggleRow: (id: string) => void;
+    onEdit: (id: string, value: string) => void;
+    headingLevel?: 2 | 3;
+}) {
+    const hasIncludedRows = rows.some((row) => !excludedRows.has(row.id));
+
+    return <section className="analytics-print-data-section" data-print-empty={!hasIncludedRows}>
+        {headingLevel === 2 ? <h2>{title}</h2> : <h3>{title}</h3>}
+        {unitLabel && <p className="analytics-print-note">{unitLabel}</p>}
+        <table className="analytics-print-editable-table">
+            <thead><tr><th className="analytics-print-select-column" aria-label="Include row"></th>{headers.map((header, index) => <th key={`${title}-header-${index}`}><EditablePrintValue id={`${title}:header:${index}`} value={header} edits={edits} onEdit={onEdit} /></th>)}</tr></thead>
+            <tbody>{rows.map((row) => {
+                const included = !excludedRows.has(row.id);
+
+                return <tr key={row.id} className={included ? undefined : 'analytics-print-row-excluded'}>
+                    <td className="analytics-print-select-column"><input type="checkbox" checked={included} onChange={() => onToggleRow(row.id)} aria-label={`Include ${row.cells[0] || title} in print`} /></td>
+                    {row.cells.map((cell, index) => <td key={`${row.id}-cell-${index}`}><EditablePrintValue id={`${row.id}:cell:${index}`} value={cell} edits={edits} onEdit={onEdit} /></td>)}
+                </tr>;
+            })}</tbody>
+        </table>
+    </section>;
+}
+
+function AnalyticsPrintList({ title, rows, excludedRows, edits, onToggleRow, onEdit }: {
+    title: string;
+    rows: AnalyticsPrintRow[];
+    excludedRows: Set<string>;
+    edits: Record<string, string>;
+    onToggleRow: (id: string) => void;
+    onEdit: (id: string, value: string) => void;
+}) {
+    const hasIncludedRows = rows.some((row) => !excludedRows.has(row.id));
+
+    return <section className="analytics-print-data-section" data-print-empty={!hasIncludedRows}>
+        <h3>{title}</h3>
+        <ul className="analytics-print-editable-list">{rows.map((row) => {
+            const included = !excludedRows.has(row.id);
+
+            return <li key={row.id} className={included ? undefined : 'analytics-print-row-excluded'}>
+                <input type="checkbox" checked={included} onChange={() => onToggleRow(row.id)} aria-label={`Include ${row.cells[0]} in print`} />
+                <EditablePrintValue id={`${row.id}:cell:0`} value={row.cells[0]} edits={edits} onEdit={onEdit} />
+            </li>;
+        })}</ul>
+    </section>;
+}
 
 function localDate(date: Date): string {
     const year = date.getFullYear();
@@ -302,6 +372,9 @@ export function AnalyticsDashboard({ role, preparedBy = '', onOpenOrder }: Analy
         { title: string; type: 'trend' | 'growth' } | { title: string; type: 'chart'; chartKind: ChartKind } | null
     >(null);
     const [printPreview, setPrintPreview] = React.useState(false);
+    const [excludedPrintRows, setExcludedPrintRows] = React.useState<Set<string>>(new Set());
+    const [printEdits, setPrintEdits] = React.useState<Record<string, string>>({});
+    const printSelectionInitialized = React.useRef(false);
     const [analysisOpen, setAnalysisOpen] = React.useState(false);
     const [trendMetric, setTrendMetric] = React.useState<TrendMetric>('revenue');
 
@@ -375,24 +448,60 @@ export function AnalyticsDashboard({ role, preparedBy = '', onOpenOrder }: Analy
     }
 
     const printMetricRows = summary ? [
-        ['Gross sales', currency.format(summary.gross_sales ?? 0), 'Completed order subtotal'],
-        ['Orders', integer.format(summary.orders ?? 0), `${integer.format(summary.completed_orders ?? 0)} completed`],
-        ['Units sold', integer.format(summary.units_sold ?? 0), 'Completed orders'],
-        ['Average order value', currency.format(summary.average_order_value ?? 0), 'Completed orders'],
-        ['Fees', summary.fees == null ? 'Unavailable' : currency.format(summary.fees), 'Recorded seller fees'],
-        ['Estimated net payout', summary.net_payout == null ? 'Unavailable' : currency.format(summary.net_payout), 'Sales less recorded seller fees'],
-        ['Recorded discounts', summary.discounts == null ? 'Unavailable' : currency.format(summary.discounts), 'Promotion codes are not recorded'],
-        ['Delivered with proof', integer.format(analytics?.delivery_proof_summary?.recorded ?? 0), 'Proof photo and recipient confirmation saved in the selected date range'],
-        ['Delivered missing proof', integer.format(analytics?.delivery_proof_summary?.missing ?? 0), 'Legacy deliveries may predate the proof requirement'],
-        ['Average fulfillment time', summary.average_fulfillment_hours == null ? 'Unavailable' : `${integer.format(summary.average_fulfillment_hours)} hours`, 'Completed order history'],
-        ['New / returning buyers', `${integer.format(summary.new_customers ?? 0)} / ${integer.format(summary.returning_customers ?? 0)}`, `Repeat purchase rate: ${summary.repeat_purchase_rate == null ? 'Unavailable' : `${summary.repeat_purchase_rate}%`}`],
+        { id: 'metric-gross-sales', label: 'Gross sales', value: currency.format(summary.gross_sales ?? 0), note: 'Completed order subtotal', visible: (summary.gross_sales ?? 0) > 0 },
+        { id: 'metric-orders', label: 'Orders', value: integer.format(summary.orders ?? 0), note: (summary.completed_orders ?? 0) > 0 ? `${integer.format(summary.completed_orders ?? 0)} completed` : '', visible: (summary.orders ?? 0) > 0 },
+        { id: 'metric-units-sold', label: 'Units sold', value: integer.format(summary.units_sold ?? 0), note: 'Completed orders', visible: (summary.units_sold ?? 0) > 0 },
+        { id: 'metric-average-order-value', label: 'Average order value', value: currency.format(summary.average_order_value ?? 0), note: 'Completed orders', visible: (summary.average_order_value ?? 0) > 0 },
+        { id: 'metric-fees', label: 'Fees', value: summary.fees == null ? '' : currency.format(summary.fees), note: 'Recorded seller fees', visible: (summary.fees ?? 0) > 0 },
+        { id: 'metric-net-payout', label: 'Estimated net payout', value: summary.net_payout == null ? '' : currency.format(summary.net_payout), note: 'Sales less recorded seller fees', visible: (summary.net_payout ?? 0) > 0 },
+        { id: 'metric-discounts', label: 'Recorded discounts', value: summary.discounts == null ? '' : currency.format(summary.discounts), note: 'Promotion codes are not recorded', visible: (summary.discounts ?? 0) > 0 },
+        { id: 'metric-proof-recorded', label: 'Delivered with proof', value: integer.format(analytics?.delivery_proof_summary?.recorded ?? 0), note: 'Proof photo and recipient confirmation saved in the selected date range', visible: (analytics?.delivery_proof_summary?.recorded ?? 0) > 0 },
+        { id: 'metric-proof-missing', label: 'Delivered missing proof', value: integer.format(analytics?.delivery_proof_summary?.missing ?? 0), note: 'Legacy deliveries may predate the proof requirement', visible: (analytics?.delivery_proof_summary?.missing ?? 0) > 0 },
+        { id: 'metric-fulfillment-time', label: 'Average fulfillment time', value: summary.average_fulfillment_hours == null ? '' : `${integer.format(summary.average_fulfillment_hours)} hours`, note: 'Completed order history', visible: (summary.average_fulfillment_hours ?? 0) > 0 },
+        {
+            id: 'metric-buyers',
+            label: 'New / returning buyers',
+            value: [
+                (summary.new_customers ?? 0) > 0 ? `${integer.format(summary.new_customers ?? 0)} new` : '',
+                (summary.returning_customers ?? 0) > 0 ? `${integer.format(summary.returning_customers ?? 0)} returning` : '',
+            ].filter(Boolean).join(' · '),
+            note: (summary.repeat_purchase_rate ?? 0) > 0 ? `Repeat purchase rate: ${summary.repeat_purchase_rate}%` : '',
+            visible: (summary.new_customers ?? 0) > 0 || (summary.returning_customers ?? 0) > 0,
+        },
         ...(role === 'ADMIN' ? [
-            ['Active sellers / buyers', `${integer.format(summary.active_sellers ?? 0)} / ${integer.format(summary.buyers ?? 0)}`, 'Current marketplace accounts'],
-            ['Active livestock listings', integer.format(summary.products ?? 0), 'Currently active listings'],
-            ['Payment success / failure', summary.payment_success_rate == null ? 'Unavailable' : `${summary.payment_success_rate}% / ${summary.payment_failure_rate}%`, 'Among paid or failed payment attempts'],
-            ['Refunds issued', `${integer.format(summary.refunds_issued_count ?? 0)} · ${currency.format(summary.refunds_issued_amount ?? 0)}`, `${integer.format(summary.refunds_action_required ?? 0)} awaiting return, manual action, or admin reconciliation`],
+            {
+                id: 'metric-active-accounts',
+                label: 'Active sellers / buyers',
+                value: [
+                    (summary.active_sellers ?? 0) > 0 ? `${integer.format(summary.active_sellers ?? 0)} sellers` : '',
+                    (summary.buyers ?? 0) > 0 ? `${integer.format(summary.buyers ?? 0)} buyers` : '',
+                ].filter(Boolean).join(' · '),
+                note: 'Current marketplace accounts',
+                visible: (summary.active_sellers ?? 0) > 0 || (summary.buyers ?? 0) > 0,
+            },
+            { id: 'metric-active-listings', label: 'Active livestock listings', value: integer.format(summary.products ?? 0), note: 'Currently active listings', visible: (summary.products ?? 0) > 0 },
+            {
+                id: 'metric-payment-rates',
+                label: 'Payment success / failure',
+                value: [
+                    (summary.payment_success_rate ?? 0) > 0 ? `${summary.payment_success_rate}% success` : '',
+                    (summary.payment_failure_rate ?? 0) > 0 ? `${summary.payment_failure_rate}% failed` : '',
+                ].filter(Boolean).join(' · '),
+                note: 'Among paid or failed payment attempts',
+                visible: (summary.payment_success_rate ?? 0) > 0 || (summary.payment_failure_rate ?? 0) > 0,
+            },
+            {
+                id: 'metric-refunds',
+                label: 'Refunds issued',
+                value: [
+                    (summary.refunds_issued_count ?? 0) > 0 ? `${integer.format(summary.refunds_issued_count ?? 0)} issued` : '',
+                    (summary.refunds_issued_amount ?? 0) > 0 ? currency.format(summary.refunds_issued_amount ?? 0) : '',
+                ].filter(Boolean).join(' · '),
+                note: (summary.refunds_action_required ?? 0) > 0 ? `${integer.format(summary.refunds_action_required ?? 0)} awaiting return, manual action, or admin reconciliation` : '',
+                visible: (summary.refunds_issued_count ?? 0) > 0 || (summary.refunds_issued_amount ?? 0) > 0 || (summary.refunds_action_required ?? 0) > 0,
+            },
         ] : []),
-    ] : [];
+    ].filter((row) => row.visible) : [];
 
     const charts: AnalyticsChart[] = [
         { title: 'Orders by status', kind: 'bar', values: statusChart, unitLabel: 'Orders · filtered date range', emptyMessage: 'No orders recorded in this date range.' },
@@ -411,6 +520,160 @@ export function AnalyticsDashboard({ role, preparedBy = '', onOpenOrder }: Analy
         emptyMessage: 'No active supply matches this selection.',
     };
     const trendTitle = trendMetric === 'revenue' ? 'Gross sales over time' : trendMetric === 'orders' ? 'Orders over time' : 'Livestock quantity sold over time';
+    const trendData = (analytics?.series ?? []).filter((item) => item.revenue > 0 || item.orders > 0 || item.units > 0);
+    const trendRows: AnalyticsPrintRow[] = trendData.map((item) => ({
+        id: `trend-${item.date}`,
+        cells: [
+            item.date,
+            item.revenue > 0 ? currency.format(item.revenue) : '',
+            item.orders > 0 ? integer.format(item.orders) : '',
+            item.units > 0 ? integer.format(item.units) : '',
+        ],
+    }));
+    const trendHeaders = [
+        'Date',
+        ...(trendData.some((item) => item.revenue > 0) ? ['Gross sales'] : []),
+        ...(trendData.some((item) => item.orders > 0) ? ['Orders'] : []),
+        ...(trendData.some((item) => item.units > 0) ? ['Livestock quantity'] : []),
+    ];
+    const printableCharts = charts.map((chart) => {
+        const values = chart.values.filter((item) => item.value > 0);
+        const total = values.reduce((sum, item) => sum + item.value, 0);
+
+        return {
+            chart,
+            rows: values.map((item) => ({
+                id: `chart-${chart.title}-${item.label}`,
+                cells: [
+                    item.label,
+                    chartValue(item, chart.currencyValues ?? false),
+                    ...(chart.kind === 'donut' ? [`${(item.value / total * 100).toFixed(1)}%`] : []),
+                ],
+            })),
+        };
+    });
+    const growthData = (analytics?.growth_series ?? []).filter((item) => item.sellers > 0 || item.buyers > 0 || item.listings > 0 || item.orders > 0);
+    const growthHeaders = [
+        'Date',
+        ...(growthData.some((item) => item.sellers > 0) ? ['Sellers'] : []),
+        ...(growthData.some((item) => item.buyers > 0) ? ['Buyers'] : []),
+        ...(growthData.some((item) => item.listings > 0) ? ['Listings'] : []),
+        ...(growthData.some((item) => item.orders > 0) ? ['Orders'] : []),
+    ];
+    const growthRows: AnalyticsPrintRow[] = growthData.map((item) => ({
+        id: `growth-${item.date}`,
+        cells: [
+            item.date,
+            ...(growthHeaders.includes('Sellers') ? [item.sellers > 0 ? integer.format(item.sellers) : ''] : []),
+            ...(growthHeaders.includes('Buyers') ? [item.buyers > 0 ? integer.format(item.buyers) : ''] : []),
+            ...(growthHeaders.includes('Listings') ? [item.listings > 0 ? integer.format(item.listings) : ''] : []),
+            ...(growthHeaders.includes('Orders') ? [item.orders > 0 ? integer.format(item.orders) : ''] : []),
+        ],
+    }));
+    const productData = (analytics?.products ?? []).filter((item) => item.revenue > 0 || item.units > 0);
+    const productHeaders = [
+        'Livestock listing',
+        'Category',
+        ...(productData.some((item) => item.revenue > 0) ? ['Sales'] : []),
+        ...(productData.some((item) => item.units > 0) ? ['Quantity sold'] : []),
+        'Date listed',
+    ];
+    const productRows: AnalyticsPrintRow[] = productData.map((item) => ({
+        id: `product-${item.id}`,
+        cells: [
+            item.name,
+            item.category,
+            ...(productHeaders.includes('Sales') ? [item.revenue > 0 ? currency.format(item.revenue) : ''] : []),
+            ...(productHeaders.includes('Quantity sold') ? [item.units > 0 ? integer.format(item.units) : ''] : []),
+            new Date(item.listed_at).toLocaleDateString(),
+        ],
+    }));
+    const lowStockRows: AnalyticsPrintRow[] = (analytics?.low_stock ?? [])
+        .filter((item) => item.quantity > 0)
+        .map((item) => ({ id: `low-stock-${item.id}`, cells: [item.name, item.category, integer.format(item.quantity)] }));
+    const inventoryRows: AnalyticsPrintRow[] = (analytics?.inventory ?? [])
+        .filter((item) => item.quantity > 0)
+        .map((item) => ({ id: `inventory-${item.id}`, cells: [item.name, item.category, integer.format(item.quantity), item.status.replaceAll('_', ' ')] }));
+    const sellerRows: AnalyticsPrintRow[] = (analytics?.seller_performance ?? [])
+        .filter((item) => item.orders > 0 || item.sales > 0)
+        .map((item) => ({ id: `seller-${item.id}`, cells: [item.name, item.orders > 0 ? integer.format(item.orders) : '', item.sales > 0 ? currency.format(item.sales) : ''] }));
+    const complaintRows: AnalyticsPrintRow[] = analytics?.complaints ? [
+        ...(analytics.complaints.total > 0 ? [{ id: 'complaint-total', cells: ['Total', integer.format(analytics.complaints.total)] }] : []),
+        ...(analytics.complaints.open > 0 ? [{ id: 'complaint-open', cells: ['Open', integer.format(analytics.complaints.open)] }] : []),
+        ...(analytics.complaints.resolved > 0 ? [{ id: 'complaint-resolved', cells: ['Resolved', integer.format(analytics.complaints.resolved)] }] : []),
+        ...(analytics.complaints.average_resolution_hours != null && analytics.complaints.average_resolution_hours > 0
+            ? [{ id: 'complaint-average-resolution', cells: ['Average hours to resolve', new Intl.NumberFormat('en-PH', { maximumFractionDigits: 1 }).format(analytics.complaints.average_resolution_hours)] }]
+            : []),
+    ] : [];
+    const delayedData = (analytics?.delayed_orders ?? []).filter((item) => item.age_hours > 0 || item.total > 0);
+    const delayedHeaders = [
+        'Order',
+        'Status',
+        ...(delayedData.some((item) => item.age_hours > 0) ? ['Age'] : []),
+        ...(delayedData.some((item) => item.total > 0) ? ['Total'] : []),
+    ];
+    const delayedRows: AnalyticsPrintRow[] = delayedData.map((item) => ({
+        id: `delayed-${item.id}`,
+        cells: [
+            item.reference,
+            item.status.replaceAll('_', ' '),
+            ...(delayedHeaders.includes('Age') ? [item.age_hours > 0 ? `${integer.format(item.age_hours)} hours` : ''] : []),
+            ...(delayedHeaders.includes('Total') ? [item.total > 0 ? currency.format(item.total) : ''] : []),
+        ],
+    }));
+    const decliningData = (analytics?.declining_products ?? []).filter((item) => item.change !== 0 || item.units_change !== 0);
+    const decliningHeaders = [
+        'Livestock listing',
+        ...(decliningData.some((item) => item.change !== 0) ? ['Sales change'] : []),
+        ...(decliningData.some((item) => item.units_change !== 0) ? ['Quantity change'] : []),
+    ];
+    const decliningRows: AnalyticsPrintRow[] = decliningData.map((item) => ({
+        id: `declining-${item.id}`,
+        cells: [
+            item.name,
+            ...(decliningHeaders.includes('Sales change') ? [item.change !== 0 ? currency.format(item.change) : ''] : []),
+            ...(decliningHeaders.includes('Quantity change') ? [item.units_change !== 0 ? integer.format(item.units_change) : ''] : []),
+        ],
+    }));
+    const unavailableRows: AnalyticsPrintRow[] = Object.values(analytics?.unavailable ?? {})
+        .map((reason, index) => ({ id: `unavailable-${index}`, cells: [reason] }));
+    const allPrintRowIds = [
+        ...printMetricRows.map((row) => row.id),
+        ...trendRows.map((row) => row.id),
+        ...printableCharts.flatMap(({ rows }) => rows.map((row) => row.id)),
+        ...growthRows.map((row) => row.id),
+        ...productRows.map((row) => row.id),
+        ...lowStockRows.map((row) => row.id),
+        ...inventoryRows.map((row) => row.id),
+        ...sellerRows.map((row) => row.id),
+        ...complaintRows.map((row) => row.id),
+        ...delayedRows.map((row) => row.id),
+        ...decliningRows.map((row) => row.id),
+        ...unavailableRows.map((row) => row.id),
+    ];
+    const isPrintRowIncluded = (id: string) => !excludedPrintRows.has(id);
+    const hasIncludedPrintRows = (rows: AnalyticsPrintRow[]) => rows.some((row) => isPrintRowIncluded(row.id));
+
+    function togglePrintRow(id: string) {
+        setExcludedPrintRows((current) => {
+            const next = new Set(current);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    }
+
+    function openPrintPreview() {
+        if (!printSelectionInitialized.current) {
+            setExcludedPrintRows(new Set(unavailableRows.map((row) => row.id)));
+            printSelectionInitialized.current = true;
+        }
+        setPrintPreview(true);
+    }
+
+    function editPrintValue(id: string, value: string) {
+        setPrintEdits((current) => current[id] === value ? current : { ...current, [id]: value });
+    }
 
     async function printAnalyticsReport() {
         setPrintError('');
@@ -443,7 +706,7 @@ export function AnalyticsDashboard({ role, preparedBy = '', onOpenOrder }: Analy
         <div className="analytics-dashboard-overview">
             <header className="analytics-header">
                 <div><p className="eyebrow">{role === 'ADMIN' ? 'Marketplace analytics' : 'Business analytics'}</p><h2 id="analytics-title">{role === 'ADMIN' ? 'Marketplace performance' : 'Sales and inventory'}</h2><p className="analytics-description">{role === 'ADMIN' ? 'Track marketplace activity, sales, and fulfillment.' : 'Track sales, orders, and inventory for your business.'}</p></div>
-                <div className="analytics-actions"><button type="button" onClick={() => setAnalysisOpen(true)} disabled={!analytics || loading}>Analyze with AI</button><button type="button" onClick={() => setPrintPreview(true)} disabled={!analytics || loading}>Print report</button></div>
+                <div className="analytics-actions"><button type="button" onClick={() => setAnalysisOpen(true)} disabled={!analytics || loading}>Analyze with AI</button><button type="button" onClick={openPrintPreview} disabled={!analytics || loading}>Print report</button></div>
             </header>
             <div className="analytics-controls" aria-label="Analytics filters">
                 <label>Date range<select aria-label="Date range preset" value={preset} onChange={(event) => setPresetRange(event.target.value)}><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option><option value="365">Last 12 months</option><option value="custom">Custom</option></select></label>
@@ -530,69 +793,94 @@ export function AnalyticsDashboard({ role, preparedBy = '', onOpenOrder }: Analy
         {printPreview && analytics && <div className="analytics-modal-backdrop" role="presentation">
             <section className="analytics-modal analytics-print-preview" role="dialog" aria-modal="true" aria-labelledby="analytics-print-preview-title">
                 <header><div><h2 id="analytics-print-preview-title">Print preview</h2><p>Review the report before printing.</p></div><button type="button" onClick={() => setPrintPreview(false)}>Close</button></header>
-        {printError && <p className="analytics-state error" role="alert">{printError}</p>}
-        <div className="analytics-print-report">
+                {printError && <p className="analytics-state error" role="alert">{printError}</p>}
+                <div className="analytics-print-editor">
+                    <div><strong>Customize this print copy</strong><p>Uncheck rows to leave them out. Select a value to edit it. Changes here do not modify FarmGate records.</p></div>
+                    <div className="analytics-print-editor-actions">
+                        <button type="button" onClick={() => setExcludedPrintRows(new Set())}>Select all rows</button>
+                        <button type="button" disabled={!allPrintRowIds.length} onClick={() => setExcludedPrintRows(new Set(allPrintRowIds))}>Clear row selection</button>
+                    </div>
+                </div>
+                <div className="analytics-print-report">
                     <header className="analytics-print-cover">
                         <div className="analytics-print-brand-row"><strong className="analytics-print-brand">FARM<span>GATE</span></strong><span className="analytics-print-document-type">Business report</span></div>
                         <h1>{reportTitle}</h1>
                         <p className="analytics-print-subtitle">Sales, order activity, and livestock inventory</p>
                         <dl className="analytics-print-meta">
-                            <div><dt>Prepared by</dt><dd>{preparedBy || role}</dd></div>
-                            <div><dt>Report role</dt><dd>{role}</dd></div>
-                            <div><dt>Reporting period</dt><dd>{range.from} to {range.to}</dd></div>
-                            <div><dt>Orders represented</dt><dd>{integer.format(analytics.summary.orders ?? 0)}</dd></div>
+                            <div><dt>Prepared by</dt><dd><EditablePrintValue id="meta-prepared-by" value={preparedBy || role} edits={printEdits} onEdit={editPrintValue} /></dd></div>
+                            <div><dt>Report role</dt><dd><EditablePrintValue id="meta-role" value={role} edits={printEdits} onEdit={editPrintValue} /></dd></div>
+                            <div><dt>Reporting period</dt><dd><EditablePrintValue id="meta-period" value={`${range.from} to ${range.to}`} edits={printEdits} onEdit={editPrintValue} /></dd></div>
+                            {(analytics.summary.orders ?? 0) > 0 && <div><dt>Orders represented</dt><dd>{integer.format(analytics.summary.orders ?? 0)}</dd></div>}
                             <div><dt>Generated</dt><dd>{new Date().toLocaleString()}</dd></div>
                             <div><dt>Livestock sort</dt><dd>{productSortLabels[sort]}</dd></div>
                             <div className="analytics-print-meta-wide"><dt>Filters</dt><dd>{selectedFilterNames.join(' · ') || 'None'}</dd></div>
                         </dl>
                     </header>
-                    <h2>Dashboard metrics</h2>
-                    <table><thead><tr><th>Metric</th><th>Result</th><th>Basis</th></tr></thead><tbody>{printMetricRows.map(([label, value, note]) => <tr key={label}><th>{label}</th><td>{value}</td><td>{note}</td></tr>)}</tbody></table>
-                    <h2>Performance and inventory mix</h2>
-                    <p className="analytics-print-note">Sales charts use the selected period. Listing and supply charts show current inventory.</p>
-                    <h3>{trendTitle}</h3>
-                    <p className="analytics-print-note">{trendMetric === 'revenue' ? 'Philippine pesos (₱)' : trendMetric === 'orders' ? 'Orders' : 'Units sold'} · daily totals</p>
-                    <table><thead><tr><th>Date</th><th>Gross sales</th><th>Orders</th><th>Livestock quantity</th></tr></thead><tbody>{analytics.series.map((item) => <tr key={item.date}><td>{item.date}</td><td>{currency.format(item.revenue)}</td><td>{integer.format(item.orders)}</td><td>{integer.format(item.units)}</td></tr>)}</tbody></table>
-                    {analytics.series.some((item) => item[trendMetric] > 0) ? <PrintTrend values={analytics.series} metric={trendMetric} /> : <p className="analytics-print-note">{trendMetric === 'revenue' ? 'No sales recorded in this date range.' : `No ${trendMetric === 'orders' ? 'orders' : 'livestock quantity'} in this date range.`}</p>}
-                    {charts.map((chart) => <section className="analytics-print-data-section" key={chart.title}>
-                        <h3>{chart.title}</h3>
-                        {chart.unitLabel && <p className="analytics-print-note">{chart.unitLabel}</p>}
-                        {chart.values.length ? <table>
-                            <thead><tr><th>{chart.kind === 'donut' ? 'Category / status' : 'Item'}</th><th>{chart.currencyValues ? 'Sales' : 'Count / quantity'}</th>{chart.kind === 'donut' && <th>Share</th>}</tr></thead>
-                            <tbody>{chart.values.map((item) => {
-                                const total = chart.values.reduce((sum, entry) => sum + entry.value, 0);
-                                return <tr key={item.label}><td>{item.label}</td><td>{chartValue(item, chart.currencyValues ?? false)}</td>{chart.kind === 'donut' && <td>{total ? `${(item.value / total * 100).toFixed(1)}%` : '0%'}</td>}</tr>;
-                            })}</tbody>
-                        </table> : <p className="analytics-print-note">{chart.emptyMessage ?? `No ${chart.title.toLowerCase()} data for this selection.`}</p>}
-                    </section>)}
-                    {role === 'ADMIN' && analytics.growth_series && <section className="analytics-print-data-section">
-                        <h3>Marketplace activity over time</h3>
-                        <table><thead><tr><th>Date</th><th>Sellers</th><th>Buyers</th><th>Listings</th><th>Orders</th></tr></thead><tbody>{analytics.growth_series.map((item) => <tr key={item.date}><td>{item.date}</td><td>{integer.format(item.sellers)}</td><td>{integer.format(item.buyers)}</td><td>{integer.format(item.listings)}</td><td>{integer.format(item.orders)}</td></tr>)}</tbody></table>
-                    </section>}
-                    <h2>Record-level detail</h2>
-                    <p className="analytics-print-note">Livestock sales follow the selected period; availability and listing status show current inventory.</p>
-                    <section className="analytics-print-data-section"><h3>Top livestock listings by sales and quantity</h3>
-                        {analytics.products.length ? <table><thead><tr><th>Livestock listing</th><th>Category</th><th>Sales</th><th>Quantity sold</th><th>Date listed</th></tr></thead><tbody>{analytics.products.map((item) => <tr key={item.id}><td>{item.name}</td><td>{item.category}</td><td>{currency.format(item.revenue)}</td><td>{integer.format(item.units)}</td><td>{new Date(item.listed_at).toLocaleDateString()}</td></tr>)}</tbody></table> : <p className="analytics-print-note">No sales recorded in this date range.</p>}
-                    </section>
-                    <section className="analytics-print-data-section"><h3>Low livestock availability (3 or fewer units)</h3>
-                        {analytics.low_stock.length ? <table><thead><tr><th>Livestock listing</th><th>Category</th><th>Available</th></tr></thead><tbody>{analytics.low_stock.map((item) => <tr key={item.id}><td>{item.name}</td><td>{item.category}</td><td>{integer.format(item.quantity)} units</td></tr>)}</tbody></table> : <p className="analytics-print-note">No low-availability livestock listings.</p>}
-                    </section>
-                    <section className="analytics-print-data-section"><h3>Active livestock listings</h3>
-                        {analytics.inventory.length ? <table><thead><tr><th>Livestock listing</th><th>Category</th><th>Available</th><th>Status</th></tr></thead><tbody>{analytics.inventory.map((item) => <tr key={item.id}><td>{item.name}</td><td>{item.category}</td><td>{integer.format(item.quantity)} units</td><td>{item.status.replaceAll('_', ' ')}</td></tr>)}</tbody></table> : <p className="analytics-print-note">No active listings in this selection.</p>}
-                    </section>
-                    {role === 'ADMIN' && <section className="analytics-print-data-section"><h3>Seller performance</h3>
-                        {analytics.seller_performance.length ? <table><thead><tr><th>Seller</th><th>Orders</th><th>Gross sales</th></tr></thead><tbody>{analytics.seller_performance.map((item) => <tr key={item.id}><td>{item.name}</td><td>{integer.format(item.orders)}</td><td>{currency.format(item.sales)}</td></tr>)}</tbody></table> : <p className="analytics-print-note">No seller orders in this period.</p>}
-                    </section>}
-                    {role === 'ADMIN' && analytics.complaints && <section className="analytics-print-data-section"><h3>Complaints and resolution</h3>
-                        <table><thead><tr><th>Total</th><th>Open</th><th>Resolved</th><th>Average hours to resolve</th></tr></thead><tbody><tr><td>{integer.format(analytics.complaints.total)}</td><td>{integer.format(analytics.complaints.open)}</td><td>{integer.format(analytics.complaints.resolved)}</td><td>{analytics.complaints.average_resolution_hours == null ? 'Unavailable' : integer.format(analytics.complaints.average_resolution_hours)}</td></tr></tbody></table>
-                    </section>}
-                    <section className="analytics-print-data-section"><h3>Delayed orders (open for 48+ hours)</h3>
-                        {analytics.delayed_orders.length ? <table><thead><tr><th>Order</th><th>Status</th><th>Age</th><th>Total</th></tr></thead><tbody>{analytics.delayed_orders.map((item) => <tr key={item.id}><td>{item.reference}</td><td>{item.status.replaceAll('_', ' ')}</td><td>{integer.format(item.age_hours)} hours</td><td>{currency.format(item.total)}</td></tr>)}</tbody></table> : <p className="analytics-print-note">No delayed open orders.</p>}
-                    </section>
-                    <section className="analytics-print-data-section"><h3>Livestock listings declining vs previous equal period</h3>
-                        {analytics.declining_products.length ? <table><thead><tr><th>Livestock listing</th><th>Sales change</th><th>Quantity change</th></tr></thead><tbody>{analytics.declining_products.map((item) => <tr key={item.id}><td>{item.name}</td><td>{currency.format(item.change)}</td><td>{integer.format(item.units_change)}</td></tr>)}</tbody></table> : <p className="analytics-print-note">No livestock listings have lower sales than the previous equal period.</p>}
-                    </section>
-                    <section className="analytics-print-data-section"><h3>About this data</h3><p className="analytics-print-note">Some measures are unavailable because FarmGate does not record the underlying events:</p><ul>{Object.values(analytics.unavailable).map((reason) => <li key={reason}>{reason}</li>)}</ul></section>
+                    {printMetricRows.length > 0 && <AnalyticsPrintTable
+                        title="Dashboard metrics"
+                        headingLevel={2}
+                        headers={['Metric', 'Result', 'Basis']}
+                        rows={printMetricRows.map((row) => ({ id: row.id, cells: [row.label, row.value, row.note] }))}
+                        excludedRows={excludedPrintRows}
+                        edits={printEdits}
+                        onToggleRow={togglePrintRow}
+                        onEdit={editPrintValue}
+                    />}
+                    {(hasIncludedPrintRows(trendRows) || printableCharts.some(({ rows }) => hasIncludedPrintRows(rows)) || hasIncludedPrintRows(growthRows)) && <>
+                        <h2>Performance and inventory mix</h2>
+                        {trendRows.length > 0 && <AnalyticsPrintTable
+                            title={trendTitle}
+                            unitLabel={`${trendMetric === 'revenue' ? 'Philippine pesos (₱)' : trendMetric === 'orders' ? 'Orders' : 'Units sold'} · daily totals`}
+                            headers={trendHeaders}
+                            rows={trendRows}
+                            excludedRows={excludedPrintRows}
+                            edits={printEdits}
+                            onToggleRow={togglePrintRow}
+                            onEdit={editPrintValue}
+                        />}
+                        {trendData.some((item) => item[trendMetric] > 0 && isPrintRowIncluded(`trend-${item.date}`)) && <PrintTrend
+                            values={trendData.filter((item) => item[trendMetric] > 0 && isPrintRowIncluded(`trend-${item.date}`))}
+                            metric={trendMetric}
+                        />}
+                        {printableCharts.map(({ chart, rows }) => rows.length > 0 && <AnalyticsPrintTable
+                            key={chart.title}
+                            title={chart.title}
+                            unitLabel={chart.unitLabel}
+                            headers={[chart.kind === 'donut' ? 'Category / status' : 'Item', chart.currencyValues ? 'Sales' : 'Count / quantity', ...(chart.kind === 'donut' ? ['Share'] : [])]}
+                            rows={rows}
+                            excludedRows={excludedPrintRows}
+                            edits={printEdits}
+                            onToggleRow={togglePrintRow}
+                            onEdit={editPrintValue}
+                        />)}
+                        {growthRows.length > 0 && <AnalyticsPrintTable
+                            title="Marketplace activity over time"
+                            headers={growthHeaders}
+                            rows={growthRows}
+                            excludedRows={excludedPrintRows}
+                            edits={printEdits}
+                            onToggleRow={togglePrintRow}
+                            onEdit={editPrintValue}
+                        />}
+                    </>}
+                    {[
+                        productRows,
+                        lowStockRows,
+                        inventoryRows,
+                        ...(role === 'ADMIN' ? [sellerRows, complaintRows] : []),
+                        delayedRows,
+                        decliningRows,
+                    ].some(hasIncludedPrintRows) && <>
+                        <h2>Record-level detail</h2>
+                        {productRows.length > 0 && <AnalyticsPrintTable title="Top livestock listings by sales and quantity" headers={productHeaders} rows={productRows} excludedRows={excludedPrintRows} edits={printEdits} onToggleRow={togglePrintRow} onEdit={editPrintValue} />}
+                        {lowStockRows.length > 0 && <AnalyticsPrintTable title="Low livestock availability (3 or fewer units)" headers={['Livestock listing', 'Category', 'Available']} rows={lowStockRows} excludedRows={excludedPrintRows} edits={printEdits} onToggleRow={togglePrintRow} onEdit={editPrintValue} />}
+                        {inventoryRows.length > 0 && <AnalyticsPrintTable title="Active livestock listings" headers={['Livestock listing', 'Category', 'Available', 'Status']} rows={inventoryRows} excludedRows={excludedPrintRows} edits={printEdits} onToggleRow={togglePrintRow} onEdit={editPrintValue} />}
+                        {role === 'ADMIN' && sellerRows.length > 0 && <AnalyticsPrintTable title="Seller performance" headers={['Seller', 'Orders', 'Gross sales']} rows={sellerRows} excludedRows={excludedPrintRows} edits={printEdits} onToggleRow={togglePrintRow} onEdit={editPrintValue} />}
+                        {role === 'ADMIN' && complaintRows.length > 0 && <AnalyticsPrintTable title="Complaints and resolution" headers={['Measure', 'Result']} rows={complaintRows} excludedRows={excludedPrintRows} edits={printEdits} onToggleRow={togglePrintRow} onEdit={editPrintValue} />}
+                        {delayedRows.length > 0 && <AnalyticsPrintTable title="Delayed orders (open for 48+ hours)" headers={delayedHeaders} rows={delayedRows} excludedRows={excludedPrintRows} edits={printEdits} onToggleRow={togglePrintRow} onEdit={editPrintValue} />}
+                        {decliningRows.length > 0 && <AnalyticsPrintTable title="Livestock listings declining vs previous equal period" headers={decliningHeaders} rows={decliningRows} excludedRows={excludedPrintRows} edits={printEdits} onToggleRow={togglePrintRow} onEdit={editPrintValue} />}
+                    </>}
+                    {unavailableRows.length > 0 && <AnalyticsPrintList title="About this data" rows={unavailableRows} excludedRows={excludedPrintRows} edits={printEdits} onToggleRow={togglePrintRow} onEdit={editPrintValue} />}
                     <section className="analytics-print-signatures" aria-labelledby="analytics-print-signatures-title">
                         <div className="analytics-print-signatures-heading"><div><h2 id="analytics-print-signatures-title">Review and acknowledgment</h2><p>Complete by hand on the printed copy, where required.</p></div><span>Report record</span></div>
                         <div className="analytics-print-signature-grid">

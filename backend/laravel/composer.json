@@ -7,6 +7,7 @@
     "license": "MIT",
     "require": {
         "php": "^8.3",
+        "intervention/image": "^3.11",
         "laravel/framework": "^13.17",
         "laravel/sanctum": "^4.0",
         "laravel/socialite": "^5.31",
@@ -46,8 +47,7 @@
             "@php artisan dev"
         ],
         "test": [
-            "@php artisan config:clear --ansi @no_additional_args",
-            "@php artisan test"
+            "@php vendor/bin/phpunit"
         ],
         "post-autoload-dump": [
             "Illuminate\\Foundation\\ComposerScripts::postAutoloadDump",

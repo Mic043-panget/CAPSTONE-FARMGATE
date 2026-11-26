@@ -12,10 +12,13 @@ use App\Models\Order;
 use App\Models\SellerPayout;
 use App\Models\SellerPayoutDestination;
 use App\Models\SellerPayoutPolicy;
+use App\Rules\ValidFarmgateImage;
 use App\Services\CodRemittanceService;
+use App\Services\ImageUploadService;
 use App\Services\PaymentProviderReadinessService;
 use App\Services\SellerPayoutPolicyService;
 use App\Services\SystemSettingsService;
+use App\Support\FarmgateImage;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -47,26 +50,21 @@ class CodRemittanceController extends Controller
         abort_unless($request->user()?->role === Role::RIDER, 403);
         $data = $request->validate([
             'amount_cents' => ['required', 'integer', 'min:1', 'max:99999999999'],
-            'proof' => ['required', 'file', 'image', 'mimes:jpeg,jpg,png,webp', 'max:10240'],
+            'proof' => ['required', 'file', 'image', 'mimes:jpeg,jpg,png,webp', 'max:10240', new ValidFarmgateImage],
         ]);
         $file = $request->file('proof');
-        $extension = $file->guessExtension();
-        abort_if(! $extension, 422, 'The uploaded COD proof type could not be identified.');
-        $path = Str::random(40).'.'.$extension;
+        $stored = app(ImageUploadService::class)->storeEvidence($file, 'cod-collection-proofs', 'delivery_proofs');
         try {
-            $storedPath = $file->storeAs('cod-collection-proofs', $path, 'delivery_proofs');
-            $sha256 = hash_file('sha256', $file->getRealPath());
-            abort_unless($storedPath === 'cod-collection-proofs/'.$path && Storage::disk('delivery_proofs')->exists($storedPath) && is_string($sha256), 500, 'The COD proof could not be securely stored.');
             $collection = $service->collectCash(
                 $delivery,
                 $request->user(),
                 (int) $data['amount_cents'],
-                $storedPath,
-                $sha256,
-                $file->getMimeType() ?? 'application/octet-stream',
+                $stored['path'],
+                $stored['sha256'],
+                $stored['mime_type'],
             );
         } catch (Throwable $exception) {
-            Storage::disk('delivery_proofs')->delete('cod-collection-proofs/'.$path);
+            app(ImageUploadService::class)->deleteEvidence($stored['path'], 'delivery_proofs');
             throw $exception;
         }
 
@@ -84,8 +82,10 @@ class CodRemittanceController extends Controller
             || $request->user()?->role === Role::RIDER && $collection->rider_id === $request->user()->id, 403);
         abort_unless(filled($collection->proof_path), 404, 'COD collection proof is unavailable.');
         $disk = Storage::disk('delivery_proofs');
-        abort_unless($disk->exists($collection->proof_path), 404, 'COD collection proof could not be found.');
-        $proofPath = $collection->proof_path;
+        $previewPath = app(ImageUploadService::class)->previewPath($collection->proof_path);
+        $usePreview = $disk->exists($previewPath);
+        $proofPath = $usePreview ? $previewPath : $collection->proof_path;
+        abort_unless($disk->exists($proofPath), 404, 'COD collection proof could not be found.');
 
         return response()->stream(function () use ($disk, $proofPath): void {
             $stream = $disk->readStream($proofPath);
@@ -98,7 +98,7 @@ class CodRemittanceController extends Controller
                 fclose($stream);
             }
         }, 200, [
-            'Content-Type' => $collection->proof_mime_type ?? 'application/octet-stream',
+            'Content-Type' => $usePreview ? 'image/webp' : ($collection->proof_mime_type ?? 'application/octet-stream'),
             'Content-Disposition' => 'inline; filename="cod-collection-proof"',
             'Cache-Control' => 'private, no-store',
             'X-Content-Type-Options' => 'nosniff',
@@ -114,7 +114,7 @@ class CodRemittanceController extends Controller
             'receiver_name' => ['required_if:method_type,CASH_HANDOVER', 'prohibited_unless:method_type,CASH_HANDOVER', 'nullable', 'string', 'min:2', 'max:120'],
             'receiving_method_id' => ['required_if:method_type,BANK_TRANSFER,BANK_QR,PAYMONGO_QR', 'prohibited_unless:method_type,BANK_TRANSFER,BANK_QR,PAYMONGO_QR', 'nullable', 'integer', 'min:1'],
             'transaction_reference' => ['required_if:method_type,BANK_TRANSFER,BANK_QR,PAYMONGO_QR', 'prohibited_unless:method_type,BANK_TRANSFER,BANK_QR,PAYMONGO_QR', 'nullable', 'string', 'min:4', 'max:120', 'regex:/^[A-Za-z0-9._:-]+$/'],
-            'proof' => ['required_if:method_type,BANK_TRANSFER,BANK_QR,PAYMONGO_QR', 'nullable', 'file', 'image', 'mimes:jpeg,jpg,png,webp', 'max:10240'],
+            'proof' => ['required_if:method_type,BANK_TRANSFER,BANK_QR,PAYMONGO_QR', 'nullable', 'file', 'image', 'mimes:jpeg,jpg,png,webp', 'max:10240', new ValidFarmgateImage],
         ]);
         $method = filled($data['receiving_method_id'] ?? null)
             ? CodReceivingMethod::query()->whereKey($data['receiving_method_id'])->where('status', 'ACTIVE')->firstOrFail()
@@ -124,13 +124,10 @@ class CodRemittanceController extends Controller
         $sha256 = null;
         $mime = null;
         if ($file) {
-            $extension = $file->guessExtension();
-            abort_if(! $extension, 422, 'The remittance proof type could not be identified.');
-            $path = 'cod-remittance-proofs/'.Str::random(40).'.'.$extension;
-            $mime = $file->getMimeType() ?? 'application/octet-stream';
-            $storedPath = $file->storeAs('cod-remittance-proofs', basename($path), 'delivery_proofs');
-            $sha256 = hash_file('sha256', $file->getRealPath());
-            abort_unless($storedPath === $path && Storage::disk('delivery_proofs')->exists($path) && is_string($sha256), 500, 'The remittance proof could not be securely stored.');
+            $stored = app(ImageUploadService::class)->storeEvidence($file, 'cod-remittance-proofs', 'delivery_proofs');
+            $path = $stored['path'];
+            $sha256 = $stored['sha256'];
+            $mime = $stored['mime_type'];
         }
         try {
             $remittance = $service->submitRemittance(
@@ -145,7 +142,7 @@ class CodRemittanceController extends Controller
             );
         } catch (Throwable $exception) {
             if ($path !== null) {
-                Storage::disk('delivery_proofs')->delete($path);
+                app(ImageUploadService::class)->deleteEvidence($path, 'delivery_proofs');
             }
             throw $exception;
         }
@@ -395,7 +392,7 @@ class CodRemittanceController extends Controller
             'paid_at' => ['required', 'date', 'after_or_equal:'.$payout->created_at->toDateString(), 'before_or_equal:today'],
             'reason' => ['required', 'string', 'min:8', 'max:500'],
             'externally_completed_confirmed' => ['required', 'accepted'],
-            'receipt' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:10240'],
+            'receipt' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:10240', new ValidFarmgateImage(['application/pdf'])],
         ]);
         $data['reason'] = $this->safePayoutReason($data['reason'], $payout->payout_destination_id
             ? SellerPayoutDestination::query()->find($payout->payout_destination_id)
@@ -404,11 +401,15 @@ class CodRemittanceController extends Controller
         $file = $request->file('receipt');
         $path = null;
         if ($file) {
-            $extension = $file->guessExtension();
-            abort_if(! $extension, 422, 'The payout receipt type could not be identified.');
-            $path = 'seller-payout-receipts/'.Str::random(40).'.'.$extension;
-            $storedPath = $file->storeAs('seller-payout-receipts', basename($path), 'delivery_proofs');
-            abort_unless($storedPath === $path && Storage::disk('delivery_proofs')->exists($path), 500, 'The payout receipt could not be securely stored.');
+            if (FarmgateImage::isImage($file)) {
+                $stored = app(ImageUploadService::class)->storeEvidence($file, 'seller-payout-receipts', 'delivery_proofs');
+                $path = $stored['path'];
+            } else {
+                $extension = $file->guessExtension();
+                abort_if(! $extension, 422, 'The payout receipt type could not be identified.');
+                $path = 'seller-payout-receipts/'.Str::random(40).'.'.$extension;
+                abort_unless($file->storeAs('seller-payout-receipts', basename($path), 'delivery_proofs') === $path, 503, 'The payout receipt could not be securely stored. Please retry.');
+            }
         }
 
         try {
@@ -424,7 +425,7 @@ class CodRemittanceController extends Controller
             );
         } catch (Throwable $exception) {
             if ($path) {
-                Storage::disk('delivery_proofs')->delete($path);
+                app(ImageUploadService::class)->deleteEvidence($path, 'delivery_proofs');
             }
             throw $exception;
         }
@@ -580,10 +581,13 @@ class CodRemittanceController extends Controller
     {
         abort_unless(filled($path), 404, $missingMessage);
         $disk = Storage::disk('delivery_proofs');
-        abort_unless($disk->exists($path), 404, $missingMessage);
+        $previewPath = app(ImageUploadService::class)->previewPath($path);
+        $usePreview = $disk->exists($previewPath);
+        $streamPath = $usePreview ? $previewPath : $path;
+        abort_unless($disk->exists($streamPath), 404, $missingMessage);
 
-        return response()->stream(function () use ($disk, $path): void {
-            $stream = $disk->readStream($path);
+        return response()->stream(function () use ($disk, $streamPath): void {
+            $stream = $disk->readStream($streamPath);
             if (! is_resource($stream)) {
                 throw new \RuntimeException('The private payment evidence could not be opened.');
             }
@@ -593,7 +597,7 @@ class CodRemittanceController extends Controller
                 fclose($stream);
             }
         }, 200, [
-            'Content-Type' => $mime ?? 'application/octet-stream',
+            'Content-Type' => $usePreview ? 'image/webp' : ($mime ?? 'application/octet-stream'),
             'Content-Disposition' => 'inline; filename="farmgate-payment-evidence"',
             'Cache-Control' => 'private, no-store',
             'X-Content-Type-Options' => 'nosniff',

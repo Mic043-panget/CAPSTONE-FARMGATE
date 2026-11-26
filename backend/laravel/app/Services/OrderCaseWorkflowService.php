@@ -9,6 +9,7 @@ use App\Models\ComplaintMessage;
 use App\Models\OrderActivity;
 use App\Models\User;
 use App\Notifications\OrderCaseUpdatedNotification;
+use App\Support\FarmgateImage;
 use Illuminate\Http\Response;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
@@ -56,21 +57,35 @@ class OrderCaseWorkflowService
     public function storeMedia(Complaint $case, int $userId, array $files, ?ComplaintMessage $message = null): array
     {
         $storedPaths = [];
-        foreach ($files as $file) {
-            $path = $file->store("cases/{$case->id}", 'case_media');
-            if (! is_string($path) || $path === '') {
-                throw new \RuntimeException('Case evidence storage failed.');
+        try {
+            foreach ($files as $file) {
+                if (FarmgateImage::isImage($file)) {
+                    $stored = app(ImageUploadService::class)->storeEvidence($file, "cases/{$case->id}", 'case_media');
+                    $path = $stored['path'];
+                    $mimeType = $stored['mime_type'];
+                    $size = $stored['size'];
+                } else {
+                    $path = $file->store("cases/{$case->id}", 'case_media');
+                    if (! is_string($path) || $path === '') {
+                        abort(503, 'Case evidence could not be saved. Please retry.');
+                    }
+                    $mimeType = $file->getMimeType() ?: 'application/octet-stream';
+                    $size = $file->getSize();
+                }
+                $storedPaths[] = $path;
+                ComplaintMedia::create([
+                    'complaint_id' => $case->id,
+                    'complaint_message_id' => $message?->id,
+                    'uploaded_by' => $userId,
+                    'path' => $path,
+                    'mime_type' => $mimeType,
+                    'original_name' => mb_substr($file->getClientOriginalName(), 0, 255),
+                    'size' => $size,
+                ]);
             }
-            $storedPaths[] = $path;
-            ComplaintMedia::create([
-                'complaint_id' => $case->id,
-                'complaint_message_id' => $message?->id,
-                'uploaded_by' => $userId,
-                'path' => $path,
-                'mime_type' => $file->getMimeType() ?: 'application/octet-stream',
-                'original_name' => mb_substr($file->getClientOriginalName(), 0, 255),
-                'size' => $file->getSize(),
-            ]);
+        } catch (\Throwable $exception) {
+            Storage::disk('case_media')->delete($storedPaths);
+            throw $exception;
         }
 
         return $storedPaths;
@@ -100,10 +115,13 @@ class OrderCaseWorkflowService
     public function streamPath(string $path, string $mimeType): StreamedResponse|Response
     {
         $disk = Storage::disk('case_media');
-        abort_unless($disk->exists($path), 404, 'The saved case evidence could not be found.');
+        $previewPath = app(ImageUploadService::class)->previewPath($path);
+        $usePreview = $disk->exists($previewPath);
+        $streamPath = $usePreview ? $previewPath : $path;
+        abort_unless($disk->exists($streamPath), 404, 'The saved case evidence could not be found.');
 
-        return response()->stream(function () use ($disk, $path): void {
-            $stream = $disk->readStream($path);
+        return response()->stream(function () use ($disk, $streamPath): void {
+            $stream = $disk->readStream($streamPath);
             if (! is_resource($stream)) {
                 throw new \RuntimeException('The saved case evidence could not be opened.');
             }
@@ -113,7 +131,7 @@ class OrderCaseWorkflowService
                 fclose($stream);
             }
         }, 200, [
-            'Content-Type' => $mimeType,
+            'Content-Type' => $usePreview ? 'image/webp' : $mimeType,
             'Content-Disposition' => 'inline; filename="case-evidence"',
             'Cache-Control' => 'private, no-store',
             'X-Content-Type-Options' => 'nosniff',

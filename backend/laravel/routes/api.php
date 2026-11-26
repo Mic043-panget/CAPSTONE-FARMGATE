@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\AccountSettingsController;
+use App\Http\Controllers\Api\AiListingSearchController;
 use App\Http\Controllers\Api\Admin\ComplaintController as AdminComplaintController;
 use App\Http\Controllers\Api\Admin\DashboardController as AdminDashboardController;
 use App\Http\Controllers\Api\Admin\EmailDeliveryController as AdminEmailDeliveryController;
@@ -43,6 +44,7 @@ use App\Http\Controllers\Api\Seller\DashboardController as SellerDashboardContro
 use App\Http\Controllers\Api\Seller\ProfileController as SellerProfileController;
 use App\Http\Controllers\Api\Seller\ShopProfileController as SellerShopProfileController;
 use App\Http\Controllers\Api\Seller\PromotionController as SellerPromotionController;
+use App\Http\Controllers\Api\SellerInventoryController;
 use App\Http\Controllers\Api\Seller\ReviewController as SellerReviewController;
 use App\Http\Controllers\Api\SellerPayoutDestinationController;
 use App\Http\Controllers\Api\SellerPayoutPolicyController;
@@ -62,7 +64,9 @@ Route::middleware(MaintenanceMode::class)->group(function (): void {
         ]);
     });
 
+    Route::get('/notifications/push-config', [PushSubscriptionController::class, 'config']);
     Route::get('/categories', [CategoryController::class, 'index']);
+    Route::post('/listings/ai-search', AiListingSearchController::class)->middleware('throttle:ai-listing-search');
     Route::get('/listings', [ListingController::class, 'index']);
     Route::get('/listings/{listing}', [ListingController::class, 'show']);
     Route::get('/promotions', [PromotionPageController::class, 'index']);
@@ -120,6 +124,8 @@ Route::middleware(MaintenanceMode::class)->group(function (): void {
             Route::get('/events/{event}/history', [EventController::class, 'history']);
             Route::post('/categories', [CategoryController::class, 'store']);
             Route::get('/seller/listings', [ListingController::class, 'mine']);
+            Route::get('/seller/inventory', [SellerInventoryController::class, 'index']);
+            Route::get('/seller/inventory/orders/{orderReference}', [SellerInventoryController::class, 'orderDetails']);
             Route::get('/seller/profile', [SellerProfileController::class, 'show']);
             Route::put('/seller/profile/location', [SellerProfileController::class, 'update']);
             Route::get('/seller/shop-profile', [SellerShopProfileController::class, 'show']);
@@ -253,7 +259,6 @@ Route::middleware(MaintenanceMode::class)->group(function (): void {
             Route::post('/orders/{order}/delivery-code', [DeliveryTrackingController::class, 'issueCode'])->middleware('throttle:10,1');
             Route::patch('/orders/{order}/status', [OrderController::class, 'updateStatus']);
             Route::get('/notifications', [NotificationController::class, 'index']);
-            Route::get('/notifications/push-config', [PushSubscriptionController::class, 'config']);
             Route::post('/notifications/push-subscriptions', [PushSubscriptionController::class, 'store'])->middleware('throttle:10,1');
             Route::delete('/notifications/push-subscriptions', [PushSubscriptionController::class, 'destroy'])->middleware('throttle:10,1');
             Route::post('/notifications/{notificationId}/read', [NotificationController::class, 'markAsRead']);
@@ -302,6 +307,7 @@ Route::middleware(MaintenanceMode::class)->group(function (): void {
             Route::post('/cases/{complaint}/messages', [BuyerComplaintController::class, 'sendMessage']);
             Route::get('/cases/media/{media}', [BuyerComplaintController::class, 'media'])->name('case-media.show');
             Route::get('/seller/reviews', [SellerReviewController::class, 'index']);
+            Route::post('/seller/reviews/{review}/reports', [SellerReviewController::class, 'report'])->middleware('throttle:10,1');
             Route::get('/seller/payouts', [CodRemittanceController::class, 'sellerPayouts']);
             Route::get('/seller/payout-policy', [SellerPayoutPolicyController::class, 'sellerCurrent']);
             Route::post('/seller/payout-policy/{policy}/acknowledge', [SellerPayoutPolicyController::class, 'acknowledge'])->middleware('throttle:10,1');
@@ -310,6 +316,7 @@ Route::middleware(MaintenanceMode::class)->group(function (): void {
             Route::put('/seller/payout-destination', [SellerPayoutDestinationController::class, 'save'])->middleware('throttle:5,1');
             Route::get('/seller/complaints', [SellerComplaintController::class, 'index']);
             Route::get('/admin/reviews/reports', [ReviewModerationController::class, 'index']);
+            Route::get('/admin/review-reports/{report}/media/{media}', [ReviewModerationController::class, 'privateReportMedia'])->name('admin.review-report-media');
             Route::patch('/admin/reviews/{review}/moderation', [ReviewModerationController::class, 'moderate']);
             Route::get('/admin/complaints', [AdminComplaintController::class, 'index']);
             Route::patch('/admin/complaints/{complaint}', [AdminComplaintController::class, 'update']);

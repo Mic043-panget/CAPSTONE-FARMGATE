@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use LogicException;
 
 class RiderEarningHistory extends Model
@@ -15,6 +16,11 @@ class RiderEarningHistory extends Model
     protected function casts(): array
     {
         return ['snapshot' => 'array'];
+    }
+
+    public function actor(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'actor_id');
     }
 
     protected static function booted(): void

@@ -2,6 +2,8 @@ import React from 'react';
 import api from '../../lib/api';
 import { confirmAction } from '../../lib/alerts';
 import { Pagination } from '../../shared/components/Pagination';
+import { ImageUploadPreview, IMAGE_UPLOAD_HINT, imageUploadError } from '../../shared/components/ImageUploadPreview';
+import { FileDropzone } from '../../shared/components/FileDropzone';
 
 type ReceivingMethod = {
     id: number;
@@ -552,7 +554,16 @@ export function CodReceivingSettings({
                             <label>Farmgate account holder<input required maxLength={120} value={accountHolder} onChange={(event) => setAccountHolder(event.target.value)} /></label>
                             <label>Bank or receiving institution<input required maxLength={100} value={bankName} onChange={(event) => setBankName(event.target.value)} /></label>
                             <label>Receiving account identifier<input required minLength={5} maxLength={40} autoComplete="off" value={accountNumber} onChange={(event) => setAccountNumber(event.target.value)} /></label>
-                            {(methodType === 'BANK_QR' || methodType === 'PAYMONGO_QR') && <label>{methodType === 'PAYMONGO_QR' ? 'PayMongo receiving QR' : 'Bank receive-money QR'}<input required type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setQr(event.target.files?.[0] ?? null)} /></label>}
+                            {(methodType === 'BANK_QR' || methodType === 'PAYMONGO_QR') && <div>
+                                <FileDropzone label={methodType === 'PAYMONGO_QR' ? 'PayMongo receiving QR' : 'Bank receive-money QR'} accept="image/jpeg,image/png,image/webp" required onFiles={(files) => {
+                                const selected = files[0] ?? null;
+                                const validationError = selected ? imageUploadError(selected) : null;
+                                if (validationError) {
+                                    onError(validationError);
+                                    return;
+                                }
+                                setQr(selected);
+                            }} helperText={IMAGE_UPLOAD_HINT} /><ImageUploadPreview file={qr} alt="Selected receiving QR preview" /></div>}
                             <p className="cod-receiving-form-note">Another admin must verify new methods before use.</p>
                             <button className="seller-inline-action" type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save inactive receiving method'}</button>
                         </form>
@@ -697,6 +708,7 @@ function ReceivingMethodCard({
     const [accountNumber, setAccountNumber] = React.useState('');
     const [editReason, setEditReason] = React.useState('');
     const [qr, setQr] = React.useState<File | null>(null);
+    const [qrError, setQrError] = React.useState('');
     const methodLabel = method.method_type === 'BANK_QR' || method.method_type === 'PAYMONGO_QR'
         ? method.method_type === 'PAYMONGO_QR' ? 'PayMongo receiving QR' : 'Online banking QR'
         : 'Bank account';
@@ -725,7 +737,17 @@ function ReceivingMethodCard({
                 <label>Bank or institution<input required maxLength={100} value={bankName} onChange={(event) => setBankName(event.target.value)} /></label>
                 <label>New account holder (optional)<input maxLength={120} value={accountHolder} onChange={(event) => setAccountHolder(event.target.value)} placeholder="Leave blank to keep current" /></label>
                 <label>New receiving account number (optional)<input minLength={5} maxLength={40} autoComplete="off" value={accountNumber} onChange={(event) => setAccountNumber(event.target.value)} placeholder="Leave blank to keep current" /></label>
-                {(method.method_type === 'BANK_QR' || method.method_type === 'PAYMONGO_QR') && <label>Replace receiving QR (optional)<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setQr(event.target.files?.[0] ?? null)} /></label>}
+                {(method.method_type === 'BANK_QR' || method.method_type === 'PAYMONGO_QR') && <div>
+                    <FileDropzone label="Replace receiving QR (optional)" accept="image/jpeg,image/png,image/webp" onFiles={(files) => {
+                    const selected = files[0] ?? null;
+                    const validationError = selected ? imageUploadError(selected) : null;
+                    if (validationError) {
+                        setQrError(validationError);
+                        return;
+                    }
+                    setQrError('');
+                    setQr(selected);
+                }} helperText={IMAGE_UPLOAD_HINT} /><ImageUploadPreview file={qr} alt="Selected replacement receiving QR preview" />{qrError && <p role="alert">{qrError}</p>}</div>}
                 <label>Reason for edit<textarea required minLength={8} maxLength={1000} value={editReason} onChange={(event) => setEditReason(event.target.value)} /></label>
                 <p className="payments-inline-note">Saving changes disables this method until a different admin verifies the updated details.</p>
                 <button className="seller-inline-action" type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save changes for verification'}</button>

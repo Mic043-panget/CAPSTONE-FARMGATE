@@ -6,6 +6,8 @@ use App\Enums\Role;
 use App\Http\Controllers\Controller;
 use App\Models\LoginHistory;
 use App\Models\User;
+use App\Rules\ValidFarmgateImage;
+use App\Services\ImageUploadService;
 use App\Services\PhoneVerificationException;
 use App\Services\SellerRegistrationPhoneVerificationService;
 use App\Services\SystemSettingsService;
@@ -16,15 +18,22 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Password;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Rules\Password as PasswordRule;
 use Illuminate\Validation\ValidationException;
 use Laravel\Socialite\Facades\Socialite;
 use Symfony\Component\HttpFoundation\RedirectResponse;
 
 class AuthController extends Controller
 {
+    private const PRODUCTION_FRONTEND_URLS = [
+        'farmgates.site' => 'https://farmgates.site',
+        'www.farmgates.site' => 'https://www.farmgates.site',
+    ];
+
     public function register(Request $request, SystemSettingsService $settings, SellerRegistrationPhoneVerificationService $phoneVerification): JsonResponse
     {
         abort_unless($settings->getBoolean('account_registration_enabled'), 403, 'Account registration is currently disabled.');
@@ -128,11 +137,13 @@ class AuthController extends Controller
         return response()->json(['user' => $this->userPayload($request->user())]);
     }
 
-    public function redirectToGoogle(): RedirectResponse
+    public function redirectToGoogle(Request $request): RedirectResponse
     {
         if (! $this->googleIsConfigured()) {
-            return $this->frontendOAuthRedirect('unconfigured');
+            return $this->frontendOAuthRedirect($request, 'unconfigured');
         }
+
+        config(['services.google.redirect' => $this->googleCallbackUrl($request)]);
 
         return Socialite::driver('google')->redirect();
     }
@@ -140,22 +151,24 @@ class AuthController extends Controller
     public function handleGoogleCallback(Request $request): RedirectResponse
     {
         if (! $this->googleIsConfigured()) {
-            return $this->frontendOAuthRedirect('unconfigured');
+            return $this->frontendOAuthRedirect($request, 'unconfigured');
         }
+
+        config(['services.google.redirect' => $this->googleCallbackUrl($request)]);
 
         try {
             $googleUser = Socialite::driver('google')->user();
         } catch (\Throwable $exception) {
             report($exception);
 
-            return $this->frontendOAuthRedirect('failed');
+            return $this->frontendOAuthRedirect($request, 'failed');
         }
 
         $googleId = $googleUser->getId();
         $email = strtolower(trim((string) $googleUser->getEmail()));
         $emailVerified = ($googleUser->user['email_verified'] ?? $googleUser->user['verified_email'] ?? false) === true;
         if (! $googleId || ! filter_var($email, FILTER_VALIDATE_EMAIL) || ! $emailVerified) {
-            return $this->frontendOAuthRedirect('unverified');
+            return $this->frontendOAuthRedirect($request, 'unverified');
         }
 
         $user = DB::transaction(function () use ($googleId, $email, $googleUser): ?User {
@@ -209,13 +222,13 @@ class AuthController extends Controller
         });
 
         if (! $user) {
-            return $this->frontendOAuthRedirect('account-conflict');
+            return $this->frontendOAuthRedirect($request, 'account-conflict');
         }
 
         Auth::login($user);
         $request->session()->regenerate();
 
-        return $this->frontendOAuthRedirect('success');
+        return $this->frontendOAuthRedirect($request, 'success');
     }
 
     public function logout(Request $request): JsonResponse
@@ -316,14 +329,31 @@ class AuthController extends Controller
     public function updatePhoto(Request $request): JsonResponse
     {
         abort_unless(in_array($request->user()?->role, [Role::BUYER, Role::RIDER], true), 403);
-        $data = $request->validate(['photo' => ['required', 'image', 'mimes:jpg,jpeg,png', 'max:1024']]);
+        $data = $request->validate(['photo' => ['required', 'image', 'mimes:jpg,jpeg,png,webp', 'max:10240', new ValidFarmgateImage]]);
         $user = $request->user();
 
         $previousPhoto = $user->profile_photo_path;
-        $newPhoto = $data['photo']->storePublicly('profile-photos', 'public');
-        $user->forceFill(['profile_photo_path' => $newPhoto])->save();
+        $newPhoto = app(ImageUploadService::class)->storeOptimized($data['photo'], 'profile-photos', 'public', 2048);
+        try {
+            $user->forceFill(['profile_photo_path' => $newPhoto])->save();
+        } catch (\Throwable $exception) {
+            try {
+                Storage::disk('public')->delete($newPhoto);
+            } catch (\Throwable $cleanupException) {
+                report($cleanupException);
+            }
+
+            throw $exception;
+        }
         if ($previousPhoto) {
-            Storage::disk('public')->delete($previousPhoto);
+            try {
+                if (! Storage::disk('public')->delete($previousPhoto)
+                    && Storage::disk('public')->exists($previousPhoto)) {
+                    report(new \RuntimeException('A replaced public profile image could not be removed.'));
+                }
+            } catch (\Throwable $cleanupException) {
+                report($cleanupException);
+            }
         }
 
         return response()->json(['user' => $this->userPayload($user->refresh())]);
@@ -349,20 +379,28 @@ class AuthController extends Controller
         return response()->json(['message' => 'If the account exists, reset instructions have been sent.']);
     }
 
-    public function resetPassword(Request $request): JsonResponse
+    public function resetPassword(Request $request, SystemSettingsService $settings): JsonResponse
     {
         $validated = $request->validate([
             'token' => ['required', 'string'],
             'email' => ['required', 'email'],
-            'password' => ['required', 'string', 'min:8', 'confirmed'],
+            'password' => ['required', 'string', PasswordRule::min($settings->getInt('minimum_password_length')), 'confirmed'],
         ]);
 
         $status = Password::reset($validated, function (User $user, string $password): void {
             $user->forceFill([
                 'password' => $password,
                 'password_set_at' => now(),
+                'remember_token' => Str::random(60),
             ])->save();
             $user->tokens()->delete();
+
+            if (config('session.driver') === 'database') {
+                $sessionTable = (string) config('session.table', 'sessions');
+                if (Schema::hasTable($sessionTable)) {
+                    DB::table($sessionTable)->where('user_id', $user->getAuthIdentifier())->delete();
+                }
+            }
         });
 
         if ($status !== Password::PASSWORD_RESET) {
@@ -406,11 +444,19 @@ class AuthController extends Controller
             && filled(config('services.google.redirect'));
     }
 
-    private function frontendOAuthRedirect(string $result): RedirectResponse
+    private function frontendOAuthRedirect(Request $request, string $result): RedirectResponse
     {
-        $frontendUrl = rtrim((string) config('services.frontend_url'), '/');
+        $frontendUrl = self::PRODUCTION_FRONTEND_URLS[$request->getHost()]
+            ?? rtrim((string) config('services.frontend_url'), '/');
 
         return redirect()->away($frontendUrl.'/?oauth='.rawurlencode($result).'#marketplace');
+    }
+
+    private function googleCallbackUrl(Request $request): string
+    {
+        return isset(self::PRODUCTION_FRONTEND_URLS[$request->getHost()])
+            ? self::PRODUCTION_FRONTEND_URLS[$request->getHost()].'/api/auth/google/callback'
+            : (string) config('services.google.redirect');
     }
 
     private function recordLogin(?User $user, string $identifier, Request $request, bool $successful): void

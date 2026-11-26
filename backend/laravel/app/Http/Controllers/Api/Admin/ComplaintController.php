@@ -9,6 +9,9 @@ use App\Models\Complaint;
 use App\Models\Order;
 use App\Services\OrderCaseWorkflowService;
 use App\Services\PayMongoRefundService;
+use App\Rules\ValidFarmgateImage;
+use App\Services\ImageUploadService;
+use App\Support\FarmgateImage;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -185,14 +188,20 @@ class ComplaintController extends Controller
         abort_unless($request->user()?->role === Role::ADMIN, 403);
         $data = $request->validate([
             'payout_reference' => ['nullable', 'string', 'max:255', 'required_without:evidence'],
-            'evidence' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:10240', 'required_without:payout_reference'],
+            'evidence' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:10240', 'required_without:payout_reference', new ValidFarmgateImage(['application/pdf'])],
         ]);
 
         $path = null;
         if ($request->hasFile('evidence')) {
-            $path = $request->file('evidence')->store("cases/{$complaint->id}/payouts", 'case_media');
-            if (! is_string($path) || $path === '') {
-                throw new \RuntimeException('COD payout evidence storage failed.');
+            $file = $request->file('evidence');
+            if (FarmgateImage::isImage($file)) {
+                $stored = app(ImageUploadService::class)->storeEvidence($file, "cases/{$complaint->id}/payouts", 'case_media');
+                $path = $stored['path'];
+            } else {
+                $path = $file->store("cases/{$complaint->id}/payouts", 'case_media');
+                if (! is_string($path) || $path === '') {
+                    abort(503, 'COD payout evidence could not be saved. Please retry.');
+                }
             }
         }
 
@@ -200,7 +209,7 @@ class ComplaintController extends Controller
             $updated = $refunds->recordManualPayout($complaint, $request->user()->id, (string) ($data['payout_reference'] ?? 'Evidence attached'), $path);
         } catch (\Throwable $exception) {
             if ($path !== null) {
-                Storage::disk('case_media')->delete($path);
+                app(ImageUploadService::class)->deleteEvidence($path, 'case_media');
             }
             throw $exception;
         }

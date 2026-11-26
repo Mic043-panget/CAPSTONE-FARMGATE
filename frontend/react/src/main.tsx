@@ -16,14 +16,17 @@ import { SellerShopPage } from './features/shared/SellerShopPage';
 import { OrderVerificationPage } from './features/shared/OrderVerificationPage';
 import { MobileBottomNavigation } from './features/shared/RoleMobileBottomNavigation';
 import api, { initializeCsrf } from './lib/api';
-import { confirmAction, showError, showSuccess } from './lib/alerts';
+import { confirmAction, showError, showInfo, showSuccess } from './lib/alerts';
 import type { Category, Listing, User } from './shared/types';
+import { InstallFarmgatePrompt, useInstallFarmgatePrompt } from './shared/components/InstallFarmgatePrompt';
+import { AppErrorBoundary } from './shared/components/AppErrorBoundary';
 import { ValidatedField } from './shared/components/ValidatedField';
-import { Pagination } from './shared/components/Pagination';
 import { NavigationBadge, navigationBadgeLabel } from './shared/components/NavigationBadge';
 import { RequestProgress } from './shared/components/RequestProgress';
+import { ForgotPasswordForm, PasswordResetPage } from './shared/components/PasswordReset';
 import { email as validateEmail, password as validatePassword, required } from './shared/validation';
 import './app.css';
+import './account-workflows.css';
 
 const BuyerProfile = React.lazy(() => import('./features/buyer/BuyerProfile').then((module) => ({ default: module.BuyerProfile })));
 const OrderDetailsPage = React.lazy(() => import('./features/buyer/OrderDetailsPage').then((module) => ({ default: module.OrderDetailsPage })));
@@ -31,7 +34,28 @@ const OrderDetailsPage = React.lazy(() => import('./features/buyer/OrderDetailsP
 type MarketplaceView = 'all' | 'top' | 'newest' | 'promotions';
 type BuyerTab = 'home' | 'promotions' | 'chats' | 'notifications' | 'profile';
 type PromotionsTab = 'all' | 'discounts' | 'special-deals' | 'events';
+type AiListingSearchFilters = {
+    keywords: string | null;
+    category_id: number | null;
+    sex: 'male' | 'female' | null;
+    min_age_months: number | null;
+    max_age_months: number | null;
+    min_price: number | null;
+    max_price: number | null;
+    pricing_type: 'PER_HEAD' | 'PER_KILO' | null;
+    sort: 'newest' | 'price_asc' | 'price_desc';
+};
 const pesoPrice = new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP', minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+function formatListingAge(months: number): string {
+    const years = Math.floor(months / 12);
+    const remainingMonths = months % 12;
+
+    return [
+        years > 0 ? `${years} ${years === 1 ? 'year' : 'years'}` : null,
+        remainingMonths > 0 ? `${remainingMonths} ${remainingMonths === 1 ? 'month' : 'months'}` : null,
+    ].filter(Boolean).join(' ') || '0 months';
+}
 
 const buyerNavigation: { id: BuyerTab; label: string }[] = [
     { id: 'home', label: 'Home' },
@@ -281,10 +305,11 @@ function RegistrationPhoneVerificationDialog({ user, code, error, message, loadi
     </div>;
 }
 
-function FarmgateApp() {
+function FarmgateApp({ initialAuthView = 'credentials' }: { initialAuthView?: 'credentials' | 'forgot' }) {
     const [user, setUser] = React.useState<User | null>(null);
     const userRef = React.useRef<User | null>(null);
     const [mode, setMode] = React.useState<'login' | 'register'>('login');
+    const [authView, setAuthView] = React.useState<'credentials' | 'forgot'>(initialAuthView);
     const [name, setName] = React.useState('');
     const [email, setEmail] = React.useState('');
     const [password, setPassword] = React.useState('');
@@ -306,6 +331,7 @@ function FarmgateApp() {
     const [error, setError] = React.useState<string | null>(null);
     const [categories, setCategories] = React.useState<Category[]>([]);
     const [listings, setListings] = React.useState<Listing[]>([]);
+    const [listingTotal, setListingTotal] = React.useState(0);
     const [showcasePromotions, setShowcasePromotions] = React.useState<Listing[]>([]);
     const [mobileFeatureTab, setMobileFeatureTab] = React.useState(0);
     const mobileFeatureTabRef = React.useRef(0);
@@ -336,13 +362,18 @@ function FarmgateApp() {
     const [showcasePromotionsError, setShowcasePromotionsError] = React.useState('');
     const [showcasePromotionsLoading, setShowcasePromotionsLoading] = React.useState(true);
     const [search, setSearch] = React.useState('');
+    const [aiSearchFilters, setAiSearchFilters] = React.useState<AiListingSearchFilters | null>(null);
+    const [aiSearchLoading, setAiSearchLoading] = React.useState(false);
+    const [aiSearchResultsReady, setAiSearchResultsReady] = React.useState(false);
+    const [aiSearchError, setAiSearchError] = React.useState('');
     const [categoryId, setCategoryId] = React.useState('');
     const [marketplaceLoading, setMarketplaceLoading] = React.useState(true);
+    const [marketplaceLoadingMore, setMarketplaceLoadingMore] = React.useState(false);
     const [marketplaceError, setMarketplaceError] = React.useState('');
     const [marketplaceRetry, setMarketplaceRetry] = React.useState(0);
     const [listingPage, setListingPage] = React.useState(1);
     const [listingLastPage, setListingLastPage] = React.useState(1);
-    const [authOpen, setAuthOpen] = React.useState(false);
+    const [authOpen, setAuthOpen] = React.useState(initialAuthView === 'forgot');
     const [authSubmitAttempt, setAuthSubmitAttempt] = React.useState(0);
     const [isPromotionsPage, setIsPromotionsPage] = React.useState(() => /^#promotions(?:\/|$)/.test(window.location.hash) || ['#calendar', '#events', '#special-deals'].includes(window.location.hash) || /^#calendar\/(?:event|promotion)\/\d+$/.test(window.location.hash));
     const [promotionsTab, setPromotionsTab] = React.useState<PromotionsTab>(() => promotionsTabFromHash(window.location.hash));
@@ -583,39 +614,140 @@ function FarmgateApp() {
         let active = true;
         if (isPromotionsPage) {
             setMarketplaceLoading(false);
+            setMarketplaceLoadingMore(false);
+            setAiSearchResultsReady(false);
             return () => { active = false; };
         }
         const timer = window.setTimeout(() => {
-            setMarketplaceLoading(true);
+            if (listingPage === 1) {
+                setMarketplaceLoading(true);
+                setMarketplaceLoadingMore(false);
+            } else {
+                setMarketplaceLoadingMore(true);
+            }
             setMarketplaceError('');
-            api.get<{ data: Listing[]; last_page: number }>('/api/listings', {
+            let resultsLoaded = false;
+            const searchQuery = aiSearchFilters
+                ? [search.trim(), aiSearchFilters.keywords?.trim()].filter(Boolean).join(' ').slice(0, 120)
+                : search;
+            api.get<{ data: Listing[]; last_page: number; total: number }>('/api/listings', {
                 params: {
-                    q: search || undefined,
-                    category_id: categoryId || undefined,
+                    q: searchQuery || undefined,
+                    category_id: (aiSearchFilters?.category_id ?? categoryId) || undefined,
+                    sex: aiSearchFilters?.sex || undefined,
+                    min_age_months: aiSearchFilters?.min_age_months ?? undefined,
+                    max_age_months: aiSearchFilters?.max_age_months ?? undefined,
+                    min_price: aiSearchFilters?.min_price ?? undefined,
+                    max_price: aiSearchFilters?.max_price ?? undefined,
+                    pricing_type: aiSearchFilters?.pricing_type || undefined,
                     page: listingPage,
-                    sort: marketplaceView === 'top' ? 'popular' : 'newest',
+                    per_page: 20,
+                    sort: aiSearchFilters?.sort ?? (marketplaceView === 'top' ? 'popular' : 'newest'),
                     promotions: marketplaceView === 'promotions' ? 1 : undefined,
                 },
             }).then((response) => {
                 if (!active) return;
-                setListings(response.data.data);
+                setListings((current) => {
+                    if (listingPage === 1) return response.data.data;
+                    const existingIds = new Set(current.map((listing) => listing.id));
+                    return [...current, ...response.data.data.filter((listing) => !existingIds.has(listing.id))];
+                });
                 setListingLastPage(response.data.last_page);
+                setListingTotal(response.data.total);
+                resultsLoaded = true;
             }).catch(() => {
                 if (active) setMarketplaceError('Livestock listings could not be loaded. Check your connection and try again.');
-            }).finally(() => { if (active) setMarketplaceLoading(false); });
+            }).finally(() => {
+                if (!active) return;
+                if (listingPage === 1) setMarketplaceLoading(false);
+                else setMarketplaceLoadingMore(false);
+                setAiSearchResultsReady(Boolean(aiSearchFilters) && resultsLoaded);
+            });
         }, search ? 200 : 0);
 
         return () => {
             active = false;
             window.clearTimeout(timer);
         };
-    }, [categoryId, isPromotionsPage, listingPage, marketplaceRetry, marketplaceView, search]);
+    }, [aiSearchFilters, categoryId, isPromotionsPage, listingPage, marketplaceRetry, marketplaceView, search]);
 
     React.useEffect(() => {
         if (categories.length && !categoryId) {
             setCategoryId('');
         }
     }, [categories, categoryId]);
+
+    async function runAiListingSearch(event: React.FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+        const query = search.trim();
+        if (query.length < 3 || aiSearchLoading) return;
+
+        setAiSearchLoading(true);
+        setAiSearchResultsReady(false);
+        setAiSearchError('');
+        try {
+            const response = await api.post<{ filters: AiListingSearchFilters }>('/api/listings/ai-search', { query });
+            setAiSearchFilters(response.data.filters);
+            setCategoryId(response.data.filters.category_id ? String(response.data.filters.category_id) : '');
+            setListingPage(1);
+        } catch (requestError: any) {
+            const status = requestError.response?.status;
+            const responseMessage = requestError.response?.data?.message;
+            const fallbackMessage = status === 429
+                ? 'AI search is busy right now. Showing regular matches from your search words instead.'
+                : status >= 500
+                    ? 'AI search is temporarily unavailable. Showing regular matches from your search words instead.'
+                    : requestError.response
+                        ? "AI search couldn't process this request. Showing regular matches from your search words instead."
+                        : 'Could not connect to AI search. Showing regular matches from your search words instead.';
+            setAiSearchError(typeof responseMessage === 'string' && responseMessage.trim()
+                ? responseMessage
+                : fallbackMessage);
+            setAiSearchFilters(null);
+            setCategoryId('');
+            setAiSearchResultsReady(false);
+            setListingPage(1);
+        } finally {
+            setAiSearchLoading(false);
+        }
+    }
+
+    function clearMarketplaceSearch() {
+        setSearch('');
+        setCategoryId('');
+        setAiSearchFilters(null);
+        setAiSearchResultsReady(false);
+        setAiSearchError('');
+        setListingPage(1);
+    }
+
+    function chooseMarketplaceCategory(nextCategoryId: string) {
+        if (aiSearchFilters) setSearch('');
+        setAiSearchFilters(null);
+        setAiSearchResultsReady(false);
+        setCategoryId(nextCategoryId);
+        setAiSearchError('');
+        setListingPage(1);
+    }
+
+    const aiSearchDescription = aiSearchFilters
+        ? [
+            aiSearchFilters.keywords,
+            categories.find((category) => category.id === aiSearchFilters.category_id)?.name,
+            aiSearchFilters.sex ? `${aiSearchFilters.sex} livestock` : null,
+            aiSearchFilters.min_age_months !== null || aiSearchFilters.max_age_months !== null
+                ? `${aiSearchFilters.min_age_months ?? 0}–${aiSearchFilters.max_age_months ?? 'any'} months old`
+                : null,
+            aiSearchFilters.min_price !== null && aiSearchFilters.max_price !== null
+                ? `${pesoPrice.format(aiSearchFilters.min_price)}–${pesoPrice.format(aiSearchFilters.max_price)}`
+                : aiSearchFilters.min_price !== null
+                    ? `at least ${pesoPrice.format(aiSearchFilters.min_price)}`
+                    : aiSearchFilters.max_price !== null
+                        ? `up to ${pesoPrice.format(aiSearchFilters.max_price)}`
+                : null,
+            aiSearchFilters.pricing_type === 'PER_HEAD' ? 'priced per head' : aiSearchFilters.pricing_type === 'PER_KILO' ? 'priced per kilo' : null,
+        ].filter(Boolean).join(' · ') || 'all available livestock'
+        : '';
 
     async function submit(event: React.FormEvent<HTMLFormElement>) {
         event.preventDefault();
@@ -1051,6 +1183,8 @@ function FarmgateApp() {
         && sellerShopId === null
         && orderDetailsId === null
         && (user?.role !== 'BUYER' || buyerTab === 'home');
+    const isPublicLanding = !user && isMarketplaceHome && buyerTab !== 'chats';
+    const installPrompt = useInstallFarmgatePrompt(isPublicLanding);
     const showMobileMarketplaceNavigation = user?.role === 'BUYER' || !user;
     if (window.location.pathname === '/rider/register') {
         return <RiderRegistrationPage initialUser={user ?? undefined} onError={reportError} onLogout={logout} />;
@@ -1116,6 +1250,13 @@ function FarmgateApp() {
                     <a href="#new-products" onClick={(event) => openMarketplaceView(event, 'newest')}><span className="quick-promo-icon"><MarketplaceNavIcon name="fresh" /></span><span>Fresh Arrivals</span></a>
                 </nav>}
             </header>
+            {installPrompt.show && !authOpen && <InstallFarmgatePrompt
+                canInstall={installPrompt.canInstall}
+                installing={installPrompt.installing}
+                error={installPrompt.installError}
+                onInstall={() => void installPrompt.install()}
+                onDismiss={installPrompt.dismiss}
+            />}
             {user?.role === 'BUYER' && <BuyerCart open={cartOpen} onClose={() => setCartOpen(false)} onCheckout={() => { setCheckoutBuyNow(null); setCartOpen(false); setCheckoutOpen(true); }} onCartCountChange={setCartCount} onError={reportError} />}
             {checkoutOpen && user?.role === 'BUYER' && <CheckoutPage user={user} buyNow={checkoutBuyNow} onCancel={() => setCheckoutOpen(false)} onComplete={(_orderId, fromCart) => { if (fromCart) setCartCount(0); setCheckoutOpen(false); setCheckoutBuyNow(null); }} onError={reportError} />}
             <>
@@ -1167,18 +1308,45 @@ function FarmgateApp() {
                 </nav>
             </div>
             <section className="marketplace" id="marketplace" aria-label="Livestock marketplace">
-                <div className="marketplace-heading"><div><p className="eyebrow">{marketplaceView === 'top' ? 'Most buyer interest' : marketplaceView === 'newest' ? 'Recently published' : marketplaceView === 'promotions' ? 'Seller offers' : 'The market'}</p><h2>{marketplaceView === 'top' ? 'Top Livestock' : marketplaceView === 'newest' ? 'New Livestock Listings' : marketplaceView === 'promotions' ? 'Promotions & Deals' : 'Available livestock'}</h2></div><span>{marketplaceLoading ? 'Updating...' : `${listings.length} ${marketplaceView === 'promotions' ? 'offers' : 'results'}`}</span></div>
+                <div className="marketplace-heading"><div><p className="eyebrow">{marketplaceView === 'top' ? 'Most buyer interest' : marketplaceView === 'newest' ? 'Recently published' : marketplaceView === 'promotions' ? 'Seller offers' : 'The market'}</p><h2>{marketplaceView === 'top' ? 'Top Livestock' : marketplaceView === 'newest' ? 'New Livestock Listings' : marketplaceView === 'promotions' ? 'Promotions & Deals' : 'Available livestock'}</h2></div><span>{marketplaceLoading ? 'Updating...' : `${listingTotal} ${marketplaceView === 'promotions' ? 'offers' : 'results'}`}</span></div>
                 <div className="marketplace-filter-toolbar">
-                    <div className="marketplace-tools"><label className="search-field"><span className="sr-only">Search livestock</span><input value={search} onChange={(event) => { setSearch(event.target.value); setListingPage(1); }} placeholder="Search by animal, breed, or description" /></label>{(search || categoryId) && <button className="clear-button" type="button" onClick={() => { setSearch(''); setCategoryId(''); setListingPage(1); }}>Clear</button>}</div>
-                    <nav className="category-nav" aria-label="Livestock categories" onWheel={(event) => { if (event.deltaY !== 0) event.currentTarget.scrollLeft += event.deltaY; }}><button className={!categoryId ? 'active' : ''} type="button" onClick={() => { setCategoryId(''); setListingPage(1); }}>All livestock</button>{categories.map((category) => <button className={categoryId === String(category.id) ? 'active' : ''} key={category.id} type="button" onClick={() => { setCategoryId(String(category.id)); setListingPage(1); }}>{category.name}</button>)}</nav>
+                    <form className="marketplace-tools" role="search" aria-label="Search livestock listings" onSubmit={(event) => void runAiListingSearch(event)}>
+                        <div className="marketplace-search-box">
+                            <label className="search-field"><span className="sr-only">Search livestock</span><input type="search" value={search} onChange={(event) => { setSearch(event.target.value); if (aiSearchFilters) setCategoryId(''); setAiSearchFilters(null); setAiSearchResultsReady(false); setAiSearchError(''); setListingPage(1); }} placeholder="Search by animal, breed, or description" /></label>
+                            <button className={`marketplace-ai-search-button${aiSearchLoading ? ' is-loading' : ''}`} type="submit" aria-label={aiSearchLoading ? 'Searching livestock with AI' : 'Search livestock with AI'} title={aiSearchLoading ? 'Searching livestock with AI' : 'Search livestock with AI'} aria-busy={aiSearchLoading} disabled={aiSearchLoading || search.trim().length < 3}>
+                                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z" /><path d="m19 15 .7 2.3L22 18l-2.3.7L19 21l-.7-2.3L16 18l2.3-.7L19 15Z" /></svg>
+                            </button>
+                        </div>
+                    </form>
+                    <nav className="category-nav" aria-label="Livestock categories" onWheel={(event) => { if (event.deltaY !== 0) event.currentTarget.scrollLeft += event.deltaY; }}><button className={!categoryId ? 'active' : ''} type="button" onClick={() => chooseMarketplaceCategory('')}>All livestock</button>{categories.map((category) => <button className={categoryId === String(category.id) ? 'active' : ''} key={category.id} type="button" onClick={() => chooseMarketplaceCategory(String(category.id))}>{category.name}</button>)}</nav>
                 </div>
-                {marketplaceError && <div className="marketplace-error" role="alert"><p>{marketplaceError}</p><button type="button" disabled={marketplaceLoading} onClick={() => setMarketplaceRetry((retry) => retry + 1)}>{marketplaceLoading ? 'Retrying...' : 'Try again'}</button></div>}
+                {aiSearchError && <p className="marketplace-ai-search-error" role="alert">{aiSearchError}</p>}
+                {aiSearchFilters && <div className="marketplace-ai-search-result" role="status" aria-live="polite">
+                    <div><strong>AI search results</strong><p>Showing livestock matching: {aiSearchDescription}</p><span>{marketplaceError ? 'Matching listings could not be loaded.' : marketplaceLoading || !aiSearchResultsReady ? 'Finding matching listings…' : `${listingTotal} ${listingTotal === 1 ? 'listing' : 'listings'} found`}</span></div>
+                    <button type="button" onClick={clearMarketplaceSearch}>Clear AI search</button>
+                </div>}
+                {marketplaceError && <div className="marketplace-error" role="alert"><p>{marketplaceError}</p><button type="button" disabled={marketplaceLoading || marketplaceLoadingMore} onClick={() => setMarketplaceRetry((retry) => retry + 1)}>{marketplaceLoading || marketplaceLoadingMore ? 'Retrying...' : 'Try again'}</button></div>}
                 {marketplaceLoading ? <div className="listing-grid loading-grid">{[1, 2, 3].map((item) => <div className="listing-skeleton" key={item} />)}</div> : <div className="listing-grid" tabIndex={0} aria-label="Available livestock listings. Scroll down to browse.">{[0, 1].map((columnIndex) => <div className="listing-grid-column" key={columnIndex}>{listings.map((listing, listingIndex) => ({ listing, listingIndex })).filter(({ listingIndex }) => listingIndex % 2 === columnIndex).map(({ listing, listingIndex }) => <article className="listing-card" key={listing.id} style={{ order: listingIndex }}>
                     <a className="listing-image-link" href={`#listing/${listing.id}`} onClick={(event) => { event.preventDefault(); navigateListingDetails(listing.id); }}><div className="listing-image-wrap">{listing.images[0] ? <img src={listing.images[0].url} alt={listing.images[0].alt_text ?? listing.name} /> : <span className="listing-image-placeholder">{listing.name.slice(0, 1)}</span>}<span className="listing-type">{listing.pricing_type === 'PER_KILO' ? 'Per kilo' : 'Per head'}</span></div></a>
-                    <div className="listing-card-body"><a className="listing-details-link" href={`#listing/${listing.id}`} onClick={(event) => { event.preventDefault(); navigateListingDetails(listing.id); }}><p className="eyebrow">{listing.category.name}</p><h3>{listing.name}</h3><p>{listing.breed ?? 'Healthy livestock'} <span className="muted-separator">/</span> {listing.quantity} {listing.pricing_type === 'PER_KILO' ? 'kg available' : 'head available'}</p>{listing.promotion && <span className="listing-promotion-badge">{listing.promotion.name}</span>}<div className={`listing-price${listing.promotion ? ' has-promotion' : ''}`}>{listing.promotion && <del>{pesoPrice.format(Number(listing.original_price))}</del>}<strong>{pesoPrice.format(Number(listing.current_price ?? (listing.pricing_type === 'PER_KILO' ? listing.price_per_kilo : listing.price_per_head)))} <small>/ {listing.pricing_type === 'PER_KILO' ? 'kg' : 'head'}</small></strong>{listing.promotion && <small className="listing-savings">Save {pesoPrice.format(Number(listing.original_price) - Number(listing.current_price))} per unit</small>}</div></a><a className="listing-seller-shop-link" href={`#shop/${listing.seller.id}`} onClick={(event) => { event.preventDefault(); navigateSellerShop(listing.seller.id); }}>{listing.seller.shop_image_url ? <img src={listing.seller.shop_image_url} alt="" loading="lazy" /> : <span className="listing-seller-shop-avatar" aria-hidden="true">{(listing.seller.shop_name || listing.seller.name).slice(0, 1).toUpperCase()}</span>}<span className="listing-seller-shop-copy"><small>Shop by</small><strong>{listing.seller.shop_name || listing.seller.name}</strong>{listing.seller.is_verified && <small className="listing-seller-verified">Verified seller</small>}</span></a>{user?.role === 'BUYER' && <ListingPurchaseActions listingId={listing.id} availableQuantity={listing.quantity} onAddToCart={addListingToCart} onBuyNow={buyListingNow} onError={reportError} />}</div>
+                    <div className="listing-card-body"><a className="listing-details-link" href={`#listing/${listing.id}`} onClick={(event) => { event.preventDefault(); navigateListingDetails(listing.id); }}><p className="eyebrow">{listing.category.name}</p><h3>{listing.name}</h3><p>{listing.breed ?? 'Healthy livestock'} <span className="muted-separator">/</span> {listing.quantity} {listing.pricing_type === 'PER_KILO' ? 'kg available' : 'head available'}</p>{(aiSearchFilters || search.trim()) && <div className="listing-ai-summary">
+                        <strong>Livestock details</strong>
+                        <p className="listing-ai-description">{listing.description?.trim() || 'The seller has not added a description.'}</p>
+                        <dl>{listing.sex && <div><dt>Sex</dt><dd>{listing.sex}</dd></div>}
+                            {listing.age_months != null && <div><dt>Age</dt><dd>{formatListingAge(listing.age_months)}</dd></div>}
+                            {listing.estimated_weight_kg != null && <div><dt>Estimated weight</dt><dd>{listing.estimated_weight_kg} kg per animal</dd></div>}
+                            {listing.pickup_location && <div><dt>Pickup</dt><dd>{listing.pickup_location}</dd></div>}
+                            {listing.health_information && <div><dt>Health</dt><dd>{listing.health_information}</dd></div>}
+                            {listing.vaccination_information && <div><dt>Vaccination</dt><dd>{listing.vaccination_information}</dd></div>}
+                        </dl>
+                    </div>}{listing.promotion && <span className="listing-promotion-badge">{listing.promotion.name}</span>}<div className={`listing-price${listing.promotion ? ' has-promotion' : ''}`}>{listing.promotion && <del>{pesoPrice.format(Number(listing.original_price))}</del>}<strong>{pesoPrice.format(Number(listing.current_price ?? (listing.pricing_type === 'PER_KILO' ? listing.price_per_kilo : listing.price_per_head)))} <small>/ {listing.pricing_type === 'PER_KILO' ? 'kg' : 'head'}</small></strong>{listing.promotion && <small className="listing-savings">Save {pesoPrice.format(Number(listing.original_price) - Number(listing.current_price))} per unit</small>}</div></a><a className="listing-seller-shop-link" href={`#shop/${listing.seller.id}`} onClick={(event) => { event.preventDefault(); navigateSellerShop(listing.seller.id); }}>{listing.seller.shop_image_url ? <img src={listing.seller.shop_image_url} alt="" loading="lazy" /> : <span className="listing-seller-shop-avatar" aria-hidden="true">{(listing.seller.shop_name || listing.seller.name).slice(0, 1).toUpperCase()}</span>}<span className="listing-seller-shop-copy"><small>Farm by</small><strong>{listing.seller.shop_name || listing.seller.name}</strong>{listing.seller.is_verified && <small className="listing-seller-verified">Verified seller</small>}</span></a>{user?.role === 'BUYER' && <ListingPurchaseActions listingId={listing.id} availableQuantity={listing.quantity} onAddToCart={addListingToCart} onBuyNow={buyListingNow} onError={reportError} />}</div>
                 </article>)}</div>)}</div>}
                 {!marketplaceLoading && !marketplaceError && !listings.length && <div className="empty-state"><span className="empty-icon">⌕</span><strong>{marketplaceView === 'promotions' ? 'No active promotions yet' : 'No livestock found'}</strong><p>{marketplaceView === 'promotions' ? 'There are no discounted listings available right now. Browse active livestock listings instead.' : 'Try a different search or browse all categories.'}</p><button type="button" onClick={() => navigateMarketplace('all')}>{marketplaceView === 'promotions' ? 'Browse all livestock' : 'Reset search'}</button></div>}
-                <Pagination page={listingPage} lastPage={listingLastPage} onChange={setListingPage} />
+                {!marketplaceLoading && listings.length > 0 && listingPage < listingLastPage && <div className="marketplace-load-more">
+                    <button type="button" disabled={marketplaceLoadingMore || Boolean(marketplaceError)} aria-busy={marketplaceLoadingMore} onClick={() => setListingPage((page) => page + 1)}>
+                        {marketplaceLoadingMore ? 'Loading more livestock...' : 'Load more livestock'}
+                    </button>
+                    <span>Showing {listings.length} of {listingTotal} listings</span>
+                </div>}
             </section>
             {user && user.role !== 'BUYER' && <section className="account-panel" aria-live="polite"><p className="eyebrow">Your account</p><h2>Welcome back, {user.name.split(' ')[0]}.</h2><p className="account-email">{user.email}</p><p className="role-badge">{user.role}</p><button type="button" onClick={logout}>Log out <span>↗</span></button></section>}
             {phoneVerificationPrompt && user && <RegistrationPhoneVerificationDialog user={user} code={phoneCode} error={phoneFlowError} message={phoneFlowMessage} loading={phoneFlowLoading} onCodeChange={setPhoneCode} onVerify={verifyRegistrationPhone} onResend={() => void resendRegistrationPhoneCode()} onClose={() => setPhoneVerificationPrompt(false)} />}
@@ -1199,9 +1367,15 @@ function FarmgateApp() {
                     <section className="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title">
                         <button className="modal-close" type="button" aria-label="Close login dialog" onClick={() => setAuthOpen(false)}>×</button>
                         <div className="mode-switch" role="tablist" aria-label="Account action">
-                            <button type="button" className={mode === 'login' ? 'selected' : ''} onClick={() => setMode('login')}>Log in</button>
-                            <button type="button" className={mode === 'register' ? 'selected' : ''} onClick={() => setMode('register')}>Create account</button>
+                            <button type="button" className={mode === 'login' ? 'selected' : ''} onClick={() => { setMode('login'); setAuthView('credentials'); }}>Log in</button>
+                            <button type="button" className={mode === 'register' ? 'selected' : ''} onClick={() => { setMode('register'); setAuthView('credentials'); }}>Create account</button>
                         </div>
+                        {authView === 'forgot'
+                            ? <>
+                                <h2 id="auth-title">Reset your password</h2>
+                                <ForgotPasswordForm initialEmail={email} onBack={() => setAuthView('credentials')} />
+                            </>
+                            : <>
                         <h2 id="auth-title">{mode === 'login' ? 'Return to your account' : 'Join the marketplace'}</h2>
                         <form noValidate onSubmit={submit}>
                             {mode === 'register' && <ValidatedField validationTrigger={authSubmitAttempt} label="Name" value={name} onChange={setName} validate={(value) => required(value, 'Name')} />}
@@ -1229,6 +1403,7 @@ function FarmgateApp() {
                             <button type="submit" disabled={loading || (mode === 'register' && role === 'SELLER' && !sellerRegistrationVerificationToken)}>{loading ? 'Working...' : mode === 'login' ? 'Log in' : mode === 'register' && role === 'SELLER' && !sellerRegistrationVerificationToken ? 'Verify your phone to continue' : 'Create account'} <span>↗</span></button>
                         </form>
                         {mode === 'login' && <>
+                            <button className="auth-forgot-password" type="button" onClick={() => setAuthView('forgot')}>Forgot password?</button>
                             <div className="auth-divider"><span>or</span></div>
                             <button className="google-auth-button" type="button" onClick={() => window.location.assign('/api/auth/google/redirect')}>
                                 <span className="google-auth-mark" aria-hidden="true">G</span>
@@ -1236,6 +1411,7 @@ function FarmgateApp() {
                             </button>
                         </>}
                         <p className="rider-registration-link">Applying as a rider? <a href="/rider/register">Start rider registration</a></p>
+                            </>}
                     </section>
                 </div>
             )}
@@ -1262,6 +1438,59 @@ function FarmgateRoot() {
     const [hash, setHash] = React.useState(window.location.hash);
 
     React.useEffect(() => {
+        let lastUnhandledErrorAt = 0;
+
+        function reportUnexpectedError() {
+            const now = Date.now();
+            if (now - lastUnhandledErrorAt < 5000) {
+                return;
+            }
+            lastUnhandledErrorAt = now;
+
+            console.error('Farmgate encountered an unhandled client-side error.');
+            showError('Something unexpected happened. Please try again.');
+        }
+
+        function handleUnhandledRejection(event: PromiseRejectionEvent) {
+            event.preventDefault();
+            reportUnexpectedError();
+        }
+
+        function handleWindowError(event: ErrorEvent) {
+            if (!event.error) {
+                return;
+            }
+
+            event.preventDefault();
+            reportUnexpectedError();
+        }
+
+        function handleOffline() {
+            showError('You appear to be offline. Check your internet connection and try again.');
+        }
+
+        function handleOnline() {
+            showInfo('Your connection has been restored.');
+        }
+
+        window.addEventListener('unhandledrejection', handleUnhandledRejection);
+        window.addEventListener('error', handleWindowError);
+        window.addEventListener('offline', handleOffline);
+        window.addEventListener('online', handleOnline);
+
+        if (!navigator.onLine) {
+            handleOffline();
+        }
+
+        return () => {
+            window.removeEventListener('unhandledrejection', handleUnhandledRejection);
+            window.removeEventListener('error', handleWindowError);
+            window.removeEventListener('offline', handleOffline);
+            window.removeEventListener('online', handleOnline);
+        };
+    }, []);
+
+    React.useEffect(() => {
         const syncHash = () => setHash(window.location.hash);
         window.addEventListener('hashchange', syncHash);
         window.addEventListener('popstate', syncHash);
@@ -1273,7 +1502,28 @@ function FarmgateRoot() {
     }, []);
 
     const reference = orderReferenceFromHash(hash);
-    return <><RequestProgress />{reference ? <OrderVerificationPage reference={reference} /> : <FarmgateApp />}</>;
+    const resetPasswordPage = hash.startsWith('#reset-password');
+    const forgotPasswordPage = hash === '#forgot-password';
+    return <>
+        <RequestProgress />
+        {resetPasswordPage
+            ? <PasswordResetPage hash={hash} />
+            : reference
+                ? <OrderVerificationPage reference={reference} />
+                : <FarmgateApp initialAuthView={forgotPasswordPage ? 'forgot' : 'credentials'} />}
+    </>;
 }
 
-root.render(<FarmgateRoot />);
+root.render(
+    <AppErrorBoundary>
+        <FarmgateRoot />
+    </AppErrorBoundary>,
+);
+
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        void navigator.serviceWorker.register('/service-worker.js').catch(() => {
+            console.error('FARMGATE service worker registration failed.');
+        });
+    });
+}

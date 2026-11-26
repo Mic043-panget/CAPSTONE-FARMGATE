@@ -10,7 +10,9 @@ use App\Models\Delivery;
 use App\Models\DeliveryProofCorrection;
 use App\Models\Order;
 use App\Notifications\DeliveryAssignmentNotification;
+use App\Rules\ValidFarmgateImage;
 use App\Services\DeliveryVerificationService;
+use App\Services\ImageUploadService;
 use App\Services\MapTrackingService;
 use App\Services\SystemSettingsService;
 use Illuminate\Http\JsonResponse;
@@ -21,7 +23,6 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use Throwable;
 
@@ -164,7 +165,7 @@ class DeliveryTrackingController extends Controller
         abort_unless($request->user()?->role === Role::RIDER, 403);
         abort_if($delivery->rider_id !== $request->user()->id, 403, 'This delivery is not assigned to your rider account.');
         $data = $request->validate([
-            'photo' => ['required', 'file', 'image', 'mimes:jpeg,jpg,png,webp', 'max:10240'],
+            'photo' => ['required', 'file', 'image', 'mimes:jpeg,jpg,png,webp', 'max:10240', new ValidFarmgateImage],
             'recipient_confirmed' => ['required', 'accepted'],
             'recipient_name' => ['required', 'string', 'min:1', 'max:120'],
             'captured_at' => ['required', 'date', 'before_or_equal:now'],
@@ -224,9 +225,12 @@ class DeliveryTrackingController extends Controller
         abort_unless($disk->exists($delivery->delivery_proof_path), 404, 'The saved delivery proof could not be found.');
 
         $path = $delivery->delivery_proof_path;
+        $previewPath = app(ImageUploadService::class)->previewPath($path);
+        $usePreview = $disk->exists($previewPath);
+        $streamPath = $usePreview ? $previewPath : $path;
 
-        return response()->stream(function () use ($disk, $path): void {
-            $stream = $disk->readStream($path);
+        return response()->stream(function () use ($disk, $streamPath): void {
+            $stream = $disk->readStream($streamPath);
             if (! is_resource($stream)) {
                 throw new \RuntimeException('The saved delivery proof could not be opened.');
             }
@@ -237,7 +241,7 @@ class DeliveryTrackingController extends Controller
                 fclose($stream);
             }
         }, 200, [
-            'Content-Type' => $delivery->delivery_proof_mime_type,
+            'Content-Type' => $usePreview ? 'image/webp' : $delivery->delivery_proof_mime_type,
             'Content-Disposition' => 'inline; filename="delivery-proof"',
             'Cache-Control' => 'private, no-store',
             'X-Content-Type-Options' => 'nosniff',
@@ -251,7 +255,7 @@ class DeliveryTrackingController extends Controller
         $data = $request->validate([
             'reason' => ['required', 'string', 'min:5', 'max:500'],
             'recipient_name' => ['sometimes', 'required', 'string', 'min:1', 'max:120'],
-            'photo' => ['sometimes', 'required', 'file', 'image', 'mimes:jpeg,jpg,png,webp', 'max:10240'],
+            'photo' => ['sometimes', 'required', 'file', 'image', 'mimes:jpeg,jpg,png,webp', 'max:10240', new ValidFarmgateImage],
             'captured_at' => ['nullable', 'required_with:photo', 'date', 'before_or_equal:now'],
         ]);
         abort_unless(array_key_exists('recipient_name', $data) || $request->hasFile('photo'), 422, 'Provide a corrected recipient name or replacement photo.');
@@ -374,31 +378,12 @@ class DeliveryTrackingController extends Controller
      */
     private function storeProof(UploadedFile $file): array
     {
-        $extension = $file->guessExtension();
-        abort_if(! $extension, 422, 'The uploaded image type could not be identified.');
-        $path = Str::random(40).'.'.$extension;
-
-        try {
-            $storedPath = $file->storeAs('', $path, 'delivery_proofs');
-            $persisted = $storedPath === $path && Storage::disk('delivery_proofs')->exists($path);
-            $sha256 = hash_file('sha256', $file->getRealPath());
-        } catch (Throwable $exception) {
-            $this->removeProofFile($path);
-            Log::error('A private delivery proof upload could not be persisted.', [
-                'exception' => $exception::class,
-            ]);
-            abort(500, 'The delivery photo could not be persisted. Please retry the upload.');
-        }
-
-        if (! $persisted || ! is_string($sha256)) {
-            $this->removeProofFile($path);
-            abort(500, 'The delivery photo could not be persisted. Please retry the upload.');
-        }
+        $stored = app(ImageUploadService::class)->storeEvidence($file, '', 'delivery_proofs');
 
         return [
-            'path' => $path,
-            'sha256' => $sha256,
-            'mime_type' => $file->getMimeType() ?: 'application/octet-stream',
+            'path' => $stored['path'],
+            'sha256' => $stored['sha256'],
+            'mime_type' => $stored['mime_type'],
         ];
     }
 
@@ -408,7 +393,7 @@ class DeliveryTrackingController extends Controller
             return;
         }
         try {
-            Storage::disk('delivery_proofs')->delete($path);
+            app(ImageUploadService::class)->deleteEvidence($path, 'delivery_proofs');
         } catch (Throwable $exception) {
             Log::error('An uncommitted private delivery proof file could not be removed.', [
                 'exception' => $exception::class,

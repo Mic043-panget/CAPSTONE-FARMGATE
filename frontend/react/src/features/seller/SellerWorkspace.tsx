@@ -11,22 +11,25 @@ import { confirmAction, showSuccess } from '../../lib/alerts';
 import { AIChatPage, type ChatReportContext } from '../shared/AIChatPage';
 import { AnalyticsDashboard } from '../shared/AnalyticsDashboard';
 import { SellerOrdersPage } from './SellerOrdersPage';
+import { SellerInventoryPage } from './SellerInventoryPage';
 import { SellerPromotions } from './SellerPromotions';
 import { NotificationsPage } from '../buyer/NotificationsPage';
 import { NavigationBadge, navigationBadgeLabel } from '../../shared/components/NavigationBadge';
 import { SellerPayouts } from './SellerPayouts';
-import { WorkspaceAccountControl, WorkspaceMobileHeader, useWorkspaceMobileMenu } from '../shared/WorkspaceMobileHeader';
+import { WorkspaceAccountControl, WorkspaceMobileHeader, WorkspaceNotificationsButton, useWorkspaceMobileMenu } from '../shared/WorkspaceMobileHeader';
 import { WorkspaceBannerArtwork } from '../shared/WorkspaceBannerArtwork';
 import { RoleMobileBottomNavigation } from '../shared/RoleMobileBottomNavigation';
 import { SellerShopProfileSettings } from './SellerShopProfileSettings';
 import { SellerSetupGuide } from './SellerSetupGuide';
+import { hasValidPickupCoordinates, hasValidSavedPickupLocation, type SellerPickupLocation } from './pickupLocation';
 import { SettingsCategoryIcon } from '../shared/SettingsCategoryIcon';
 import { FarmgateBrand } from '../shared/FarmgateBrand';
 import { WorkspaceSidebarIcon } from '../shared/WorkspaceSidebarIcon';
+import { ListingDetails } from '../buyer/ListingDetails';
 
 const LocationMap = React.lazy(() => import('../../shared/components/LocationMap').then((module) => ({ default: module.LocationMap })));
 
-type SellerPage = 'dashboard' | 'orders' | 'payouts' | 'notifications' | 'listings' | 'promotions' | 'complaints' | 'reviews' | 'reports' | 'chats' | 'location' | 'account';
+type SellerPage = 'dashboard' | 'orders' | 'payouts' | 'notifications' | 'listings' | 'listing-detail' | 'inventory' | 'promotions' | 'complaints' | 'reviews' | 'reports' | 'chats' | 'location' | 'account';
 type SellerSettingsTab = 'profile' | 'shop' | 'password' | 'phone' | 'preferences' | 'pickup';
 type SellerNavigationBadge = 'orders' | 'notifications' | 'complaints' | 'chats';
 type SellerAccountPreference = 'order_notifications' | 'chat_notifications' | 'allow_direct_messages';
@@ -67,6 +70,7 @@ type SellerNotification = {
 };
 
 type SellerListing = Listing & {
+    inventory_key: string;
     status: string;
     created_at?: string;
     updated_at?: string | null;
@@ -77,6 +81,11 @@ type SellerListing = Listing & {
     pickup_location?: string | null;
     health_information?: string | null;
     vaccination_information?: string | null;
+};
+type SellerPickupProfile = SellerPickupLocation & {
+    business_name: string | null;
+    phone: string | null;
+    address: string | null;
 };
 type SellerListingSummary = { total: number; active: number; pending_review: number; draft: number };
 type ListingSortColumn = 'name' | 'category' | 'price' | 'quantity' | 'status' | 'created_at' | 'updated_at';
@@ -143,12 +152,22 @@ function SellerListingIcon({ name }: { name: SellerListingIconName }) {
 }
 
 export function SellerWorkspace({ categories, error, user, onError, onUserUpdated, onLogout }: SellerWorkspaceProps) {
-    const [page, setPage] = React.useState<SellerPage>(() => window.location.hash === '#notifications' ? 'notifications' : 'dashboard');
+    const initialListingMatch = /^#listing\/(\d+)$/.exec(window.location.hash);
+    const initialInventoryMatch = /^#inventory\/([a-f0-9]{64})$/.exec(window.location.hash);
+    const [page, setPage] = React.useState<SellerPage>(() => window.location.hash === '#notifications' ? 'notifications' : window.location.hash === '#inventory' || initialInventoryMatch ? 'inventory' : window.location.hash === '#listings' ? 'listings' : initialListingMatch ? 'listing-detail' : 'dashboard');
+    const [listingDetailId, setListingDetailId] = React.useState<number | null>(() => initialListingMatch ? Number(initialListingMatch[1]) : null);
+    const [inventoryListingKey, setInventoryListingKey] = React.useState<string | null>(() => initialInventoryMatch?.[1] ?? null);
     const [mobileNavOpen, setMobileNavOpen] = useWorkspaceMobileMenu();
     const [notificationCaseReference, setNotificationCaseReference] = React.useState<string | null>(null);
     const [notificationOrderId, setNotificationOrderId] = React.useState<number | null>(null);
     const [settingsTab, setSettingsTab] = React.useState<SellerSettingsTab>('profile');
     const [setupRefreshKey, setSetupRefreshKey] = React.useState(0);
+    const [setupProgressVisible, setSetupProgressVisible] = React.useState(true);
+    const setupProgressButtonRef = React.useRef<HTMLButtonElement>(null);
+    const closeSetupProgress = React.useCallback(() => {
+        setSetupProgressVisible(false);
+        window.requestAnimationFrame(() => setupProgressButtonRef.current?.focus());
+    }, []);
     const [navigationCounts, setNavigationCounts] = React.useState<Record<SellerNavigationBadge, number>>({
         orders: 0,
         notifications: 0,
@@ -176,9 +195,11 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
     const [editingListingId, setEditingListingId] = React.useState<number | null>(null);
     const [listingActionId, setListingActionId] = React.useState<number | null>(null);
     const [listingFormOpen, setListingFormOpen] = React.useState(false);
+    const [pickupRequirementMessage, setPickupRequirementMessage] = React.useState<string | null>(null);
     const [notice, setNotice] = React.useState<string | null>(null);
     const [pickupLocation, setPickupLocation] = React.useState<{ latitude: number; longitude: number } | null>(null);
     const [pickupLocationConfirmed, setPickupLocationConfirmed] = React.useState(false);
+    const [pickupLocationStatusKnown, setPickupLocationStatusKnown] = React.useState(false);
     const [locationLoading, setLocationLoading] = React.useState(false);
     const [locationLocating, setLocationLocating] = React.useState(false);
     const [locationSaving, setLocationSaving] = React.useState(false);
@@ -270,6 +291,22 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
     React.useEffect(() => {
         const handleHashChange = () => {
             if (window.location.hash === '#notifications') setPage('notifications');
+            else if (window.location.hash === '#inventory') {
+                setInventoryListingKey(null);
+                setPage('inventory');
+            }
+            else if (window.location.hash === '#listings') setPage('listings');
+            else {
+                const inventoryMatch = /^#inventory\/([a-f0-9]{64})$/.exec(window.location.hash);
+                const listingMatch = /^#listing\/(\d+)$/.exec(window.location.hash);
+                if (inventoryMatch) {
+                    setInventoryListingKey(inventoryMatch[1]);
+                    setPage('inventory');
+                } else if (listingMatch) {
+                    setListingDetailId(Number(listingMatch[1]));
+                    setPage('listing-detail');
+                }
+            }
         };
         window.addEventListener('hashchange', handleHashChange);
 
@@ -414,19 +451,33 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
     }, [listingCategoryFilter, listingPage, listingRevision, listingSearch, listingSort, listingSortDirection, listingStatusFilter, page]);
 
     React.useEffect(() => {
-        if (page !== 'location' && page !== 'account') return;
-        setLocationLoading(true);
-        api.get<{ profile: { latitude: number | null; longitude: number | null; pickup_location_confirmed: boolean; business_name: string | null; phone: string | null; address: string | null } }>('/api/seller/profile')
+        const settingsPage = page === 'location' || page === 'account';
+        if (!settingsPage && page !== 'listings') return;
+        if (settingsPage) setLocationLoading(true);
+        if (page === 'listings') setPickupLocationStatusKnown(false);
+        let active = true;
+        api.get<{ profile: SellerPickupProfile }>('/api/seller/profile')
             .then((response) => {
-                const { latitude, longitude, pickup_location_confirmed, business_name, phone, address } = response.data.profile;
-                setPickupLocation(latitude !== null && longitude !== null ? { latitude, longitude } : null);
-                setPickupLocationConfirmed(pickup_location_confirmed);
-                setBusinessName(business_name ?? '');
-                setBusinessPhone(phone ?? '');
-                setBusinessAddress(address ?? '');
+                if (!active) return;
+                const profile = response.data.profile;
+                const coordinates = profile.latitude !== null && profile.longitude !== null
+                    ? { latitude: profile.latitude, longitude: profile.longitude }
+                    : null;
+                setPickupLocation(coordinates && hasValidPickupCoordinates(coordinates.latitude, coordinates.longitude) ? coordinates : null);
+                setPickupLocationConfirmed(hasValidSavedPickupLocation(profile));
+                setPickupLocationStatusKnown(true);
+                setBusinessName(profile.business_name ?? '');
+                setBusinessPhone(profile.phone ?? '');
+                setBusinessAddress(profile.address ?? '');
             })
-            .catch((requestError: any) => onError(requestError.userMessage ?? 'Your pickup location could not be loaded.'))
-            .finally(() => setLocationLoading(false));
+            .catch((requestError: any) => {
+                if (active) onError(requestError.userMessage ?? 'Your pickup location could not be loaded.');
+            })
+            .finally(() => {
+                if (active && settingsPage) setLocationLoading(false);
+            });
+
+        return () => { active = false; };
     }, [onError, page]);
 
     React.useEffect(() => {
@@ -445,6 +496,19 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
             });
         return () => { active = false; };
     }, [onError, page]);
+
+    function openPickupLocationSettings() {
+        setPage('location');
+        setSettingsTab('pickup');
+        setPickupRequirementMessage(null);
+    }
+
+    function returnToMyListings() {
+        setPickupRequirementMessage(null);
+        setNotice('Your saved pickup location applies to all your listings. You can now submit them for review or activation.');
+        setListingRevision((revision) => revision + 1);
+        setPage('listings');
+    }
 
     async function updateAccountPreference(preference: SellerAccountPreference, enabled: boolean) {
         setSavingPreference(preference);
@@ -548,6 +612,35 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
     }, [page]);
 
     async function submitListing(listing: SellerListing) {
+        if (!pickupLocationStatusKnown || !pickupLocationConfirmed) {
+            const message = pickupLocationStatusKnown
+                ? 'Set and save a valid pickup location before submitting this listing for review or activation.'
+                : 'Your saved pickup location is still being checked. Please wait before submitting this listing.';
+            setPickupRequirementMessage(message);
+            const { default: Swal } = await import('sweetalert2');
+            const result = await Swal.fire({
+                title: pickupLocationStatusKnown ? 'Pickup location required' : 'Checking pickup location',
+                text: message,
+                icon: 'warning',
+                showCancelButton: pickupLocationStatusKnown,
+                confirmButtonText: pickupLocationStatusKnown ? 'Set pickup location' : 'OK',
+                cancelButtonText: 'Not now',
+                buttonsStyling: false,
+                customClass: {
+                    popup: 'farmgate-swal-popup',
+                    title: 'farmgate-swal-title',
+                    htmlContainer: 'farmgate-swal-text',
+                    actions: 'farmgate-swal-actions',
+                    confirmButton: 'farmgate-swal-confirm',
+                    cancelButton: 'farmgate-swal-cancel',
+                },
+            });
+            if (pickupLocationStatusKnown && result.isConfirmed) {
+                openPickupLocationSettings();
+            }
+            return;
+        }
+        setPickupRequirementMessage(null);
         if (!await confirmAction({ title: 'Submit this listing?', text: 'The listing will be sent for review or published according to your seller settings.', confirmText: 'Submit listing' })) return;
         setListingActionId(listing.id);
         try {
@@ -557,7 +650,12 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
             showSuccess(response.data.listing.status === 'PENDING_REVIEW' ? 'Listing submitted for review.' : 'Listing published.');
             setListingRevision((revision) => revision + 1);
         } catch (requestError: any) {
-            onError(requestError.userMessage ?? requestError.response?.data?.message ?? 'This listing could not be submitted.');
+            const message = requestError.userMessage ?? requestError.response?.data?.message ?? 'This listing could not be submitted.';
+            if (message.toLowerCase().includes('pickup location')) {
+                setPickupRequirementMessage(message);
+            } else {
+                onError(message);
+            }
         } finally {
             setListingActionId(null);
         }
@@ -650,7 +748,10 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
     }
 
     async function savePickupLocation() {
-        if (!pickupLocation) return;
+        if (!pickupLocation || !hasValidPickupCoordinates(pickupLocation.latitude, pickupLocation.longitude)) {
+            onError('Choose a valid pickup location on the map before saving.');
+            return;
+        }
         if (!await confirmAction({
             title: 'Update pickup location?',
             text: 'This saved map pin is used as the pickup point for checkout and order route calculations.',
@@ -659,10 +760,17 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
         setLocationSaving(true);
         try {
             await initializeCsrf();
-            await api.put('/api/seller/profile/location', pickupLocation);
-            setPickupLocationConfirmed(true);
+            const response = await api.put<{ profile: SellerPickupProfile }>('/api/seller/profile/location', pickupLocation);
+            const profile = response.data.profile;
+            const saved = hasValidSavedPickupLocation(profile);
+            setPickupLocationConfirmed(saved);
+            setPickupLocationStatusKnown(true);
+            if (!saved) {
+                onError('The pickup location was not saved as a valid location. Choose and save a real map pin before continuing.');
+                return;
+            }
             setSetupRefreshKey((revision) => revision + 1);
-            setNotice('Pickup location saved. Delivery distance will be calculated from this map pin.');
+            setNotice('Pickup location saved. This seller-wide pin will be used to calculate delivery distance for your orders and satisfies the location requirement for all your listings.');
             showSuccess('Pickup location saved.');
         } catch (requestError: any) {
             onError(requestError.userMessage ?? requestError.response?.data?.message ?? 'Your pickup location could not be saved.');
@@ -677,6 +785,22 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
     }
 
     function renderPage() {
+        if (page === 'listing-detail' && listingDetailId !== null) {
+            return <ListingDetails
+                listingId={listingDetailId}
+                canPurchase={false}
+                canReport={false}
+                onBack={() => { window.location.hash = '#listings'; setPage('listings'); setListingDetailId(null); }}
+                onOpenListing={(listingId) => { window.location.hash = `#listing/${listingId}`; setListingDetailId(listingId); setPage('listing-detail'); }}
+                onOpenSeller={() => undefined}
+                onAddToCart={async () => false}
+                onBuyNow={async () => null}
+                onError={onError}
+            />;
+        }
+        if (page === 'inventory') {
+            return <SellerInventoryPage categories={categories} initialListingKey={inventoryListingKey} onBack={() => setPage('listings')} />;
+        }
         if (page === 'orders') {
             return <SellerOrdersPage
                 onNavigationCountsChanged={refreshNavigationCounts}
@@ -720,9 +844,11 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
                         const approved = status === 'AUTO_APPROVED' || status === 'ADMIN_APPROVED';
                         const rejected = status === 'AUTO_REJECTED' || status === 'ADMIN_REJECTED';
                         const disabled = status === 'ADMIN_DISABLED';
+                        const pickupRequired = reasons.some((reason) => reason.toLowerCase().includes('pickup location'));
                         return <li key={notification.id}>
                             <div><strong>{notification.data.listing_name ?? 'Your listing'} {approved ? 'is now active.' : rejected ? 'was rejected.' : disabled ? 'was disabled.' : 'needs administrator review.'}</strong>
                                 <p>{reasons.length ? `Reason: ${reasons.join(' ')}` : approved ? 'The listing passed review and is visible in the marketplace.' : rejected ? 'The listing did not meet FARMGATE marketplace requirements.' : disabled ? 'The listing is not visible in the marketplace.' : 'AI moderation could not approve the listing automatically. It remains pending administrator review.'}</p>
+                                {pickupRequired && <button type="button" onClick={openPickupLocationSettings}>Set pickup location</button>}
                             </div>
                             <time dateTime={notification.created_at}>{new Date(notification.created_at).toLocaleString()}</time>
                         </li>;
@@ -757,12 +883,32 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
                 <div className="seller-listing-catalog-panel">
                     <div className="seller-work-heading">
                         <div><p className="eyebrow">Catalog</p><h2>My listings</h2></div>
-                        <button className="seller-inline-action seller-listing-add-action" type="button" onClick={() => setListingFormOpen((open) => !open)}>
-                            {listingFormOpen ? 'Close form' : <><span>Add listing</span><span aria-hidden="true">+</span></>}
-                        </button>
+                        <div className="seller-listing-heading-actions">
+                            <button className="seller-inline-action seller-listing-inventory-action" type="button" onClick={() => { setNotice(null); setInventoryListingKey(null); window.location.hash = 'inventory'; setPage('inventory'); }}>
+                                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19V5M4 19h16" /><path d="m7 15 4-4 3 2 5-6" /><circle cx="7" cy="15" r="1" /><circle cx="11" cy="11" r="1" /><circle cx="14" cy="13" r="1" /><circle cx="19" cy="7" r="1" /></svg>
+                                Inventory &amp; sales history
+                            </button>
+                            <button className="seller-inline-action seller-listing-pickup-action" type="button" onClick={openPickupLocationSettings}>
+                                {pickupLocationConfirmed ? 'Pickup location' : 'Set pickup location'}
+                            </button>
+                            <button className="seller-inline-action seller-listing-add-action" type="button" onClick={() => setListingFormOpen((open) => !open)}>
+                                {listingFormOpen ? 'Close form' : <><span>Add listing</span><span aria-hidden="true">+</span></>}
+                            </button>
+                        </div>
                     </div>
                 {notice && <p className="seller-notice" role="status">{notice}</p>}
-                {listingFormOpen && <div className="seller-listing-form-wrap"><SellerListingForm categories={categories} onSaved={() => { setNotice('Draft saved. Submit it for review when it is ready.'); setListingFormOpen(false); setListingRevision((revision) => revision + 1); }} onError={onError} /></div>}
+                    {pickupLocationStatusKnown && !pickupLocationConfirmed && !pickupRequirementMessage && <div className="seller-pickup-requirement" role="alert" aria-labelledby="seller-pickup-requirement-title">
+                        <div>
+                            <h3 id="seller-pickup-requirement-title">Pickup location required</h3>
+                            <p>Save a valid pickup pin in Seller Settings → Pickup location before submitting any listing for review or activation. This seller-wide location applies to all of your listings.</p>
+                        </div>
+                        <button type="button" onClick={openPickupLocationSettings}>Set pickup location</button>
+                    </div>}
+                {pickupRequirementMessage && <div className="seller-pickup-requirement" role="alert">
+                    <p>{pickupRequirementMessage}</p>
+                        <button type="button" onClick={openPickupLocationSettings}>Set pickup location</button>
+                </div>}
+                    {listingFormOpen && <div className="seller-listing-form-wrap"><SellerListingForm categories={categories} onSaved={() => { setNotice('Draft saved. Submit it for review when it is ready.'); setListingFormOpen(false); setListingRevision((revision) => revision + 1); }} onError={onError} /></div>}
                 {editingListing && <SellerListingEditor key={editingListing.id} listing={editingListing} categories={categories} onCancel={() => setEditingListingId(null)} onError={onError} onSaved={() => {
                     setNotice('Listing changes saved.');
                     setEditingListingId(null);
@@ -849,7 +995,7 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
                                     <small>{updatedAt.toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' })}</small>
                                 </time> : '—'}</td>
                                 <td data-label="Actions"><div className="seller-listing-actions">
-                                    {viewable && <a className="seller-table-action seller-listing-view" href={`#listing/${listing.id}`} aria-label={`View ${listing.name}`}><SellerListingIcon name="view" /><span>View</span></a>}
+                                    {viewable && <a className="seller-table-action seller-listing-view" href={`#inventory/${listing.inventory_key}`} aria-label={`View ${listing.name} in inventory`}><SellerListingIcon name="view" /><span>View</span></a>}
                                     {editable && <>
                                         <button className="seller-table-action seller-listing-edit" type="button" disabled={busy} onClick={() => setEditingListingId(listing.id)} aria-label={`Edit ${listing.name}`}><SellerListingIcon name="edit" /><span>Edit</span></button>
                                         <button className="seller-table-action seller-listing-delete" type="button" disabled={busy} onClick={() => void deleteListing(listing)} aria-label={`Delete ${listing.name}`}><SellerListingIcon name="delete" /><span>{busy ? 'Working...' : 'Delete'}</span></button>
@@ -887,10 +1033,20 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
                     <span className="settings-page-icon"><SettingsCategoryIcon name="system" /></span>
                     <div><p className="eyebrow">Seller portal settings</p><h2 id="seller-settings-title">Settings</h2></div>
                 </div>
+                <button
+                    ref={setupProgressButtonRef}
+                    type="button"
+                    className="seller-inline-action settings-setup-progress-button"
+                    aria-controls="seller-setup-progress"
+                    aria-expanded={setupProgressVisible}
+                    onClick={() => setSetupProgressVisible((visible) => !visible)}
+                >{setupProgressVisible ? 'Hide setup progress' : 'View setup progress'}</button>
             </header>
             <SellerSetupGuide
                 user={user}
                 refreshKey={setupRefreshKey}
+                progressVisible={setupProgressVisible}
+                onCloseProgress={closeSetupProgress}
                 onOpenSection={(section, focusTarget = true) => {
                     if (section === 'payouts') {
                         setPage('payouts');
@@ -910,7 +1066,7 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
             <nav className="seller-settings-tabs settings-category-nav" role="tablist" aria-label="Seller settings">
                 {([
                     ['profile', 'Profile & business', 'account'],
-                    ['shop', 'Shop profile', 'seller'],
+                    ['shop', 'Farm profile', 'seller'],
                     ['password', 'Password', 'security'],
                     ['phone', 'Phone security', 'security'],
                     ['preferences', 'Notifications & privacy', 'notifications'],
@@ -1006,7 +1162,8 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
                         </React.Suspense>
                         {pickupLocation && <p className="seller-location-coordinates">{pickupLocation.latitude.toFixed(5)}, {pickupLocation.longitude.toFixed(5)}</p>}
                         {pickupLocationConfirmed && <p className="seller-notice" role="status">Pickup pin saved and confirmed.</p>}
-                        <button className="seller-inline-action" type="button" disabled={!pickupLocation || locationSaving} onClick={savePickupLocation}>{locationSaving ? 'Saving...' : 'Save pickup location'}</button>
+                        <button className="seller-inline-action" type="button" disabled={!pickupLocation || !hasValidPickupCoordinates(pickupLocation.latitude, pickupLocation.longitude) || locationSaving} onClick={savePickupLocation}>{locationSaving ? 'Saving...' : 'Save pickup location'}</button>
+                        {pickupLocationConfirmed && <button className="seller-inline-action" type="button" onClick={returnToMyListings}>Continue to My Listings</button>}
                         {!pickupLocation && <p className="seller-location-help">Click the map or drag the pin to your business pickup location before saving.</p>}
                     </>}
                     {notice && <p className="seller-notice" role="status">{notice}</p>}
@@ -1017,7 +1174,13 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
     }
 
     const activeNavigation = navigation.find((item) => item.id === page) ?? (page === 'location' ? navigation.find((item) => item.id === 'account') : undefined);
-    const pageTitle = page === 'location' || page === 'account' ? 'Settings' : activeNavigation?.label ?? '';
+    const pageTitle = page === 'location' || page === 'account'
+        ? 'Settings'
+        : page === 'inventory'
+            ? 'Listing Inventory'
+            : page === 'listing-detail'
+                ? 'Livestock details'
+                : activeNavigation?.label ?? '';
 
     return <main className={`admin-shell seller-shell${page === 'dashboard' ? ' seller-dashboard-open' : ''}`}>
         <aside className={`admin-sidebar role-sidebar${mobileNavOpen ? ' mobile-open' : ''}`} onKeyDown={(event) => {
@@ -1049,19 +1212,17 @@ export function SellerWorkspace({ categories, error, user, onError, onUserUpdate
                                 ? navigationBadgeLabel(badgeCount, 'unread message', 'unread messages')
                                 : '';
                 const selected = page === item.id || (page === 'location' && item.id === 'account');
-                return <button type="button" key={item.id} className={`${selected ? 'active' : ''}${mobileMenuExcluded ? ' role-mobile-menu-excluded' : ''}`} aria-current={selected ? 'page' : undefined} aria-label={badgeCount > 0 ? `${item.label}, ${badgeDescription}${item.badge === 'orders' ? '. Separate from unread notifications.' : ''}` : item.label} title={badgeCount > 0 ? `${item.label}, ${badgeDescription}${item.badge === 'orders' ? ' (separate from unread notifications)' : ''}` : item.label} onClick={() => { setPage(item.id); setNotice(null); setMobileNavOpen(false); }}><span className="nav-icon"><WorkspaceSidebarIcon name={item.id} /></span><span className="seller-nav-label">{item.label}</span>{item.badge === 'orders' && badgeCount > 0
+                return <button type="button" key={item.id} className={`${selected ? 'active' : ''}${item.id === 'notifications' ? ' admin-notifications-sidebar-link' : ''}${mobileMenuExcluded ? ' role-mobile-menu-excluded' : ''}`} aria-current={selected ? 'page' : undefined} aria-label={badgeCount > 0 ? `${item.label}, ${badgeDescription}${item.badge === 'orders' ? '. Separate from unread notifications.' : ''}` : item.label} title={badgeCount > 0 ? `${item.label}, ${badgeDescription}${item.badge === 'orders' ? ' (separate from unread notifications)' : ''}` : item.label} onClick={() => { setPage(item.id); setNotice(null); setMobileNavOpen(false); }}><span className="nav-icon"><WorkspaceSidebarIcon name={item.id} /></span><span className="seller-nav-label">{item.label}</span>{item.badge === 'orders' && badgeCount > 0
                     ? <span className="seller-orders-pending-badge" aria-hidden="true">{badgeCount > 99 ? '99+' : Math.floor(badgeCount)} pending</span>
                     : <NavigationBadge count={badgeCount} />}</button>;
             })}</nav>
             <button className="sidebar-logout" type="button" onClick={onLogout}>Log out <span>↗</span></button>
             </div>
         </aside>
-        <section className={`admin-content seller-content${page === 'dashboard' ? ' seller-content-dashboard' : ''}`}>
-            <header className="admin-header workspace-banner-header"><div><p className="eyebrow">FARMGATE seller workspace</p><h1>{pageTitle}</h1><p>Manage your listings, orders, and buyer relationships.</p></div><WorkspaceBannerArtwork /><div className="role-header-context"><span className="admin-role">SELLER</span><WorkspaceAccountControl role="seller" userName={user.name} profilePhotoUrl={user.profile_photo_url} onOpenAccount={() => { setSettingsTab('profile'); setPage('account'); }} /></div></header>
-            <div className={page === 'dashboard' ? 'seller-dashboard-scroll' : undefined} tabIndex={page === 'dashboard' ? 0 : undefined} aria-label={page === 'dashboard' ? 'Seller dashboard content' : undefined}>
-                {error && <p className="seller-error" role="alert">{error}</p>}
-                {renderPage()}
-            </div>
+        <section className="admin-content seller-content">
+            <header className="admin-header workspace-banner-header"><div><p className="eyebrow">FARMGATE seller workspace</p><h1>{pageTitle}</h1><p>Manage your listings, orders, and buyer relationships.</p></div><WorkspaceBannerArtwork /><div className="role-header-context"><WorkspaceNotificationsButton count={navigationCounts.notifications} active={page === 'notifications'} onClick={() => setPage('notifications')} /><WorkspaceAccountControl role="seller" userName={user.name} profilePhotoUrl={user.profile_photo_url} onOpenAccount={() => { setSettingsTab('profile'); setPage('account'); }} /></div></header>
+            {error && <p className="seller-error" role="alert">{error}</p>}
+            {renderPage()}
         </section>
         <RoleMobileBottomNavigation
             items={sellerMobileDestinations}

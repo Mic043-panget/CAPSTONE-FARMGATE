@@ -86,7 +86,6 @@ class SellerShopProfileTest extends TestCase
     {
         $seller = User::factory()->create(['role' => Role::SELLER]);
         $identity = UploadedFile::fake()->image('identity.png', 640, 640)->size(600);
-        $plainContents = $identity->getContent();
         $this->actingAs($seller)->post('/api/seller/verification/submit', [
             'identity_document' => $identity,
         ])->assertCreated();
@@ -105,7 +104,7 @@ class SellerShopProfileTest extends TestCase
 
         $details = $this->actingAs($admin)->getJson("/api/admin/seller-verifications/{$seller->id}")
             ->assertOk()
-            ->assertJsonPath('seller.document.mime_type', 'image/png')
+            ->assertJsonPath('seller.document.mime_type', 'image/webp')
             ->assertJsonMissingPath('seller.document.encrypted_path')
             ->assertJsonMissingPath('seller.document.path');
         $documentUrl = $details->json('seller.document.view_url');
@@ -114,10 +113,17 @@ class SellerShopProfileTest extends TestCase
         ])->assertConflict();
         $this->actingAs($buyer)->get($documentUrl)->assertForbidden();
         $documentResponse = $this->actingAs($admin)->get($documentUrl)->assertOk();
-        $this->assertSame($plainContents, $documentResponse->getContent());
-        $this->actingAs($admin)->postJson("/api/admin/seller-verifications/{$seller->id}/document/reviewed")
-            ->assertOk()
-            ->assertJsonPath('seller.document.reviewed_by_current_admin', true);
+        $this->assertSame('image/webp', $documentResponse->headers->get('Content-Type'));
+        $this->assertSame('WEBP', substr($documentResponse->getContent(), 8, 4));
+        $reviewResponse = $this->actingAs($admin)->postJson("/api/admin/seller-verifications/{$seller->id}/document/reviewed")
+            ->assertOk();
+        $this->assertDatabaseHas('audit_logs', [
+            'user_id' => $admin->id,
+            'entity_type' => 'SELLER_PROFILE',
+            'entity_id' => (string) $seller->sellerProfile()->value('id'),
+            'action' => 'seller.identity.document_reviewed',
+        ]);
+        $reviewResponse->assertJsonPath('seller.document.reviewed_by_current_admin', true);
 
         $this->actingAs($admin)->postJson("/api/admin/seller-verifications/{$seller->id}/decision", [
             'status' => 'REJECTED',
@@ -154,6 +160,17 @@ class SellerShopProfileTest extends TestCase
             'status' => 'VERIFIED',
         ])->assertOk()->assertJsonPath('seller.verification_status', 'VERIFIED');
         $this->getJson("/api/sellers/{$seller->id}/shop")->assertOk()->assertJsonPath('seller.is_verified', true);
+
+        $category = Category::create(['name' => 'Verification Test Livestock', 'slug' => 'verification-test-livestock']);
+        LivestockListing::create([
+            'seller_id' => $seller->id,
+            'category_id' => $category->id,
+            'name' => 'Verified seller listing',
+            'quantity' => 1,
+            'pricing_type' => PricingType::PER_HEAD,
+            'price_per_head' => 100,
+            'status' => ListingStatus::ACTIVE,
+        ]);
         $this->getJson('/api/listings')->assertOk()->assertJsonPath('data.0.seller.is_verified', true);
     }
 

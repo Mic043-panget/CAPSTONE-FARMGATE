@@ -12,6 +12,7 @@ use App\Models\ComplaintMessage;
 use App\Models\Order;
 use App\Models\OrderStatusHistory;
 use App\Services\OrderCaseWorkflowService;
+use App\Rules\ValidFarmgateImage;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -68,7 +69,7 @@ class ComplaintController extends Controller
             'items.*.order_item_id' => ['required', 'integer', 'distinct'],
             'items.*.quantity' => ['required', 'integer', 'min:1'],
             'media' => ['nullable', 'array', 'max:5'],
-            'media.*' => ['file', 'mimes:jpg,jpeg,png,webp,mp4,mov,webm', 'max:20480'],
+            'media.*' => ['file', 'mimes:jpg,jpeg,png,webp,mp4,mov,webm', 'max:20480', new ValidFarmgateImage(['video/mp4', 'video/quicktime', 'video/webm'])],
         ]);
         $order->loadMissing('items.listing');
         $items = [];
@@ -105,7 +106,7 @@ class ComplaintController extends Controller
         $data = $request->validate([
             'message' => ['required', 'string', 'min:1', 'max:5000'],
             'media' => ['nullable', 'array', 'max:5'],
-            'media.*' => ['file', 'mimes:jpg,jpeg,png,webp,mp4,mov,webm', 'max:20480'],
+            'media.*' => ['file', 'mimes:jpg,jpeg,png,webp,mp4,mov,webm', 'max:20480', new ValidFarmgateImage(['video/mp4', 'video/quicktime', 'video/webm'])],
         ]);
         $files = $data['media'] ?? [];
         $storedPaths = [];
@@ -161,7 +162,7 @@ class ComplaintController extends Controller
             'description' => ['required', 'string', 'min:5', 'max:5000'],
             'evidence' => ['nullable', 'string', 'max:5000'],
             'media' => ['nullable', 'array', 'max:5'],
-            'media.*' => ['file', 'mimes:jpg,jpeg,png,webp,mp4,mov,webm', 'max:20480'],
+            'media.*' => ['file', 'mimes:jpg,jpeg,png,webp,mp4,mov,webm', 'max:20480', new ValidFarmgateImage(['video/mp4', 'video/quicktime', 'video/webm'])],
         ]);
 
         return $this->createCase($request, $order, $workflow, $data + ['case_type' => $caseType]);

@@ -4,6 +4,8 @@ import api, { initializeCsrf } from '../../lib/api';
 import { confirmAction, showSuccess } from '../../lib/alerts';
 import { Pagination } from '../../shared/components/Pagination';
 import { SystemCalendar } from '../shared/SystemCalendar';
+import { IMAGE_UPLOAD_HINT, imageUploadError } from '../../shared/components/ImageUploadPreview';
+import { FileDropzone } from '../../shared/components/FileDropzone';
 
 type EligibleListing = {
     id: number;
@@ -69,10 +71,6 @@ const emptyForm = (): PromotionForm => ({
     image: null,
 });
 
-const MAX_PROMOTION_IMAGE_BYTES = 5 * 1024 * 1024;
-const allowedPromotionImageTypes = ['image/jpeg', 'image/png', 'image/webp'];
-const allowedPromotionImageExtensions = ['jpg', 'jpeg', 'png', 'webp'];
-
 function toLocalDateTime(value: string): string {
     const date = new Date(value);
     const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
@@ -122,7 +120,6 @@ export function SellerPromotions({ onError }: { onError: (message: string) => vo
     const [existingImageUrl, setExistingImageUrl] = React.useState<string | null>(null);
     const [removeExistingImage, setRemoveExistingImage] = React.useState(false);
     const [imageError, setImageError] = React.useState('');
-    const imageInputRef = React.useRef<HTMLInputElement>(null);
     const [localImagePreview, setLocalImagePreview] = React.useState<string | null>(null);
 
     React.useEffect(() => {
@@ -200,7 +197,6 @@ export function SellerPromotions({ onError }: { onError: (message: string) => vo
         setRemoveExistingImage(false);
         setImageError('');
         setLocalImagePreview(null);
-        if (imageInputRef.current) imageInputRef.current.value = '';
     }
 
     function beginCreate() {
@@ -211,15 +207,9 @@ export function SellerPromotions({ onError }: { onError: (message: string) => vo
 
     function selectPromotionImage(file: File | null) {
         if (!file) return;
-        const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
-        if (!allowedPromotionImageExtensions.includes(extension) || (file.type !== '' && !allowedPromotionImageTypes.includes(file.type))) {
-            setImageError('Choose a JPG, PNG, or WebP image.');
-            if (imageInputRef.current) imageInputRef.current.value = '';
-            return;
-        }
-        if (file.size > MAX_PROMOTION_IMAGE_BYTES) {
-            setImageError('The promotion image must be 5 MB or smaller.');
-            if (imageInputRef.current) imageInputRef.current.value = '';
+        const validationError = imageUploadError(file);
+        if (validationError) {
+            setImageError(validationError);
             return;
         }
         setImageError('');
@@ -230,7 +220,6 @@ export function SellerPromotions({ onError }: { onError: (message: string) => vo
 
     function removePromotionImage() {
         setLocalImagePreview(null);
-        if (imageInputRef.current) imageInputRef.current.value = '';
         if (form?.image) {
             updateForm('image', null);
             setRemoveExistingImage(false);
@@ -342,10 +331,8 @@ export function SellerPromotions({ onError }: { onError: (message: string) => vo
             <label>Promotion name<input required maxLength={120} value={form.name} onChange={(event) => updateForm('name', event.target.value)} /></label>
             <label>Description <span>(optional)</span><textarea maxLength={2000} value={form.description} onChange={(event) => updateForm('description', event.target.value)} /></label>
             <section className="seller-promotion-image-field" aria-labelledby="seller-promotion-image-heading">
-                <h3 id="seller-promotion-image-heading">Promotion image <span>(optional, JPG, PNG, or WebP; up to 5 MB)</span></h3>
-                <label htmlFor="seller-promotion-image">Choose image file</label>
-                <input ref={imageInputRef} id="seller-promotion-image" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" aria-describedby={imageError ? 'seller-promotion-image-help seller-promotion-image-error' : 'seller-promotion-image-help'} onChange={(event) => selectPromotionImage(event.target.files?.[0] ?? null)} />
-                <p id="seller-promotion-image-help">Choose an image to upload. Selecting another image replaces the current selection.</p>
+                <h3 id="seller-promotion-image-heading">Promotion image <span>(optional, {IMAGE_UPLOAD_HINT})</span></h3>
+                <FileDropzone label="Promotion image" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" onFiles={(files) => selectPromotionImage(files[0] ?? null)} helperText="Choose an image to upload. Selecting another image replaces the current selection." />
                 {imageError && <p id="seller-promotion-image-error" className="seller-promotion-image-error" role="alert">{imageError}</p>}
                 {(localImagePreview || (existingImageUrl && !removeExistingImage)) && <div className="seller-promotion-image-preview">
                     <img src={localImagePreview ?? existingImageUrl ?? undefined} alt="Promotion image preview" />

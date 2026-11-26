@@ -4,42 +4,54 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\PushSubscription;
+use App\Services\FirebaseCloudMessagingSender;
 use App\Services\WebPushNotificationSender;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class PushSubscriptionController extends Controller
 {
-    public function config(): JsonResponse
+    public function config(Request $request): JsonResponse
     {
         return response()->json([
-            'enabled' => WebPushNotificationSender::isConfigured(),
+            'enabled' => FirebaseCloudMessagingSender::isConfigured()
+                || ($request->user() !== null && WebPushNotificationSender::isConfigured()),
+            'firebase' => FirebaseCloudMessagingSender::browserConfig(),
+            'vapid_key' => config('services.firebase.web.vapid_key'),
             'public_key' => config('services.webpush.public_key'),
         ]);
     }
 
     public function store(Request $request): JsonResponse
     {
-        abort_unless(WebPushNotificationSender::isConfigured(), 503, 'Device notifications are not configured on this Farmgate server.');
-
-        $data = $request->validate([
-            'endpoint' => ['required', 'string', 'url', 'max:2048', 'regex:/^https:\/\//i'],
-            'expirationTime' => ['nullable', 'integer'],
-            'keys.p256dh' => ['required', 'string', 'max:256'],
-            'keys.auth' => ['required', 'string', 'max:256'],
-            'contentEncoding' => ['nullable', 'string', 'in:aes128gcm,aesgcm'],
-        ]);
-        abort_unless($this->isSupportedEndpoint($data['endpoint']), 422, 'This browser push service is not supported.');
-        $endpointHash = hash('sha256', $data['endpoint']);
-        $subscription = [
-            'endpoint' => $data['endpoint'],
-            'keys' => $data['keys'],
-            'contentEncoding' => $data['contentEncoding'] ?? 'aes128gcm',
-        ];
+        $provider = $request->input('provider', 'webpush');
+        abort_unless(in_array($provider, ['fcm', 'webpush'], true), 422, 'The push provider is not supported.');
+        if ($provider === 'fcm') {
+            abort_unless(FirebaseCloudMessagingSender::isConfigured(), 503, 'Firebase device notifications are not configured on this Farmgate server.');
+            $data = $request->validate(['token' => ['required', 'string', 'max:4096']]);
+            $endpointHash = hash('sha256', $data['token']);
+            $subscription = ['token' => $data['token']];
+        } else {
+            abort_unless(WebPushNotificationSender::isConfigured(), 503, 'Device notifications are not configured on this Farmgate server.');
+            $data = $request->validate([
+                'endpoint' => ['required', 'string', 'url', 'max:2048', 'regex:/^https:\/\//i'],
+                'expirationTime' => ['nullable', 'integer'],
+                'keys.p256dh' => ['required', 'string', 'max:256'],
+                'keys.auth' => ['required', 'string', 'max:256'],
+                'contentEncoding' => ['nullable', 'string', 'in:aes128gcm,aesgcm'],
+            ]);
+            abort_unless($this->isSupportedEndpoint($data['endpoint']), 422, 'This browser push service is not supported.');
+            $endpointHash = hash('sha256', $data['endpoint']);
+            $subscription = [
+                'endpoint' => $data['endpoint'],
+                'keys' => $data['keys'],
+                'contentEncoding' => $data['contentEncoding'] ?? 'aes128gcm',
+            ];
+        }
 
         PushSubscription::query()->updateOrCreate(
             ['endpoint_hash' => $endpointHash],
-            ['user_id' => $request->user()->id, 'subscription' => $subscription, 'last_used_at' => now()],
+            ['user_id' => $request->user()->id, 'provider' => $provider, 'subscription' => $subscription, 'last_used_at' => now()],
         );
 
         return response()->json(['message' => 'Device notifications are enabled for this browser.'], 201);
@@ -48,10 +60,15 @@ class PushSubscriptionController extends Controller
     public function destroy(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'endpoint' => ['required', 'string', 'url', 'max:2048', 'regex:/^https:\/\//i'],
+            'token' => ['required_without:endpoint', 'string', 'max:4096'],
+            'endpoint' => ['required_without:token', 'string', 'url', 'max:2048', 'regex:/^https:\/\//i'],
+            'provider' => ['nullable', 'in:fcm,webpush'],
         ]);
+        $identifier = $data['token'] ?? $data['endpoint'];
+        $provider = $data['provider'] ?? (isset($data['token']) ? 'fcm' : 'webpush');
         $request->user()->pushSubscriptions()
-            ->where('endpoint_hash', hash('sha256', $data['endpoint']))
+            ->where('endpoint_hash', hash('sha256', $identifier))
+            ->where('provider', $provider)
             ->delete();
 
         return response()->json(['message' => 'Device notifications are disabled for this browser.']);

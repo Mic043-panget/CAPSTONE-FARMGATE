@@ -1,6 +1,8 @@
 import React from 'react';
 import api, { initializeCsrf } from '../../lib/api';
 import { showSuccess } from '../../lib/alerts';
+import { ACCEPTED_IMAGE_TYPES, IMAGE_UPLOAD_HINT, MAX_IMAGE_UPLOAD_BYTES } from '../../shared/components/ImageUploadPreview';
+import { FileDropzone } from '../../shared/components/FileDropzone';
 
 type FeedbackForm = 'review' | 'complaint' | 'return' | null;
 const caseReasons = [
@@ -75,31 +77,35 @@ function MediaPicker({ label, files, onChange, onError }: { label: string; files
         return () => next.forEach((preview) => URL.revokeObjectURL(preview.url));
     }, [files]);
 
+    function selectFiles(selected: File[]) {
+        const invalidType = selected.find((file) => file.type
+            ? !SUPPORTED_MEDIA_TYPES.has(file.type)
+            : !SUPPORTED_MEDIA_EXTENSIONS.test(file.name));
+        const isImage = (file: File) => ACCEPTED_IMAGE_TYPES.includes(file.type) || /\.(jpe?g|png|webp)$/i.test(file.name);
+        const isVideo = (file: File) => file.type.startsWith('video/') || /\.(mp4|mov|webm)$/i.test(file.name);
+        const tooLargeImage = selected.find((file) => isImage(file) && file.size > MAX_IMAGE_UPLOAD_BYTES);
+        const tooLargeVideo = selected.find((file) => isVideo(file) && file.size > MAX_MEDIA_SIZE);
+        if (invalidType) {
+            onError('Choose JPEG, PNG, WebP, MP4, QuickTime, or WebM files only.');
+            return;
+        }
+        if (tooLargeImage) {
+            onError('Each image must be 10 MB or smaller. Images are optimized to 2 MB or smaller after upload.');
+            return;
+        }
+        if (tooLargeVideo) {
+            onError('Each video must be 20 MB or smaller.');
+            return;
+        }
+        if (files.length + selected.length > MAX_MEDIA_COUNT) {
+            onError('You can attach up to 5 photos or videos.');
+            return;
+        }
+        onChange([...files, ...selected]);
+    }
+
     return <div className="case-media-picker">
-        <label>{label}<input type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,video/webm" multiple onChange={(event) => {
-            const selected = Array.from(event.target.files ?? []);
-            const invalidType = selected.find((file) => file.type
-                ? !SUPPORTED_MEDIA_TYPES.has(file.type)
-                : !SUPPORTED_MEDIA_EXTENSIONS.test(file.name));
-            const tooLarge = selected.find((file) => file.size > MAX_MEDIA_SIZE);
-            if (invalidType) {
-                onError('Choose JPEG, PNG, WebP, MP4, QuickTime, or WebM files only.');
-                event.currentTarget.value = '';
-                return;
-            }
-            if (tooLarge) {
-                onError('Each photo or video must be 20 MB or smaller.');
-                event.currentTarget.value = '';
-                return;
-            }
-            if (files.length + selected.length > MAX_MEDIA_COUNT) {
-                onError('You can attach up to 5 photos or videos.');
-                event.currentTarget.value = '';
-                return;
-            }
-            onChange([...files, ...selected]);
-            event.currentTarget.value = '';
-        }} /></label>
+        <FileDropzone label={label} accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,video/webm" multiple onFiles={selectFiles} />
         <div className="case-media-previews">{previews.map(({ file, url }, index) => <figure key={`${file.name}-${file.lastModified}-${index}`}>
             {file.type.startsWith('video/') || /\.(mp4|mov|webm)$/i.test(file.name)
                 ? <video src={url} controls aria-label={`Preview ${file.name}`} />
@@ -107,7 +113,7 @@ function MediaPicker({ label, files, onChange, onError }: { label: string; files
             <figcaption>{file.name} · {(file.size / 1024 / 1024).toFixed(1)} MB</figcaption>
             <button type="button" onClick={() => onChange(files.filter((_, fileIndex) => fileIndex !== index))}>Remove</button>
         </figure>)}</div>
-        <small>Optional; up to 5 photos or videos, 20 MB each. Remove a selection and choose another file to replace it.</small>
+        <small>Optional; up to 5 files. {IMAGE_UPLOAD_HINT} Videos may be up to 20 MB each. Remove a selection and choose another file to replace it.</small>
     </div>;
 }
 

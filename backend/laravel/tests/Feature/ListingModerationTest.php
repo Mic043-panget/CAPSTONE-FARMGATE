@@ -12,6 +12,7 @@ use App\Models\LivestockListing;
 use App\Models\User;
 use App\Services\ListingModerationProvider;
 use App\Services\ListingModerationService;
+use App\Services\SellerPickupLocationService;
 use App\Services\SystemSettingsService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
@@ -85,6 +86,48 @@ class ListingModerationTest extends TestCase
         $this->actingAs($listing->seller)->getJson('/api/notifications')
             ->assertOk()
             ->assertJsonPath('notifications.0.data.moderation_status', 'AUTO_APPROVED');
+    }
+
+    public function test_automatic_approval_keeps_a_listing_pending_without_a_valid_pickup_location(): void
+    {
+        $seller = User::factory()->create(['role' => Role::SELLER]);
+        $listing = $this->pendingListing('Swine', ListingStatus::PENDING_REVIEW, $seller, false);
+        $provider = Mockery::mock(ListingModerationProvider::class);
+        $provider->shouldReceive('review')->once()->andReturn($this->approvedResult());
+        $this->app->instance(ListingModerationProvider::class, $provider);
+
+        app(ListingModerationService::class)->moderate($listing->id);
+
+        $this->assertSame(ListingStatus::PENDING_REVIEW, $listing->fresh()->status);
+        $attempt = $listing->moderationAttempts()->firstOrFail();
+        $this->assertSame('MANUAL_REVIEW', $attempt->status);
+        $this->assertContains(SellerPickupLocationService::REQUIRED_MESSAGE, $attempt->reasons);
+        $this->assertDatabaseHas('notifications', [
+            'notifiable_id' => $seller->id,
+            'data->type' => 'listing_moderation_updated',
+            'data->moderation_status' => 'MANUAL_REVIEW',
+        ]);
+    }
+
+    public function test_automatic_approval_keeps_a_listing_pending_when_saved_pickup_coordinates_are_invalid(): void
+    {
+        $seller = User::factory()->create(['role' => Role::SELLER]);
+        $seller->sellerProfile()->create([
+            'latitude' => 91,
+            'longitude' => 121.1,
+            'pickup_location_confirmed' => true,
+        ]);
+        $listing = $this->pendingListing('Cattle', ListingStatus::PENDING_REVIEW, $seller, false);
+        $provider = Mockery::mock(ListingModerationProvider::class);
+        $provider->shouldReceive('review')->once()->andReturn($this->approvedResult());
+        $this->app->instance(ListingModerationProvider::class, $provider);
+
+        app(ListingModerationService::class)->moderate($listing->id);
+
+        $this->assertSame(ListingStatus::PENDING_REVIEW, $listing->fresh()->status);
+        $attempt = $listing->moderationAttempts()->firstOrFail();
+        $this->assertSame('MANUAL_REVIEW', $attempt->status);
+        $this->assertContains(SellerPickupLocationService::REQUIRED_MESSAGE, $attempt->reasons);
     }
 
     public function test_uncertain_or_low_confidence_result_remains_pending_for_admin(): void
@@ -448,9 +491,16 @@ class ListingModerationTest extends TestCase
             ->assertJsonValidationErrors('image_files.0');
     }
 
-    private function pendingListing(string $categoryName = 'Swine', ListingStatus $status = ListingStatus::PENDING_REVIEW, ?User $seller = null): LivestockListing
+    private function pendingListing(string $categoryName = 'Swine', ListingStatus $status = ListingStatus::PENDING_REVIEW, ?User $seller = null, bool $configurePickup = true): LivestockListing
     {
         $seller ??= User::factory()->create(['role' => Role::SELLER]);
+        if ($configurePickup && ! $seller->sellerProfile()->exists()) {
+            $seller->sellerProfile()->create([
+                'latitude' => 12.6,
+                'longitude' => 121.1,
+                'pickup_location_confirmed' => true,
+            ]);
+        }
         $category = Category::firstOrCreate(['slug' => str($categoryName)->slug()], ['name' => $categoryName]);
 
         return LivestockListing::create([

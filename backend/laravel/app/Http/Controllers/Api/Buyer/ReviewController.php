@@ -13,6 +13,9 @@ use App\Models\ReviewMedia;
 use App\Models\ReviewReport;
 use App\Models\User;
 use App\Notifications\ReviewModerationNotification;
+use App\Rules\ValidFarmgateImage;
+use App\Services\ImageUploadService;
+use App\Support\FarmgateImage;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -44,7 +47,7 @@ class ReviewController extends Controller
             'comment' => ['nullable', 'string', 'max:2000'],
             'listing_id' => ['nullable', 'integer'],
             'media' => ['nullable', 'array', 'max:5'],
-            'media.*' => ['file', 'mimes:jpg,jpeg,png,webp,mp4,mov,webm', 'max:20480'],
+            'media.*' => ['file', 'mimes:jpg,jpeg,png,webp,mp4,mov,webm', 'max:20480', new ValidFarmgateImage(['video/mp4', 'video/quicktime', 'video/webm'])],
         ]);
         $order->loadMissing('items');
         $listingId = $data['listing_id'] ?? ($order->items->count() === 1 ? $order->items->first()->listing_id : null);
@@ -76,16 +79,22 @@ class ReviewController extends Controller
                     'details' => 'Buyer submitted a review for '.($review->listing?->name ?? 'livestock listing').' with '.$review->rating.' star(s).',
                 ]);
                 foreach ($files as $file) {
-                    $path = $file->store("reviews/{$review->id}", 'case_media');
-                    if (! is_string($path) || $path === '') {
-                        throw new \RuntimeException('Review media storage failed.');
+                    if (FarmgateImage::isImage($file)) {
+                        $stored = app(ImageUploadService::class)->storeEvidence($file, "reviews/{$review->id}", 'case_media');
+                        $path = $stored['path'];
+                        $mimeType = $stored['mime_type'];
+                        $size = $stored['size'];
+                    } else {
+                        $path = $file->store("reviews/{$review->id}", 'case_media');
+                        $mimeType = $file->getMimeType() ?: 'application/octet-stream';
+                        $size = $file->getSize();
                     }
                     $storedPaths[] = $path;
                     $review->media()->create([
                         'path' => $path,
-                        'mime_type' => $file->getMimeType() ?: 'application/octet-stream',
+                        'mime_type' => $mimeType,
                         'original_name' => mb_substr($file->getClientOriginalName(), 0, 255),
-                        'size' => $file->getSize(),
+                        'size' => $size,
                     ]);
                 }
 
@@ -162,10 +171,13 @@ class ReviewController extends Controller
     private function streamMedia(string $path, string $mimeType): StreamedResponse|Response
     {
         $disk = Storage::disk('case_media');
-        abort_unless($disk->exists($path), 404, 'The saved review media could not be found.');
+        $previewPath = app(ImageUploadService::class)->previewPath($path);
+        $usePreview = $disk->exists($previewPath);
+        $streamPath = $usePreview ? $previewPath : $path;
+        abort_unless($disk->exists($streamPath), 404, 'The saved review media could not be found.');
 
-        return response()->stream(function () use ($disk, $path): void {
-            $stream = $disk->readStream($path);
+        return response()->stream(function () use ($disk, $streamPath): void {
+            $stream = $disk->readStream($streamPath);
             if (! is_resource($stream)) {
                 throw new \RuntimeException('The saved review media could not be opened.');
             }
@@ -175,7 +187,7 @@ class ReviewController extends Controller
                 fclose($stream);
             }
         }, 200, [
-            'Content-Type' => $mimeType,
+            'Content-Type' => $usePreview ? 'image/webp' : $mimeType,
             'Content-Disposition' => 'inline; filename="review-media"',
             'Cache-Control' => 'private, no-store',
             'X-Content-Type-Options' => 'nosniff',

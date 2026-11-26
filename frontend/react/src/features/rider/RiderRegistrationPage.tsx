@@ -4,6 +4,8 @@ import { showSuccess } from '../../lib/alerts';
 import type { User } from '../../shared/types';
 import { email as validateEmail } from '../../shared/validation';
 import { RiderDashboard } from './RiderDashboard';
+import { IMAGE_UPLOAD_HINT, imageUploadError } from '../../shared/components/ImageUploadPreview';
+import { FileDropzone } from '../../shared/components/FileDropzone';
 
 type Policy = {
     minimum_password_length: number;
@@ -460,9 +462,7 @@ export function RiderRegistrationPage({ initialUser, onError, onLogout }: {
         }
     }
 
-    async function chooseFiles(field: keyof Uploads, fileList: FileList | null, input: HTMLInputElement) {
-        const selected = Array.from(fileList ?? []);
-        input.value = '';
+    async function chooseFiles(field: keyof Uploads, selected: File[]) {
         if (!selected.length) return;
         const isImageCollection = field === 'vehicle_photos';
         const invalidType = selected.find((file) => {
@@ -473,8 +473,13 @@ export function RiderRegistrationPage({ initialUser, onError, onLogout }: {
             setFieldErrors((current) => ({ ...current, [field]: isImageCollection ? 'Choose a JPEG, PNG, or WebP image.' : 'Choose a JPEG, PNG, WebP, or PDF file.' }));
             return;
         }
-        if (selected.some((file) => file.size > 10 * 1024 * 1024)) {
-            setFieldErrors((current) => ({ ...current, [field]: 'Each file must be 10 MB or smaller.' }));
+        const invalidImage = selected.find((file) => file.type !== 'application/pdf' && imageUploadError(file));
+        if (invalidImage) {
+            setFieldErrors((current) => ({ ...current, [field]: imageUploadError(invalidImage) ?? 'Choose a supported image.' }));
+            return;
+        }
+        if (selected.some((file) => file.type === 'application/pdf' && file.size > 10 * 1024 * 1024)) {
+            setFieldErrors((current) => ({ ...current, [field]: 'PDF documents must be 10 MB or smaller.' }));
             return;
         }
         if (field === 'vehicle_photos' && selected.length + uploads.vehicle_photos.length > 5) {
@@ -726,11 +731,11 @@ export function RiderRegistrationPage({ initialUser, onError, onLogout }: {
                 {fieldError('license_number', 'vehicle') && <span className="field-error" id="rider-error-license_number" role="alert">{fieldError('license_number', 'vehicle')}</span>}
                 <label>Driver license expiry<input data-rider-field="license_expires_on" type="date" aria-required="true" aria-invalid={Boolean(fieldError('license_expires_on', 'vehicle'))} aria-describedby={fieldError('license_expires_on', 'vehicle') ? 'rider-error-license_expires_on' : undefined} value={fields.license_expires_on} onBlur={() => markTouched('license_expires_on')} onChange={(event) => updateField('license_expires_on', event.target.value)} /></label>
                 {fieldError('license_expires_on', 'vehicle') && <span className="field-error" id="rider-error-license_expires_on" role="alert">{fieldError('license_expires_on', 'vehicle')}</span>}
-                <label>Driver license image or PDF<input data-rider-field="driver_license" type="file" accept="image/jpeg,image/png,image/webp,application/pdf" aria-invalid={Boolean(fieldError('driver_license', 'vehicle'))} aria-describedby={fieldError('driver_license', 'vehicle') ? 'rider-error-driver_license' : undefined} onBlur={() => markTouched('driver_license')} onChange={(event) => void chooseFiles('driver_license', event.target.files, event.currentTarget)} /><small>Why required: manual identity and license review. JPG, PNG, WebP, or PDF, up to 10 MB.</small>{uploads.driver_license && <FilePreview files={[uploads.driver_license]} remove={() => setUploads((current) => ({ ...current, driver_license: null }))} />}</label>
+                <div><FileDropzone label="Driver license image or PDF" accept="image/jpeg,image/png,image/webp,application/pdf" required invalid={Boolean(fieldError('driver_license', 'vehicle'))} describedBy={fieldError('driver_license', 'vehicle') ? 'rider-error-driver_license' : undefined} onBlur={() => markTouched('driver_license')} onFiles={(files) => void chooseFiles('driver_license', files)} helperText={`Why required: manual identity and license review. Images: ${IMAGE_UPLOAD_HINT} PDF: up to 10 MB.`} />{uploads.driver_license && <FilePreview files={[uploads.driver_license]} remove={() => setUploads((current) => ({ ...current, driver_license: null }))} />}</div>
                 {fieldError('driver_license', 'vehicle') && <span className="field-error" id="rider-error-driver_license" role="alert">{fieldError('driver_license', 'vehicle')}</span>}
                 <label>Vehicle registration certificate (OR/CR) expiry<input data-rider-field="vehicle_registration_expires_on" type="date" aria-required="true" aria-invalid={Boolean(fieldError('vehicle_registration_expires_on', 'vehicle'))} aria-describedby={fieldError('vehicle_registration_expires_on', 'vehicle') ? 'rider-error-vehicle_registration_expires_on' : undefined} value={fields.vehicle_registration_expires_on} onBlur={() => markTouched('vehicle_registration_expires_on')} onChange={(event) => updateField('vehicle_registration_expires_on', event.target.value)} /></label>
                 {fieldError('vehicle_registration_expires_on', 'vehicle') && <span className="field-error" id="rider-error-vehicle_registration_expires_on" role="alert">{fieldError('vehicle_registration_expires_on', 'vehicle')}</span>}
-                <label>OR/CR image or PDF<input data-rider-field="vehicle_registration" type="file" accept="image/jpeg,image/png,image/webp,application/pdf" aria-invalid={Boolean(fieldError('vehicle_registration', 'vehicle'))} aria-describedby={fieldError('vehicle_registration', 'vehicle') ? 'rider-error-vehicle_registration' : undefined} onBlur={() => markTouched('vehicle_registration')} onChange={(event) => void chooseFiles('vehicle_registration', event.target.files, event.currentTarget)} /><small>Why required: verify current vehicle registration. JPG, PNG, WebP, or PDF, up to 10 MB.</small>{uploads.vehicle_registration && <FilePreview files={[uploads.vehicle_registration]} remove={() => setUploads((current) => ({ ...current, vehicle_registration: null }))} />}</label>
+                <div><FileDropzone label="OR/CR image or PDF" accept="image/jpeg,image/png,image/webp,application/pdf" required invalid={Boolean(fieldError('vehicle_registration', 'vehicle'))} describedBy={fieldError('vehicle_registration', 'vehicle') ? 'rider-error-vehicle_registration' : undefined} onBlur={() => markTouched('vehicle_registration')} onFiles={(files) => void chooseFiles('vehicle_registration', files)} helperText={`Why required: verify current vehicle registration. Images: ${IMAGE_UPLOAD_HINT} PDF: up to 10 MB.`} />{uploads.vehicle_registration && <FilePreview files={[uploads.vehicle_registration]} remove={() => setUploads((current) => ({ ...current, vehicle_registration: null }))} />}</div>
                 {fieldError('vehicle_registration', 'vehicle') && <span className="field-error" id="rider-error-vehicle_registration" role="alert">{fieldError('vehicle_registration', 'vehicle')}</span>}
                 <label>Plate number<input data-rider-field="plate_number" autoComplete="off" maxLength={16} aria-required="true" aria-invalid={Boolean(fieldError('plate_number', 'vehicle'))} aria-describedby={fieldError('plate_number', 'vehicle') ? 'rider-error-plate_number' : undefined} value={fields.plate_number} onBlur={() => markTouched('plate_number')} onChange={(event) => updateField('plate_number', event.target.value.toUpperCase())} /><small>Use 2–16 letters, numbers, spaces, or hyphens.</small></label>
                 {fieldError('plate_number', 'vehicle') && <span className="field-error" id="rider-error-plate_number" role="alert">{fieldError('plate_number', 'vehicle')}</span>}
@@ -740,7 +745,7 @@ export function RiderRegistrationPage({ initialUser, onError, onLogout }: {
                 {fieldError('vehicle_make_model', 'vehicle') && <span className="field-error" id="rider-error-vehicle_make_model" role="alert">{fieldError('vehicle_make_model', 'vehicle')}</span>}
                 <label>Vehicle color<input data-rider-field="vehicle_color" maxLength={60} aria-required="true" aria-invalid={Boolean(fieldError('vehicle_color', 'vehicle'))} aria-describedby={fieldError('vehicle_color', 'vehicle') ? 'rider-error-vehicle_color' : undefined} value={fields.vehicle_color} onBlur={() => markTouched('vehicle_color')} onChange={(event) => updateField('vehicle_color', event.target.value)} /></label>
                 {fieldError('vehicle_color', 'vehicle') && <span className="field-error" id="rider-error-vehicle_color" role="alert">{fieldError('vehicle_color', 'vehicle')}</span>}
-                <label>Vehicle photos<input data-rider-field="vehicle_photos" type="file" accept="image/jpeg,image/png,image/webp" multiple aria-invalid={Boolean(fieldError('vehicle_photos', 'vehicle'))} aria-describedby={fieldError('vehicle_photos', 'vehicle') ? 'rider-error-vehicle_photos' : undefined} onBlur={() => markTouched('vehicle_photos')} onChange={(event) => void chooseFiles('vehicle_photos', event.target.files, event.currentTarget)} /><small>Why required: admin visual check of the vehicle used for deliveries. 1–5 clear JPEG, PNG, or WebP photos, up to 10 MB each.</small><FilePreview files={uploads.vehicle_photos} remove={(index) => setUploads((current) => ({ ...current, vehicle_photos: current.vehicle_photos.filter((_, fileIndex) => fileIndex !== index) }))} /></label>
+                <div><FileDropzone label="Vehicle photos" accept="image/jpeg,image/png,image/webp" multiple required invalid={Boolean(fieldError('vehicle_photos', 'vehicle'))} describedBy={fieldError('vehicle_photos', 'vehicle') ? 'rider-error-vehicle_photos' : undefined} onBlur={() => markTouched('vehicle_photos')} onFiles={(files) => void chooseFiles('vehicle_photos', files)} helperText={`Why required: admin visual check of the vehicle used for deliveries. 1–5 clear photos; ${IMAGE_UPLOAD_HINT}`} /><FilePreview files={uploads.vehicle_photos} remove={(index) => setUploads((current) => ({ ...current, vehicle_photos: current.vehicle_photos.filter((_, fileIndex) => fileIndex !== index) }))} /></div>
                 {fieldError('vehicle_photos', 'vehicle') && <span className="field-error" id="rider-error-vehicle_photos" role="alert">{fieldError('vehicle_photos', 'vehicle')}</span>}
                 <p className="eyebrow">Step 3 of 5</p>
                 <p className="rider-registration-note">Files are encrypted at rest and visible only to you and authorized admin reviewers. No selfie, OCR, or face matching is used. Retention follows the published schedule.</p>

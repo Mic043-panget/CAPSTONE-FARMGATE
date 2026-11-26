@@ -19,7 +19,10 @@ export type AccountSetupGroup = {
     steps: AccountSetupStep[];
 };
 
-export function AccountSetupProgress({ title, groups, loading, error, onRetry, onReviewTutorial }: {
+export function AccountSetupProgress({ id, hidden = false, onClose, title, groups, loading, error, onRetry, onReviewTutorial }: {
+    id?: string;
+    hidden?: boolean;
+    onClose?: () => void;
     title: string;
     groups: AccountSetupGroup[];
     loading: boolean;
@@ -28,9 +31,14 @@ export function AccountSetupProgress({ title, groups, loading, error, onRetry, o
     onReviewTutorial: () => void;
 }) {
     const [expanded, setExpanded] = React.useState(false);
-    if (loading) return <aside className="account-setup-progress account-setup-progress--status" role="status">Loading {title.toLowerCase()} progress…</aside>;
-    if (error) return <aside className="account-setup-progress account-setup-progress--status" role="alert">
-        <strong>Couldn’t load {title.toLowerCase()} progress.</strong>
+    const closeButton = onClose && <button type="button" className="account-setup-progress-close" aria-label="Close setup progress" title="Close setup progress" onClick={onClose}>
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="m6 6 12 12M18 6 6 18" /></svg>
+    </button>;
+    if (loading) return <aside id={id} hidden={hidden} className="account-setup-progress account-setup-progress--status" role="status">
+        <div className="account-setup-progress-status-heading"><span>Loading {title.toLowerCase()} progress…</span>{closeButton}</div>
+    </aside>;
+    if (error) return <aside id={id} hidden={hidden} className="account-setup-progress account-setup-progress--status" role="alert">
+        <div className="account-setup-progress-status-heading"><strong>Couldn’t load {title.toLowerCase()} progress.</strong>{closeButton}</div>
         <span>{error}</span>
         <button type="button" className="seller-text-action" onClick={onRetry}>Retry</button>
     </aside>;
@@ -41,12 +49,15 @@ export function AccountSetupProgress({ title, groups, loading, error, onRetry, o
         ?? steps.find((step) => step.status === 'Not started')
         ?? steps.find((step) => step.status === 'Waiting for review');
 
-    return <aside className={`account-setup-progress${expanded ? ' is-expanded' : ''}`} aria-label={`${title} progress`}>
+    return <aside id={id} hidden={hidden} className={`account-setup-progress${expanded ? ' is-expanded' : ''}`} aria-label={`${title} progress`}>
         <div className="account-setup-progress-heading">
             <div><span>Setup progress</span><strong>{completed} of {steps.length} complete</strong></div>
-            <button type="button" className="account-setup-progress-toggle" aria-expanded={expanded} aria-controls="account-setup-progress-details" onClick={() => setExpanded((value) => !value)}>
-                {expanded ? 'Close' : 'Details'}
-            </button>
+            <div className="account-setup-progress-controls">
+                <button type="button" className="account-setup-progress-toggle" aria-expanded={expanded} aria-controls="account-setup-progress-details" onClick={() => setExpanded((value) => !value)}>
+                    {expanded ? 'Hide details' : 'Details'}
+                </button>
+                {closeButton}
+            </div>
         </div>
         <progress value={completed} max={Math.max(steps.length, 1)} aria-label={`${completed} of ${steps.length} setup steps complete`} />
         <div className="account-setup-progress-actions">

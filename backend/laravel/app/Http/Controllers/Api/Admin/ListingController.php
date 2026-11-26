@@ -9,6 +9,7 @@ use App\Jobs\ModerateListing;
 use App\Models\LivestockListing;
 use App\Models\User;
 use App\Notifications\ListingModerationNeedsReviewNotification;
+use App\Services\SellerPickupLocationService;
 use App\Services\SystemSettingsService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -93,7 +94,7 @@ class ListingController extends Controller
         return response()->json(['message' => 'AI moderation retry queued.']);
     }
 
-    public function review(Request $request, LivestockListing $listing, SystemSettingsService $settings): JsonResponse
+    public function review(Request $request, LivestockListing $listing, SystemSettingsService $settings, SellerPickupLocationService $pickupLocations): JsonResponse
     {
         abort_unless($request->user()?->role === Role::ADMIN, 403);
         $data = $request->validate(['status' => ['required', Rule::in([
@@ -101,12 +102,13 @@ class ListingController extends Controller
             ListingStatus::REJECTED->value,
             ListingStatus::DISABLED->value,
         ])], 'reason' => ['nullable', 'string', 'max:500']]);
-        DB::transaction(function () use ($request, $listing, $data, $settings): void {
+        DB::transaction(function () use ($request, $listing, $data, $settings, $pickupLocations): void {
             $locked = LivestockListing::query()->lockForUpdate()->findOrFail($listing->id);
             abort_unless($locked->status === ListingStatus::PENDING_REVIEW, 409);
 
             if ($data['status'] === ListingStatus::ACTIVE->value) {
                 User::query()->lockForUpdate()->findOrFail($locked->seller_id);
+                $pickupLocations->assertValidLocation($locked->seller_id, true);
                 $limit = max(0, $settings->getInt('maximum_active_listings'));
                 $activeCount = LivestockListing::query()
                     ->where('seller_id', $locked->seller_id)

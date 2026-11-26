@@ -2,6 +2,8 @@ import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from 'react';
 import api, { initializeCsrf } from '../../lib/api';
 import { confirmAction } from '../../lib/alerts';
 import { Pagination } from '../../shared/components/Pagination';
+import { ImageUploadPreview, IMAGE_UPLOAD_HINT, imageUploadError } from '../../shared/components/ImageUploadPreview';
+import { FileDropzone } from '../../shared/components/FileDropzone';
 
 type Props = { onError: (message: string) => void };
 type TabId = 'settings' | 'destinations' | 'pending' | 'recorded';
@@ -577,6 +579,17 @@ function PendingPayoutsTab({ refreshVersion, onPayoutChanged, onError }: { refre
     };
 
     const updateForm = (payout: Payout, values: Partial<PayoutFormState>) => {
+        const receipt = values.receipt;
+        if (receipt) {
+            const validationError = receipt.type === 'application/pdf'
+                ? receipt.size > 10 * 1024 * 1024 ? 'PDF receipts must be 10 MB or smaller.' : null
+                : imageUploadError(receipt);
+            if (validationError) {
+                setActionError(validationError);
+                return;
+            }
+        }
+        setActionError('');
         setForms((current) => ({ ...current, [payout.id]: { ...formFor(payout), ...values } }));
     };
 
@@ -733,10 +746,10 @@ function PendingPayoutRow({ payout, expanded, form, saving, actionError, onToggl
                         <label className="rider-payout-field">Transfer date
                             <input type="date" max={localDate()} value={form.paidAt} onChange={(event) => onUpdate({ paidAt: event.target.value })} required />
                         </label>
-                        <label className="rider-payout-field">Private transfer receipt
-                            <input type="file" accept=".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf" onChange={(event) => onUpdate({ receipt: event.target.files?.[0] ?? null })} required />
-                            <small>PDF or image, maximum 10 MB. Accessible only to this rider and authorized admins.</small>
-                        </label>
+                        <div className="rider-payout-field">
+                            <FileDropzone label="Private transfer receipt" accept=".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf" onFiles={(files) => onUpdate({ receipt: files[0] ?? null })} required helperText={`Images: ${IMAGE_UPLOAD_HINT} PDF up to 10 MB. Accessible only to this rider and authorized admins.`} />
+                            <ImageUploadPreview file={form.receipt} alt="Selected rider payout receipt preview" />
+                        </div>
                         <label className="rider-payout-field rider-payout-reason-field">Reason / reconciliation note
                             <textarea minLength={8} maxLength={500} value={form.reason} onChange={(event) => onUpdate({ reason: event.target.value })} required />
                         </label>

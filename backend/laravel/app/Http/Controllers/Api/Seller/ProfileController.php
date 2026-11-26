@@ -29,6 +29,7 @@ class ProfileController extends Controller
             'pickup_city_municipality' => ['nullable', 'string', 'max:120'],
             'pickup_province' => ['nullable', 'string', 'max:120'],
         ]);
+        abort_if((float) $data['latitude'] === 0.0 && (float) $data['longitude'] === 0.0, 422, 'Choose a real pickup location on the map; the default map center is not a saved location.');
 
         $profile = $request->user()->sellerProfile()->firstOrCreate([]);
         $profile->fill($data + ['pickup_location_confirmed' => true])->save();
